@@ -80,7 +80,7 @@ namespace
         // 배경 없는 검은 M (scripts/make_icons.py). 템플릿 이미지라 OS 가 메뉴 막대 색에 맞춰 칠한다.
         static NSImage* makeIcon()
         {
-            const NSSize size = NSMakeSize (20, 16);
+            const NSSize size = NSMakeSize (18, 16);   // make_icons.py 의 TRAY_W, TRAY_H
             NSImage* image = [[[NSImage alloc] initWithSize: size] autorelease];
             const struct { const char* data; int bytes; } pngs[] = {
                 { BinaryData::meon_tray_mac_png,    BinaryData::meon_tray_mac_pngSize },

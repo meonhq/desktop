@@ -83,8 +83,8 @@ def icon_svg(size, tile, radius, m_only):
             f'<path fill="{INK}" fill-rule="evenodd" d="{d}"{clip_ref}/></g></svg>')
 
 
-# macOS 메뉴 막대 아이콘: 20×16pt 캔버스, M 높이 14pt (1x·2x 두 장)
-TRAY_W, TRAY_H, TRAY_GLYPH_H = 20, 16, 14
+# macOS 메뉴 막대 아이콘: 18×16pt 캔버스, M 높이 12pt (1x·2x 두 장)
+TRAY_W, TRAY_H, TRAY_GLYPH_H = 18, 16, 12
 
 
 def tray_svg(scale):
