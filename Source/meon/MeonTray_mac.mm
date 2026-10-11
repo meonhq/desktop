@@ -22,6 +22,7 @@ namespace
 
             menu = [[NSMenu alloc] initWithTitle: @"MEON"];
             [menu setAutoenablesItems: NO];
+            menu.minimumWidth = 160;   // 항목이 짧아 기본 폭(가장 긴 항목 기준)은 너무 좁다
             [menu setDelegate: (id<NSMenuDelegate>) target];
             sendItem = addItem (@"송출 정지", @selector (meonToggleSend:));
             outputItem = addItem (@"전체 음소거", @selector (meonToggleOutput:));
