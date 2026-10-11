@@ -48,7 +48,7 @@ namespace
                                        GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
             ownsIcon = icon != nullptr;
             if (icon == nullptr)
-                icon = LoadIconW (nullptr, IDI_APPLICATION);   // 공유 아이콘이라 지우지 않는다
+                icon = LoadIconW (nullptr, MAKEINTRESOURCEW (32512));   // IDI_APPLICATION. 공유 아이콘이라 지우지 않는다
 
             data.cbSize = sizeof (data);
             data.hWnd = hwnd;
