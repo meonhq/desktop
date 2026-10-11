@@ -66,6 +66,7 @@ extern juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
 #endif
 #include "SonoStandaloneFilterWindow.h"
 #include "meon/MeonEditor.h"
+#include "meon/MeonTray.h"
 #if MEON_RESTORE_COMPONENT_MACRO
  #define Component juce::Component
 #endif
@@ -558,6 +559,9 @@ public:
                     }
             }
             }
+            if (meonSnapshot.isEmpty())
+                createTrayIcon();
+
             if (meonWindow.isNotEmpty()) {
                 auto parts = StringArray::fromTokens (meonWindow, ",", "");
                 if (parts.size() == 4)
@@ -647,6 +651,55 @@ public:
 
     }
 
+
+    // 메뉴 막대(macOS)·알림 영역(Windows) 아이콘: 송출 정지 · 전체 음소거 | 종료
+    void createTrayIcon()
+    {
+        meon::TrayIcon::Callbacks cb;
+
+        cb.isSendMuted = [this]() {
+            if (auto* editor = getMeonEditor())
+                return editor->getSession().isMyMuted();
+            return false;
+        };
+        cb.setSendMuted = [this] (bool muted) {
+            if (auto* editor = getMeonEditor())
+                editor->getSession().setMyMuted (muted);   // 합주 화면의 마이크 버튼과 같은 동작
+        };
+        cb.isOutputMuted = [this]() {
+            return mainWindow != nullptr && mainWindow->pluginHolder->meonOutputMuted.load();
+        };
+        cb.setOutputMuted = [this] (bool muted) {
+            if (mainWindow != nullptr)
+                mainWindow->pluginHolder->meonOutputMuted = muted;
+        };
+        cb.showWindow = [this]() { bringWindowToFront(); };
+        cb.quit = [this]() {
+            // 합주 중이면 창에 '방을 나가고 종료할까요' 확인이 뜨므로 창을 먼저 보여준다
+            bringWindowToFront();
+            systemRequestedQuit();
+        };
+
+        trayIcon = meon::TrayIcon::create (std::move (cb));
+    }
+
+    meon::MeonEditor* getMeonEditor() const
+    {
+        if (mainWindow != nullptr)
+            return dynamic_cast<meon::MeonEditor*> (mainWindow->getEditor());
+        return nullptr;
+    }
+
+    void bringWindowToFront()
+    {
+        if (mainWindow == nullptr)
+            return;
+        Process::makeForegroundProcess();
+        if (mainWindow->isMinimised())
+            mainWindow->setMinimised (false);
+        mainWindow->setVisible (true);
+        mainWindow->toFront (true);
+    }
 
     bool loadSettingsFromFile(const File & file)
     {
@@ -762,6 +815,8 @@ public:
         detachGL();
   #endif
 #endif
+
+        trayIcon = nullptr;
 
         mainWindow = nullptr;
 
@@ -933,6 +988,7 @@ protected:
 
     ApplicationProperties appProperties;
     std::unique_ptr<StandaloneFilterWindow> mainWindow;
+    std::unique_ptr<meon::TrayIcon> trayIcon;   // mainWindow 보다 먼저 지운다 (shutdown)
 
     // used only in headless mode
     std::unique_ptr<StandalonePluginHolder> pluginHolder;

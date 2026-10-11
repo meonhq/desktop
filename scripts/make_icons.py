@@ -7,6 +7,8 @@ macOS .icns / Windows .ico / 크기별 PNG / 미리보기 이미지를 만든다
 - 큰 크기는 로고 전체, 작은 크기(아래 M_ONLY_*)는 첫 글자 M 만 잘라서 쓴다.
 - 로고 주변 여백은 로고(보이는 글자) 높이의 25% 이상.
 - 그림자·그라디언트·반투명 없음.
+- macOS 메뉴 막대 아이콘(images/icons/tray): 배경 없는 검은 M. 템플릿 이미지라 OS 가 밝기·다크 모드에 맞춰 칠한다.
+  (Windows 알림 영역은 앱 아이콘 .ico 의 작은 크기를 그대로 쓴다)
 
 필요 도구: rsvg-convert, magick (ImageMagick), iconutil (macOS)
 사용: python3 scripts/make_icons.py
@@ -81,6 +83,33 @@ def icon_svg(size, tile, radius, m_only):
             f'<path fill="{INK}" fill-rule="evenodd" d="{d}"{clip_ref}/></g></svg>')
 
 
+# macOS 메뉴 막대 아이콘: 20×16pt 캔버스, M 높이 14pt (1x·2x 두 장)
+TRAY_W, TRAY_H, TRAY_GLYPH_H = 20, 16, 14
+
+
+def tray_svg(scale):
+    d = logo_path_d()
+    x0, y0, x1, y1 = M_BOX
+    w, h = x1 - x0, y1 - y0
+    cw, ch = TRAY_W * scale, TRAY_H * scale
+    s = TRAY_GLYPH_H * scale / h
+    tx = (cw - w * s) / 2 - x0 * s
+    ty = (ch - h * s) / 2 - y0 * s
+    pts = " ".join(f"{x},{y}" for x, y in M_CLIP)
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{cw}" height="{ch}" viewBox="0 0 {cw} {ch}">'
+            f'<defs><clipPath id="m"><polygon points="{pts}"/></clipPath></defs>'
+            f'<g transform="translate({tx} {ty}) scale({s})">'
+            f'<path fill="#000000" fill-rule="evenodd" d="{d}" clip-path="url(#m)"/></g></svg>')
+
+
+def render_rect(svg, png, w, h):
+    with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False) as f:
+        f.write(svg)
+        tmp = f.name
+    subprocess.run(["rsvg-convert", "-w", str(w), "-h", str(h), tmp, "-o", png], check=True)
+    os.unlink(tmp)
+
+
 def render(svg, png, size):
     with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False) as f:
         f.write(svg)
@@ -121,6 +150,12 @@ def main():
     # 설치 파일 아이콘은 앱 아이콘과 같은 그림을 쓴다
     shutil.copy(os.path.join(OUT_DIR, "MEON.icns"), os.path.join(OUT_DIR, "MEON-installer.icns"))
     shutil.copy(os.path.join(OUT_DIR, "MEON.ico"), os.path.join(OUT_DIR, "MEON-installer.ico"))
+
+    # macOS 메뉴 막대 아이콘
+    tray_dir = os.path.join(OUT_DIR, "tray")
+    os.makedirs(tray_dir, exist_ok=True)
+    for scale, suffix in [(1, ""), (2, "_2x")]:
+        render_rect(tray_svg(scale), os.path.join(tray_dir, f"meon_tray_mac{suffix}.png"), TRAY_W * scale, TRAY_H * scale)
 
     print("written to", OUT_DIR)
 

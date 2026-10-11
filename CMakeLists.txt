@@ -203,7 +203,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
     if (APPLE)
         list (APPEND HEADER_INCLUDES deps/mac/include)
         list (APPEND LIB_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/deps/mac/lib)
-        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsMac.mm Source/meon/MeonKeyRepeat_mac.mm)
+        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsMac.mm Source/meon/MeonKeyRepeat_mac.mm Source/meon/MeonTray_mac.mm)
     elseif (WIN32)
         # ASIO SDK (Steinberg, 2.3.4 부터 GPLv3 이중 라이선스). 기본 위치: 저장소 옆 ../asiosdk
         if (NOT ASIO_SDK_PATH)
@@ -213,7 +213,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             message (FATAL_ERROR "ASIO SDK not found at ${ASIO_SDK_PATH}. Download ASIO SDK 2.3.4+ from https://www.steinberg.net/asiosdk and unzip it to ../asiosdk (or pass -DASIO_SDK_PATH=...)")
         endif()
         list (APPEND HEADER_INCLUDES deps/windows "${ASIO_SDK_PATH}/common")
-        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsWindows.cpp)
+        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsWindows.cpp Source/meon/MeonTray_win.cpp)
 
 	message (STATUS "Win generator platform is: ${CMAKE_VS_PLATFORM_NAME}" )
         if ("${CMAKE_VS_PLATFORM_NAME}" STREQUAL "Win32")
@@ -285,6 +285,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonWidgets.cpp
         Source/meon/MeonWidgets.h
         Source/meon/MeonKeyRepeat.h
+        Source/meon/MeonTray.h
         Source/meon/MeonParts.cpp
         Source/meon/MeonParts.h
         Source/meon/MeonSettings.cpp
@@ -468,6 +469,8 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         images/beat_click.wav
         images/lgc_bar.wav
         images/meon_logo.svg
+        images/icons/tray/meon_tray_mac.png
+        images/icons/tray/meon_tray_mac_2x.png
     )
 
     set_target_properties(${target_name}_SBData PROPERTIES FOLDER "Targets")
