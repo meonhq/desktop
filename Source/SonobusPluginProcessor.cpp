@@ -5,6 +5,7 @@
 
 #include "SonobusPluginProcessor.h"
 #include "meon/MeonEditor.h"
+#include "meon/MeonSettings.h"
 
 #include "RunCumulantor.h"
 
@@ -845,6 +846,9 @@ mState (*this, &mUndoManager, "SonoBusAoO",
     loadGlobalState();
     
     moveOldMisplacedFiles();
+
+    // MEON 귀 테러 방지 단계 (설정 파일). 플러그인은 창을 열지 않아도 적용돼야 하므로 여기서 읽는다.
+    mEarGuard.setLevel (meon::MeonSettings().getEarGuardLevel());
 
     mFreshInit = true;
 }
@@ -6919,6 +6923,7 @@ void SonobusAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     const ScopedReadLock sl (mCoreLock);        
     
     mMetronome->setSampleRate(sampleRate);
+    mEarGuard.prepare(sampleRate);
     mMainReverb->setSampleRate(sampleRate);
     mMReverb.setSampleRate(sampleRate);
     mInputReverb.setSampleRate(sampleRate);
@@ -8262,7 +8267,10 @@ void SonobusAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
         }
     }
 
-    
+
+    // MEON 귀 테러 방지: 모든 멤버 믹스·마스터 볼륨이 적용된 최종 모니터 출력(메인 버스)에만. 송신·녹음과 무관.
+    mEarGuard.process(buffer, mainBusOutputChannels, numSamples, getSampleRate());
+
     outputMeterSource.measureBlock (buffer, 0, numSamples);
 
     // output to file writer if necessary

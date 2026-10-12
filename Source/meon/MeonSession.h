@@ -121,6 +121,10 @@ public:
     juce::String getUserName() const { return userName; }
     void setInputChannels (int start, int count);      // 독립 앱 전용
 
+    /** 귀 테러 방지: 설정 저장 + 내 모니터 출력에 바로 적용 + 세션 로그 */
+    EarGuard::Level getEarGuardLevel() const;
+    void setEarGuardLevel (EarGuard::Level level);
+
     //==============================================================================
     // 파일 재생 (MR). SonoBus 엔진의 파일 재생을 그대로 쓴다: 소리는 내 송신에 섞여 나가고 나도 듣는다.
     // 상태는 엔진에 있으므로 플러그인 창을 다시 열어도 이어진다.
@@ -193,6 +197,8 @@ private:
     juce::String userName, roomCode, pendingCode, lastJoinError;
     double nextConnectAttemptMs = 0.0, connectDeadlineMs = 0.0, verifyDeadlineMs = 0.0, joinedAtMs = 0.0;
     double lastSampleMs = 0.0;
+    int earGuardBandBase = 0, earGuardFullBase = 0;   // 세션 로그: 방에 들어온 뒤 동작 횟수만 센다
+    void beginLog (const juce::String& firstEvent);
     int tickCount = 0;
     int pcmFormatIndex = -1;
 

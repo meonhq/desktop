@@ -679,6 +679,92 @@ void ProgressSteps::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+SegmentedTabs::SegmentedTabs (const juce::StringArray& l, float p) : labels (l), px (p)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setWantsKeyboardFocus (false);
+}
+
+void SegmentedTabs::setSelected (int index)
+{
+    index = juce::jlimit (0, labels.size() - 1, index);
+    if (index != selected)
+    {
+        selected = index;
+        repaint();
+    }
+}
+
+int SegmentedTabs::getIdealWidth (int pad) const
+{
+    float w = 0.0f;
+    for (auto& t : labels)
+        w = juce::jmax (w, Fonts::get (600, px).getStringWidthFloat (t));
+    return ((int) std::ceil (w) + pad * 2) * labels.size() + 6;
+}
+
+juce::Rectangle<float> SegmentedTabs::cellBounds (int i) const
+{
+    auto inner = getLocalBounds().toFloat().reduced (3.0f);
+    const float cw = inner.getWidth() / (float) juce::jmax (1, labels.size());
+    return { inner.getX() + cw * (float) i, inner.getY(), cw, inner.getHeight() };
+}
+
+int SegmentedTabs::indexAt (juce::Point<float> p) const
+{
+    for (int i = 0; i < labels.size(); ++i)
+        if (cellBounds (i).contains (p))
+            return i;
+    return -1;
+}
+
+void SegmentedTabs::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    const float radius = (float) metric::radiusButton;
+    g.setColour (col::white);
+    g.fillRoundedRectangle (r, radius);
+    g.setColour (col::border);
+    g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
+    for (int i = 0; i < labels.size(); ++i)
+    {
+        auto c = cellBounds (i);
+        const bool on = i == selected;
+        if (on || i == hover)
+        {
+            g.setColour (on ? col::accent : col::badgeBg);
+            g.fillRoundedRectangle (c, radius - 2.0f);
+        }
+        g.setColour (on ? col::onAccent : col::inkSub);
+        g.setFont (Fonts::get (on ? 600 : 500, px));
+        g.drawText (labels[i], c, juce::Justification::centred, false);
+    }
+}
+
+void SegmentedTabs::mouseDown (const juce::MouseEvent& e)
+{
+    const int i = indexAt (e.position);
+    if (i < 0 || i == selected)
+        return;
+    selected = i;
+    repaint();
+    if (onChange)
+        onChange (i);
+}
+
+void SegmentedTabs::mouseMove (const juce::MouseEvent& e)
+{
+    const int i = indexAt (e.position);
+    if (i != hover) { hover = i; repaint(); }
+}
+
+void SegmentedTabs::mouseExit (const juce::MouseEvent&)
+{
+    if (hover != -1) { hover = -1; repaint(); }
+}
+
+//==============================================================================
+//==============================================================================
 TextLabel::TextLabel (const juce::String& t, float p, int w, juce::Colour c, juce::Justification j)
     : text (t), px (p), weight (w), ink (c), just (j)
 {

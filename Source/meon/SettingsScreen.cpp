@@ -33,6 +33,7 @@ SettingsScreen::Content::Content (SettingsScreen& o)
       nickInput (o.plugin ? 14.0f : 15.0f),
       partSelector (o.plugin ? PartSelector::Style { 6, 22.0f, 8, 13.0f, 500 }
                              : PartSelector::Style { 8, 28.0f, 10, 14.0f, 500 }),
+      earGuardTabs ({ TXT ("끔"), TXT ("보통"), TXT ("강하게") }, o.plugin ? 13.0f : 14.0f),
       driverPanelButton (TXT ("드라이버 설정")),
       saveButton (TXT ("저장")), logButton (TXT ("로그 폴더 열기")), updateButton (TXT ("다시 확인")),
       licenseLink (o.plugin ? TXT ("전문 보기") : TXT ("라이선스 전문 보기"), "https://www.gnu.org/licenses/gpl-3.0.html", o.plugin ? 13.0f : 14.0f),
@@ -53,6 +54,14 @@ SettingsScreen::Content::Content (SettingsScreen& o)
         owner.editor.getSettings().setPartKey (parts::key (p));
         owner.editor.getSession().applyNicknameChange();
     };
+    // 귀 테러 방지: 누르는 즉시 저장하고 내 모니터 출력에 적용 (전환은 오디오 쪽에서 부드럽게)
+    earGuardTabs.setSelected ((int) owner.editor.getSession().getEarGuardLevel());
+    earGuardTabs.onChange = [this] (int i)
+    {
+        owner.editor.getSession().setEarGuardLevel ((EarGuard::Level) i);
+        repaint (earGuardDescArea);
+    };
+    addAndMakeVisible (earGuardTabs);
     logButton.setFont (plugin ? 13.0f : 14.0f, 500);
     logButton.onClick = []
     {
@@ -216,6 +225,17 @@ void SettingsScreen::Content::applyBuffer()
     refreshDevices();
 }
 
+juce::String SettingsScreen::Content::earGuardDescription (int level)
+{
+    switch ((EarGuard::Level) level)
+    {
+        case EarGuard::Level::Off:    return TXT ("갑자기 큰 소리가 나도 줄여주지 않아요");
+        case EarGuard::Level::Normal: return TXT ("귀를 찌르는 소리만 살짝 눌러줘요. 평소 소리는 그대로예요.");
+        case EarGuard::Level::Strong: return TXT ("큰 소리를 더 일찍, 더 많이 줄여줘요. 소리가 조금 얌전해질 수 있어요.");
+    }
+    return {};
+}
+
 juce::String SettingsScreen::Content::updateTitle() const
 {
     auto& u = owner.editor.getUpdater();
@@ -323,9 +343,25 @@ void SettingsScreen::Content::layout (int width, int topPad)
         y += 1 + sectionGap;
     };
 
+    // 귀 테러 방지 줄: 왼쪽 이름, 오른쪽 탭, 그 아래 고른 단계 설명
+    auto earGuardRow = [&]
+    {
+        rowLabels.push_back ({ TXT ("귀 테러 방지"), juce::Rectangle<int> (0, y, labelW, ctrlH) });
+        const int tabsW = juce::jmin (width - labelW, juce::jmax (plugin ? 216 : 240, earGuardTabs.getIdealWidth (plugin ? 16 : 18)));
+        earGuardTabs.setBounds (labelW, y, tabsW, ctrlH);
+        y += ctrlH + 8;
+        // 좁은 플러그인 창에서는 긴 설명이 두 줄이 된다
+        float longest = 0.0f;
+        for (int i = 0; i < 3; ++i)
+            longest = juce::jmax (longest, Fonts::get (400, 13.0f).getStringWidthFloat (earGuardDescription (i)));
+        const int descH = longest > (float) (width - labelW) ? 36 : 18;
+        earGuardDescArea = juce::Rectangle<int> (labelW, y, width - labelW, descH);
+        y += descH;
+    };
+
     if (! plugin)
     {
-        sectionTitle (TXT ("오디오 장치"));
+        sectionTitle (TXT ("오디오"));
         auto row = [&] (const juce::String& label, juce::Component& c)
         {
             rowLabels.push_back ({ label, juce::Rectangle<int> (0, y, labelW, ctrlH) });
@@ -348,7 +384,8 @@ void SettingsScreen::Content::layout (int width, int topPad)
         rowLabels.push_back ({ TXT ("입력 레벨"), juce::Rectangle<int> (0, y, labelW, ctrlH) });
         meter.setBounds (labelW, y + ctrlH / 2 - 5, width - labelW - 12 - 56, 10);
         levelTextArea = juce::Rectangle<int> (width - 56, y, 56, ctrlH);
-        y += ctrlH;
+        y += ctrlH + 12;
+        earGuardRow();
         divider();
     }
 
@@ -379,7 +416,8 @@ void SettingsScreen::Content::layout (int width, int topPad)
     {
         sectionTitle (TXT ("오디오"));
         audioPanel = juce::Rectangle<int> (0, y, width, 14 * 2 + 18 + 6 + 16);
-        y += audioPanel.getHeight();
+        y += audioPanel.getHeight() + 16;
+        earGuardRow();   // 장치·버퍼는 DAW 가 정하지만 귀 테러 방지는 플러그인에서도 고른다
         divider();
     }
 
@@ -446,6 +484,11 @@ void SettingsScreen::Content::paint (juce::Graphics& g)
         g.setFont (Fonts::get (500, 13.0f));
         const float db = meter.getShownDb();
         g.drawText (db <= -60.0f ? juce::String ("-60 dB") : juce::String ((int) std::lround (db)) + " dB", levelTextArea, juce::Justification::centredRight, false);
+    }
+    if (! earGuardDescArea.isEmpty())
+    {
+        g.setFont (Fonts::get (400, 13.0f));
+        g.drawFittedText (earGuardDescription (earGuardTabs.getSelected()), earGuardDescArea, juce::Justification::topLeft, 2, 1.0f);
     }
     g.setColour (col::ink);
     g.setFont (Fonts::get (400, plugin ? 14.0f : 15.0f));

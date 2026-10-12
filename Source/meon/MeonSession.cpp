@@ -153,6 +153,7 @@ MeonSession::MeonSession (SonobusAudioProcessor& p, MeonSettings& s, bool plugin
     : processor (p), settings (s), isPlugin (plugin)
 {
     applyProcessorDefaults();
+    processor.getEarGuard().setLevel (settings.getEarGuardLevel());   // 다른 인스턴스·앱에서 바꾼 값을 따라간다
     processor.addClientListener (this);
     pinger = std::make_unique<ServerPinger> (DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
     pinger->startThread();
@@ -377,11 +378,7 @@ void MeonSession::start()
 {
     if (reattached && roomState == RoomState::InRoom && ! log.isActive())
     {
-        MeonSessionLog::AudioInfo audio;
-        if (audioInfoProvider)
-            audio = audioInfoProvider();
-        log.begin (roomCode, userName, isPlugin, audio);
-        log.addEvent ("editorReopened", roomCode);
+        beginLog ("editorReopened");
         reconcilePeers (true);
         listeners.call ([] (Listener& l) { l.sessionStateChanged(); l.membersChanged(); });
     }
@@ -510,11 +507,7 @@ void MeonSession::finishJoin (bool success, JoinFailure failure, const juce::Str
         info.timestamp = juce::Time::getCurrentTime().toMilliseconds();
         processor.addRecentServerConnectionInfo (info);
 
-        MeonSessionLog::AudioInfo audio;
-        if (audioInfoProvider)
-            audio = audioInfoProvider();
-        log.begin (roomCode, userName, isPlugin, audio);
-        log.addEvent (creatingRoom ? "roomCreated" : "roomJoined", roomCode);
+        beginLog (creatingRoom ? "roomCreated" : "roomJoined");
         lastSampleMs = 0.0;
 
         listeners.call ([] (Listener& l) { l.sessionStateChanged(); l.roomJoined(); });
@@ -695,6 +688,34 @@ bool MeonSession::isMyMuted() const
     if (auto* param = processor.getValueTreeState().getParameter (SonobusAudioProcessor::paramMainSendMute))
         return param->getValue() > 0.5f;
     return false;
+}
+
+void MeonSession::beginLog (const juce::String& firstEvent)
+{
+    MeonSessionLog::AudioInfo audio;
+    if (audioInfoProvider)
+        audio = audioInfoProvider();
+    log.begin (roomCode, userName, isPlugin, audio);
+    log.addEvent (firstEvent, roomCode);
+    auto& guard = processor.getEarGuard();
+    earGuardBandBase = guard.getBandTriggerCount();
+    earGuardFullBase = guard.getFullTriggerCount();
+    log.addEvent ("earGuard", EarGuard::levelKey (guard.getLevel()));
+}
+
+EarGuard::Level MeonSession::getEarGuardLevel() const
+{
+    return processor.getEarGuard().getLevel();
+}
+
+void MeonSession::setEarGuardLevel (EarGuard::Level level)
+{
+    if (level == processor.getEarGuard().getLevel() && level == settings.getEarGuardLevel())
+        return;
+    settings.setEarGuardLevel (level);
+    processor.getEarGuard().setLevel (level);
+    if (log.isActive())
+        log.addEvent ("earGuard", EarGuard::levelKey (level));
 }
 
 void MeonSession::setMyMuted (bool muted)
@@ -1296,6 +1317,10 @@ void MeonSession::writeLogSample()
         { "fileLoaded", hasPlaybackFile() },
         { "filePlaying", isPlaybackPlaying() },
         { "fileGainDb", getPlaybackGainDb() },
+        // 귀 테러 방지: 지금 단계, 방에 들어온 뒤 대역·전체 리미터가 줄이기 시작한 횟수
+        { "earGuard", EarGuard::levelKey (processor.getEarGuard().getLevel()) },
+        { "earGuardBandCount", processor.getEarGuard().getBandTriggerCount() - earGuardBandBase },
+        { "earGuardFullCount", processor.getEarGuard().getFullTriggerCount() - earGuardFullBase },
         { "memberCount", getMemberCount() },
         { "members", arr } }));
 }

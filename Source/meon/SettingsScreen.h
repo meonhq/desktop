@@ -1,4 +1,4 @@
-// MEON - 설정 (오디오 장치, 닉네임, 로그 폴더 열기, 앱 정보)
+// MEON - 설정 (오디오 장치·귀 테러 방지, 닉네임, 로그 폴더 열기, 앱 정보)
 #pragma once
 
 #include "MeonEditor.h"
@@ -62,6 +62,9 @@ private:
         LevelBar meter;
         MeonTextEditor nickInput;
         PartSelector partSelector;
+        SegmentedTabs earGuardTabs;   // 귀 테러 방지: 끔 · 보통 · 강하게 (플러그인에서도 보인다)
+        juce::Rectangle<int> earGuardDescArea;
+        static juce::String earGuardDescription (int level);
         MeonButton saveButton, logButton, updateButton;
         LinkLabel licenseLink, sourceLink;
         juce::Rectangle<int> levelTextArea;

@@ -1,4 +1,4 @@
-// MEON - 디자인 공통 컴포넌트 (버튼, 배지, 레벨 미터, 볼륨 슬라이더, 체크박스, 경고 상자, 코드 입력, 진행 막대)
+// MEON - 디자인 공통 컴포넌트 (버튼, 배지, 레벨 미터, 볼륨 슬라이더, 체크박스, 경고 상자, 코드 입력, 진행 막대, 탭)
 #pragma once
 
 #include "MeonTheme.h"
@@ -222,6 +222,31 @@ public:
     void paint (juce::Graphics&) override;
 private:
     int total, current, barW;
+};
+
+//==============================================================================
+/** 가로 탭 (예: 끔 · 보통 · 강하게). 칸 폭은 균등, 선택된 칸은 #FFD700 채움. */
+class SegmentedTabs : public juce::Component
+{
+public:
+    explicit SegmentedTabs (const juce::StringArray& labels, float fontPx = 14.0f);
+    void setSelected (int index);   // 알림 없음
+    int getSelected() const { return selected; }
+    /** 칸 하나가 글자를 다 담는 최소 폭 기준의 전체 폭 */
+    int getIdealWidth (int horizontalPadding) const;
+    std::function<void (int)> onChange;
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+
+private:
+    juce::StringArray labels;
+    float px;
+    int selected = 0, hover = -1;
+    int indexAt (juce::Point<float>) const;
+    juce::Rectangle<float> cellBounds (int i) const;
 };
 
 //==============================================================================
