@@ -81,6 +81,17 @@ void MeonSettings::setInputChannels (int start, int count)
     save();
 }
 
+EarGuard::Level MeonSettings::getEarGuardLevel() const
+{
+    return (EarGuard::Level) juce::jlimit (0, 2, props->getIntValue ("earGuard", (int) EarGuard::Level::Normal));
+}
+
+void MeonSettings::setEarGuardLevel (EarGuard::Level level)
+{
+    props->setValue ("earGuard", (int) level);
+    save();
+}
+
 bool MeonSettings::isChatOpen() const
 {
     return props->getBoolValue ("chatOpen", true);

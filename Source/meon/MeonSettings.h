@@ -1,7 +1,8 @@
-// MEON - 로컬 사용자 설정 (닉네임, 파트, 첫 실행 완료 여부, 입력 채널). 독립 앱과 플러그인이 같은 파일을 공유한다.
+// MEON - 로컬 사용자 설정 (닉네임, 파트, 첫 실행 완료 여부, 입력 채널, 귀 테러 방지). 독립 앱과 플러그인이 같은 파일을 공유한다.
 #pragma once
 
 #include <JuceHeader.h>
+#include "MeonEarGuard.h"
 
 namespace meon
 {
@@ -27,6 +28,10 @@ public:
     int getInputChannelStart() const;
     int getInputChannelCount() const;
     void setInputChannels (int start, int count);
+
+    /** 귀 테러 방지 단계 (끔 · 보통 · 강하게). 기본 보통 */
+    EarGuard::Level getEarGuardLevel() const;
+    void setEarGuardLevel (EarGuard::Level level);
 
     bool isChatOpen() const;
     void setChatOpen (bool open);

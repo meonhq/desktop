@@ -21,6 +21,7 @@
 #include "zitaRev.h"
 
 #include "SoundboardChannelProcessor.h"
+#include "meon/MeonEarGuard.h"
 
 typedef MVerb<float> MVerbFloat;
 
@@ -645,6 +646,9 @@ public:
     foleys::LevelMeterSource & getSendMeterSource() { return sendMeterSource; }
     foleys::LevelMeterSource & getOutputMeterSource() { return outputMeterSource; }
 
+    /** MEON 귀 테러 방지 (내 모니터 최종 출력에만 적용) */
+    meon::EarGuard & getEarGuard() { return mEarGuard; }
+
     foleys::LevelMeterSource & getFilePlaybackMeterSource() { return filePlaybackMeterSource; }
     foleys::LevelMeterSource & getMetronomeMeterSource() { return metMeterSource; }
 
@@ -1075,6 +1079,8 @@ private:
     foleys::LevelMeterSource postinputMeterSource;
     foleys::LevelMeterSource sendMeterSource;
     foleys::LevelMeterSource outputMeterSource;
+
+    meon::EarGuard mEarGuard;
     foleys::LevelMeterSource filePlaybackMeterSource;
     foleys::LevelMeterSource metMeterSource;
 
