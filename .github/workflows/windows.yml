@@ -1,7 +1,7 @@
 # Windows 빌드: main 에 push 할 때마다 Meon 설치 프로그램(.exe)을 만든다.
 # - 실행 결과 페이지의 Artifacts 에서 받을 수 있고,
 # - main 빌드는 'windows-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 설치 파일을 받을 수 있다:
-#   https://github.com/unzzonzz/meon/releases/download/windows-latest/meon-setup.exe
+#   https://github.com/meonhq/desktop/releases/download/windows-latest/meon-setup.exe
 # - 같은 파일을 MEON-Installer.exe 로도 올린다. 이미 설치된 앱이 자동 업데이트로 받는 이름이라 바꾸지 않는다.
 name: Windows build
 

@@ -1,7 +1,7 @@
 # macOS 빌드: main 에 push 할 때마다 Meon 디스크 이미지(.dmg)를 만든다.
 # - 실행 결과 페이지의 Artifacts 에서 받을 수 있고,
 # - main 빌드는 'mac-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 파일을 받을 수 있다:
-#   https://github.com/unzzonzz/meon/releases/download/mac-latest/meon.dmg
+#   https://github.com/meonhq/desktop/releases/download/mac-latest/meon.dmg
 # - 같은 릴리스에 앱 자동 업데이트용 MEON-mac.zip 과 build.txt(빌드 번호)도 올린다 (Source/meon/MeonUpdater.h).
 #   이 둘은 이미 설치된 앱에 이름이 박혀 있으므로 바꾸지 않는다. 앱은 Meon.app 이고, zip 안의 최상위도 Meon.app 이다
 #   (옛 앱은 MEON.app 을 찾지만 macOS 볼륨이 대소문자를 가리지 않아서 찾는다).
