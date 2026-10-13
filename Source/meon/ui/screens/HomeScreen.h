@@ -87,7 +87,6 @@ private:
     Text deviceName { {}, 400, 13.0f };
     Button sendMute { Button::Kind::small, TXT ("송출 정지") };
     DbSlider sendGain { -30.0f, 10.0f };
-    struct MeterBox;
     std::unique_ptr<MeterBox> inputMeter;
 
     // 친구

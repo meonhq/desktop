@@ -1,6 +1,5 @@
 // MEON ui - 로그인 뒤의 최상위 화면. 현재 방(store.currentRoom)을 따라 홈과 합주 화면을 바꾸고,
 // 토스트(초대·방 닫힘·추방)와 입장 실패 상자를 띄운다 (REMAKE_PLAN 1.1 AppRoot).
-// R6 전까지 합주 화면은 개발용 확인 화면(DevJamScreen)을 임시로 쓴다.
 #pragma once
 
 #include "screens/HomeScreen.h"

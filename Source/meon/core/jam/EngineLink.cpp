@@ -1,4 +1,5 @@
 #include "EngineLink.h"
+#include "../util/Hangul.h"
 
 namespace meon::core
 {
@@ -11,15 +12,205 @@ namespace
     constexpr int meterHoldMs = 25;
 }
 
+//==============================================================================
+// 파일 재생 위치를 옮기거나 재생을 시작할 때 소리가 튀지 않게 한다 (옛 MeonSession 에서 옮김).
+// AudioTransportSource 의 gain 은 엔진이 쓰지 않으므로(엔진은 채널 그룹 gain 을 쓴다) 여기서 페이드용으로 쓴다.
+// 5 ms 마다 gain 을 조금씩 바꾸고, 엔진은 바뀔 때마다 그 블록 안에서 램프한다.
+// 위치 이동: 약 35 ms 에 걸쳐 줄임 → 위치 이동 → 80 ms 기다림(읽기 버퍼가 차는 시간) → 약 50 ms 에 걸쳐 키움.
+class EngineLink::PlaybackFader : private juce::Timer
+{
+public:
+    explicit PlaybackFader (juce::AudioTransportSource& t) : transport (t) {}
+    ~PlaybackFader() override { finish(); }
+
+    void seek (double seconds)
+    {
+        if (! transport.isPlaying())
+        {
+            finish();
+            transport.setPosition (seconds);
+            return;
+        }
+        pendingSeek = true;
+        target = seconds;
+        desired = 0.0f;
+        holdTicks = 0;
+        startTimer (tickMs);
+    }
+
+    /** 0 에서 시작해서 버퍼가 찬 뒤 키운다 */
+    void start()
+    {
+        finish();
+        setGain (0.0f);
+        transport.start();
+        desired = 0.0f;
+        holdTicks = 80 / tickMs;
+        startTimer (tickMs);
+    }
+
+    /** 남은 위치 이동은 바로 적용하고 소리를 원래대로 */
+    void finish()
+    {
+        stopTimer();
+        if (pendingSeek)
+            transport.setPosition (target);
+        pendingSeek = false;
+        holdTicks = 0;
+        desired = 1.0f;
+        setGain (1.0f);
+    }
+
+    bool hasPendingSeek (double& seconds) const
+    {
+        if (! pendingSeek) return false;
+        seconds = target;
+        return true;
+    }
+
+private:
+    static constexpr int tickMs = 5;
+    juce::AudioTransportSource& transport;
+    bool pendingSeek = false;
+    double target = 0.0;
+    float current = 1.0f, desired = 1.0f;
+    int holdTicks = 0, silentTicks = 0;
+
+    void setGain (float g)
+    {
+        current = g;
+        transport.setGain (g);
+    }
+
+    void timerCallback() override
+    {
+        if (current > desired)
+        {
+            setGain (juce::jmax (desired, current - 0.15f));
+            silentTicks = 0;
+            return;
+        }
+        if (pendingSeek)
+        {
+            if (++silentTicks < 2)   // 0 이 된 블록이 실제로 나간 뒤에 옮긴다
+                return;
+            transport.setPosition (target);
+            pendingSeek = false;
+            holdTicks = 80 / tickMs;
+            return;
+        }
+        if (holdTicks > 0)
+        {
+            if (--holdTicks == 0) desired = 1.0f;
+            return;
+        }
+        if (current < desired)
+        {
+            setGain (juce::jmin (desired, current + 0.1f));
+            return;
+        }
+        stopTimer();
+    }
+};
+
 EngineLink::EngineLink (SonobusAudioProcessor& p, bool isPlugin) : processor (p), plugin (isPlugin)
 {
     processor.addClientListener (this);
+    fader = std::make_unique<PlaybackFader> (processor.getTransportSource());
 }
 
 EngineLink::~EngineLink()
 {
     processor.removeClientListener (this);
     cancelPendingUpdate();
+    fader.reset();   // 줄여 둔 소리가 있으면 원래대로 (플러그인은 창을 닫아도 재생이 이어진다)
+}
+
+//==============================================================================
+bool EngineLink::loadFile (const juce::File& file)
+{
+    fader->finish();
+    if (! processor.loadURLIntoTransport (juce::URL (file)))
+        return false;
+    loadedFile = file;
+    return true;
+}
+
+void EngineLink::closeFile()
+{
+    if (! hasFile()) return;
+    fader->finish();
+    processor.clearTransportURL();
+    loadedFile = juce::File();
+}
+
+bool EngineLink::hasFile() const
+{
+    return ! processor.getCurrentLoadedTransportURL().isEmpty();
+}
+
+String EngineLink::fileName() const
+{
+    auto url = processor.getCurrentLoadedTransportURL();
+    if (url.isEmpty()) return {};
+    String name;
+    if (loadedFile != juce::File() && url == juce::URL (loadedFile))
+        name = loadedFile.getFileName();
+    else
+        name = url.isLocalFile() ? url.getLocalFile().getFileName() : juce::URL::removeEscapeChars (url.getFileName());
+    return composeHangul (name);
+}
+
+bool EngineLink::isFilePlaying() const
+{
+    return const_cast<SonobusAudioProcessor&> (processor).getTransportSource().isPlaying();
+}
+
+void EngineLink::setFilePlaying (bool play)
+{
+    if (! hasFile() || play == isFilePlaying()) return;
+    auto& transport = processor.getTransportSource();
+    if (play)
+    {
+        if (transport.getCurrentPosition() >= transport.getLengthInSeconds())
+            transport.setPosition (0.0);
+        fader->start();
+    }
+    else
+    {
+        fader->finish();
+        transport.stop();   // 엔진 쪽에서 마지막 블록을 짧게 줄여 끝낸다
+    }
+}
+
+double EngineLink::filePosition() const
+{
+    double pending = 0.0;
+    if (fader->hasPendingSeek (pending)) return pending;
+    return juce::jmax (0.0, const_cast<SonobusAudioProcessor&> (processor).getTransportSource().getCurrentPosition());
+}
+
+double EngineLink::fileLength() const
+{
+    return hasFile() ? juce::jmax (0.0, const_cast<SonobusAudioProcessor&> (processor).getTransportSource().getLengthInSeconds()) : 0.0;
+}
+
+void EngineLink::setFilePosition (double seconds)
+{
+    if (hasFile()) fader->seek (juce::jlimit (0.0, fileLength(), seconds));
+}
+
+// 볼륨은 엔진(파일 재생 채널 그룹 gain)에만 둔다. 플러그인 창을 다시 열어도 그대로.
+float EngineLink::fileGainDb() const
+{
+    const float gain = processor.getFilePlaybackGain();
+    return gain <= 0.0f ? fileMinDb : juce::jlimit (fileMinDb, fileMaxDb, juce::Decibels::gainToDecibels (gain));
+}
+
+void EngineLink::setFileGainDb (float db)
+{
+    db = juce::jlimit (fileMinDb, fileMaxDb, db);
+    processor.setFilePlaybackGain (juce::Decibels::decibelsToGain (db));
 }
 
 void EngineLink::setParam (const String& id, float value)
@@ -219,6 +410,7 @@ bool EngineLink::isSendMuted() const
 void EngineLink::setSendMuted (bool b)               { setParam (SonobusAudioProcessor::paramMainSendMute, b ? 1.0f : 0.0f); }
 void EngineLink::setSendGainDb (float db)            { setParam (SonobusAudioProcessor::paramInGain, juce::Decibels::decibelsToGain (db)); }
 void EngineLink::setSelfMonitor (bool on)            { selfMonitor = on; applyMonitorParams(); }
+void EngineLink::setSelfMonitorDb (float db)         { selfMonitorDb = db; applyMonitorParams(); }
 void EngineLink::setMasterDb (float db)              { masterDb = db; applyMonitorParams(); }
 void EngineLink::setMonitorMuted (bool m)            { monitorMuted = m; applyMonitorParams(); }
 
@@ -227,7 +419,8 @@ void EngineLink::applyMonitorParams()
     // 모니터 전체 음소거 = 출력(wet) 0 + 셀프 모니터(dry) 0 (Q12). 마스터는 −30 ~ +6 dB (Q10, wet 최대 2.0)
     const float wet = monitorMuted ? 0.0f : juce::jlimit (0.0f, 2.0f, juce::Decibels::decibelsToGain (masterDb));
     setParam (SonobusAudioProcessor::paramWet, wet);
-    setParam (SonobusAudioProcessor::paramDry, (monitorMuted || ! selfMonitor) ? 0.0f : 1.0f);
+    setParam (SonobusAudioProcessor::paramDry, (monitorMuted || ! selfMonitor) ? 0.0f
+                                                                               : juce::jlimit (0.0f, 2.0f, juce::Decibels::decibelsToGain (selfMonitorDb)));
 }
 
 void EngineLink::setBufferMode (BufferMode m)

@@ -7,6 +7,8 @@
 #include "../api/Realtime.h"
 #include "../state/AppStore.h"
 #include "../util/Scheduler.h"
+#include <map>
+#include <set>
 
 namespace meon::core
 {
@@ -57,6 +59,19 @@ public:
     // 알림 (API 9): 팝오버를 열면 읽음
     void markNotificationsRead();
 
+    //==============================================================================
+    // 방 초대 (API 7.7·7.8): 친구 행의 "초대" → 3초 동안 "취소"(N초 뒤 초대가 가요) → "초대됨". 방이 바뀌면 지운다
+    struct InviteState
+    {
+        enum class Phase { none, pending, sent };
+        Phase phase = Phase::none;
+        juce::int64 deliverAtMs = 0;
+    };
+    InviteState inviteState (const juce::String& userId) const;
+    /** 실패하면 상태를 지우고 오류를 돌려준다 (already_invited 는 "초대됨") */
+    void invite (const juce::String& userId, Callback<InviteSent> = {});
+    void cancelInvite (const juce::String& userId);
+
 private:
     MeonApi& api;
     Realtime& realtime;
@@ -64,6 +79,10 @@ private:
     Scheduler& scheduler;
     bool homeVisible = false, friendRequestsLoaded = false;
     int roomsGeneration = 0;
+    struct InviteRec { InviteState state; juce::String inviteId; };
+    std::map<juce::String, InviteRec> invites;
+    std::set<juce::String> cancelOnArrival;   // 응답 전에 취소한 초대
+    juce::String invitesRoomId;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void handleJoin (const juce::String& roomId, Result<JoinResult>, Callback<JoinResult>);

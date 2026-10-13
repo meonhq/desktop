@@ -43,4 +43,21 @@ private:
     juce::VBlankAttachment vblank;
 };
 
+/** 미터 상자 (높이 19, 테두리 #E0E0E0, 면 #FCFCFC, 모서리 5, 여백 5·9, 막대 7px) — 멤버 행·내 오디오·모니터 */
+class MeterBox : public juce::Component
+{
+public:
+    explicit MeterBox (const juce::String& tooltip = {}) { addAndMakeVisible (meter); meter.setTooltip (tooltip); }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (col::softBg);
+        g.fillRoundedRectangle (r, metric::smallRadius);
+        g.setColour (col::line);
+        g.drawRoundedRectangle (r.reduced (0.5f), metric::smallRadius, 1.0f);
+    }
+    void resized() override { meter.setBounds (getLocalBounds().reduced (9, 0).withSizeKeepingCentre (getWidth() - 18, 7)); }
+    Meter meter;
+};
+
 } // namespace meon::ui

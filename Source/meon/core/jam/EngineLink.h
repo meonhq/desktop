@@ -43,6 +43,7 @@ public:
     void setSendMuted (bool) override;
     void setSendGainDb (float) override;
     void setSelfMonitor (bool) override;
+    void setSelfMonitorDb (float) override;
     void setMasterDb (float) override;
     void setMonitorMuted (bool) override;
     void setBufferMode (BufferMode) override;
@@ -57,6 +58,18 @@ public:
 
     bool sendChat (const EngineChat&) override;
 
+    bool loadFile (const juce::File&) override;
+    void closeFile() override;
+    bool hasFile() const override;
+    juce::String fileName() const override;
+    bool isFilePlaying() const override;
+    void setFilePlaying (bool) override;
+    double filePosition() const override;
+    double fileLength() const override;
+    void setFilePosition (double) override;
+    float fileGainDb() const override;
+    void setFileGainDb (float) override;
+
     /** 앱이 장치 관리자를 알려 준다 (입력 채널 수·장치 이름 로그용). 플러그인은 없음 */
     std::function<juce::AudioDeviceManager*()> deviceManager;
 
@@ -66,7 +79,10 @@ private:
     juce::ListenerList<Listener> listeners;
     int pcmFormatIndex = -1;
     bool selfMonitor = false, monitorMuted = false;
-    float masterDb = 0.0f;
+    float masterDb = 0.0f, selfMonitorDb = 0.0f;
+    class PlaybackFader;
+    std::unique_ptr<PlaybackFader> fader;
+    juce::File loadedFile;
 
     struct Event
     {

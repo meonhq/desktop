@@ -18,6 +18,7 @@ namespace
         j.bufferMode = p.getValue ("bufferMode", "latency") == "stable" ? meon::core::Engine::BufferMode::stable
                                                                         : meon::core::Engine::BufferMode::latency;
         j.selfMonitor = p.getBoolValue (plugin ? "selfMonitorPlugin" : "selfMonitorApp", false);   // 기본 끔 (Q30)
+        j.selfMonitorDb = (float) p.getDoubleValue ("selfMonitorDb", 0.0);
         j.keepMasterVolume = p.getBoolValue ("keepMasterVolume", true);
         j.masterDb = juce::jlimit (-30.0f, 6.0f, (float) p.getDoubleValue ("masterVolumeDb", 0.0));
         j.inputChannelStart = s.getInputChannelStart();
@@ -33,6 +34,7 @@ namespace
         p.setValue ("sendGainDb", j.sendGainDb);
         p.setValue ("bufferMode", j.bufferMode == meon::core::Engine::BufferMode::stable ? "stable" : "latency");
         p.setValue (plugin ? "selfMonitorPlugin" : "selfMonitorApp", j.selfMonitor);
+        p.setValue ("selfMonitorDb", j.selfMonitorDb);
         p.setValue ("keepMasterVolume", j.keepMasterVolume);
         p.setValue ("masterVolumeDb", j.masterDb);
         if (! plugin) s.setInputChannels (j.inputChannelStart, j.inputChannelCount);

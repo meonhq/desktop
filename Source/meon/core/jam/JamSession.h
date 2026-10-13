@@ -25,6 +25,7 @@ struct JamPrefs
     float sendGainDb = 0.0f;                      // -30 ~ +10
     Engine::BufferMode bufferMode = Engine::BufferMode::latency;
     bool selfMonitor = false;                     // 기본 끔 (앱·플러그인 모두, Q30)
+    float selfMonitorDb = 0.0f;                   // 합주 화면 내 행의 볼륨 (-60 ~ +6)
     bool keepMasterVolume = true;
     float masterDb = 0.0f;                        // -30 ~ +6 (Q10)
     int inputChannelStart = 0, inputChannelCount = 1;   // 앱만 (Q8: 입력 채널 위치)
@@ -57,6 +58,7 @@ public:
         virtual void jamMembersChanged() {}     // 목록·상태
         virtual void jamStatsChanged() {}       // 핑 등 (0.4초마다)
         virtual void jamSilenceChanged (bool warning) { juce::ignoreUnused (warning); }
+        virtual void jamFileChanged() {}        // 파일 열기·닫기·재생·정지
     };
 
     struct Options
@@ -93,6 +95,8 @@ public:
     float getSendGainDb() const { return prefs.sendGainDb; }
     void setSendGainDb (float);
     bool isSelfMonitor() const { return prefs.selfMonitor; }
+    float getSelfMonitorDb() const { return prefs.selfMonitorDb; }
+    void setSelfMonitorDb (float);
     void setSelfMonitor (bool);
     float getMasterDb() const { return masterDb; }
     void setMasterDb (float);
@@ -109,6 +113,19 @@ public:
     float monitorLevel (int ch) const { return engine.monitorLevel (ch); }
     int sendChannelCount() const      { return engine.sendChannelCount(); }
     bool isInputSilent() const        { return silence.isWarning(); }
+
+    // 파일 재생 (내 소리와 섞여 모두에게)
+    bool loadFile (const juce::File&);
+    void closeFile();
+    bool hasFile() const                { return engine.hasFile(); }
+    juce::String fileName() const       { return engine.fileName(); }
+    bool isFilePlaying() const          { return engine.isFilePlaying(); }
+    void setFilePlaying (bool);
+    double filePosition() const         { return engine.filePosition(); }
+    double fileLength() const           { return engine.fileLength(); }
+    void setFilePosition (double s)     { engine.setFilePosition (s); }
+    float fileGainDb() const            { return engine.fileGainDb(); }
+    void setFileGainDb (float db)       { engine.setFileGainDb (db); }
 
     ChatChannel& chat() { return chatChannel; }
     SessionLog& log() { return sessionLog; }

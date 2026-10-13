@@ -258,7 +258,7 @@ Friend FakeMeonServer::friendView (const String& friendId, const String& viewer)
     if (! online && u != nullptr && u->lastSeenAt > 0) f.lastSeenAt = json::isoTime (u->lastSeenAt);
     if (online && room != nullptr && room->type == "public")
         f.room = RoomRef { room->id, room->title, hasRoomFor (*room, viewer) && ! blockedEitherWay (viewer, room->hostId) };
-    f.canInvite = online && room == nullptr && u->settings.roomInvites == "friends" && roomOf (viewer) != nullptr;
+    f.canInvite = online && room == nullptr && u->settings.roomInvites == "friends";   // API 2.4·2.10: 상대 기준 (내 방 여부와 무관)
     return f;
 }
 

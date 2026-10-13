@@ -116,6 +116,7 @@ set(MEON_CORE_SOURCES
     Source/meon/core/auth/AuthController.cpp
     Source/meon/core/home/HomeController.h
     Source/meon/core/home/HomeController.cpp
+    Source/meon/core/util/Hangul.h
     Source/meon/core/jam/Engine.h
     Source/meon/core/jam/PeerState.h
     Source/meon/core/jam/SilenceDetector.h
@@ -157,6 +158,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/screens/OnboardingScreen.cpp
     Source/meon/ui/screens/HomeScreen.h
     Source/meon/ui/screens/HomeScreen.cpp
+    Source/meon/ui/screens/JamScreen.h
+    Source/meon/ui/screens/JamScreen.cpp
     Source/meon/ui/overlays/HomeOverlays.h
     Source/meon/ui/overlays/HomeOverlays.cpp
     Source/meon/ui/AppRoot.h
@@ -382,12 +385,6 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonSession.h
         Source/meon/MeonEditor.cpp
         Source/meon/MeonEditor.h
-        Source/meon/OnboardingScreens.cpp
-        Source/meon/OnboardingScreens.h
-        Source/meon/LobbyScreens.cpp
-        Source/meon/LobbyScreens.h
-        Source/meon/JamScreen.cpp
-        Source/meon/JamScreen.h
         Source/meon/SettingsScreen.cpp
         Source/meon/SettingsScreen.h
         Source/meon/MeonAudio.cpp
