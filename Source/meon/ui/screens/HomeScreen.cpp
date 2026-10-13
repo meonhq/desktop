@@ -197,24 +197,6 @@ struct HomeScreen::RoomList : juce::Component
 };
 
 //==============================================================================
-/** 입력 미터 상자 (높이 19, 테두리 #E0E0E0, 면 #FCFCFC, 여백 5·9, 막대 7px) */
-struct HomeScreen::MeterBox : juce::Component
-{
-    MeterBox() { addAndMakeVisible (meter); setTooltip(); }
-    void setTooltip() { meter.setTooltip (TXT ("입력 미터")); }
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat();
-        g.setColour (col::softBg);
-        g.fillRoundedRectangle (r, metric::smallRadius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::smallRadius, 1.0f);
-    }
-    void resized() override { meter.setBounds (getLocalBounds().reduced (9, 5).withSizeKeepingCentre (getWidth() - 18, 7)); }
-    Meter meter;
-};
-
-//==============================================================================
 /** 친구 목록 (뷰포트 안). 행: 아바타 32 + 상태 점, 이름 600 13, 상태 400 12, 참여 */
 struct HomeScreen::FriendList : juce::Component
 {
@@ -357,7 +339,7 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     audioCard.addAndMakeVisible (deviceName);
     audioCard.addAndMakeVisible (sendMute);
     audioCard.addAndMakeVisible (sendGain);
-    inputMeter = std::make_unique<MeterBox>();
+    inputMeter = std::make_unique<MeterBox> (TXT ("입력 미터"));
     audioCard.addAndMakeVisible (*inputMeter);
     sendMute.setTooltip (TXT ("다른 사람에게 보내는 내 소리"));
     sendGain.setTitle (TXT ("송출 레벨 · 더블클릭하면 0 dB"));

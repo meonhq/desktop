@@ -1,6 +1,6 @@
 #include "AppRoot.h"
 #include "Messages.h"
-#include "dev/DevJamScreen.h"
+#include "screens/JamScreen.h"
 
 namespace meon::ui
 {
@@ -40,8 +40,9 @@ void AppRoot::updateScreen()
     {
         if (jam == nullptr && core.jam() != nullptr)
         {
-            // 임시 합주 화면 (R6 에서 JamScreen 으로 바뀐다)
-            jam = std::make_unique<DevJamScreen> (core);
+            auto screen = std::make_unique<JamScreen> (core);
+            screen->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings(); };
+            jam = std::move (screen);
             addAndMakeVisible (*jam);
         }
         home->closeOverlays();

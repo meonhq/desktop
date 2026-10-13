@@ -60,6 +60,12 @@ void HomeController::stateChanged (StateKey k)
     }
     if (k == StateKey::me && ! store.state().me)
         friendRequestsLoaded = false;
+    if (k == StateKey::currentRoom)
+    {
+        const auto& room = store.state().currentRoom;
+        const auto id = room ? room->id : juce::String();
+        if (id != invitesRoomId) { invites.clear(); cancelOnArrival.clear(); invitesRoomId = id; }
+    }
 }
 
 //==============================================================================
@@ -198,6 +204,76 @@ void HomeController::markNotificationsRead()
     if (! store.state().hasUnreadNotifications) return;
     store.setHasUnread (false);
     api.markNotificationsRead ([] (Result<Done>) {});
+}
+
+//==============================================================================
+HomeController::InviteState HomeController::inviteState (const juce::String& userId) const
+{
+    auto it = invites.find (userId);
+    if (it == invites.end()) return {};
+    auto st = it->second.state;
+    if (st.phase == InviteState::Phase::pending && st.deliverAtMs > 0 && scheduler.nowMs() >= st.deliverAtMs)
+        st.phase = InviteState::Phase::sent;
+    return st;
+}
+
+void HomeController::invite (const juce::String& userId, Callback<InviteSent> cb)
+{
+    if (inviteState (userId).phase != InviteState::Phase::none) return;
+    auto& rec = invites[userId];
+    rec = {};
+    rec.state.phase = InviteState::Phase::pending;
+    rec.state.deliverAtMs = scheduler.nowMs() + 3000;   // 응답이 오면 서버의 deliver_at 으로 바꾼다
+    std::weak_ptr<bool> weak = alive;
+    api.sendInvite (userId, [this, weak, userId, cb] (Result<InviteSent> r)
+    {
+        if (weak.expired()) return;
+        if (cancelOnArrival.erase (userId) > 0)
+        {
+            if (r.ok()) api.cancelInvite (r.get().id, [] (Result<Done>) {});
+            if (cb) cb (std::move (r));
+            return;
+        }
+        auto it = invites.find (userId);
+        if (it == invites.end()) { if (cb) cb (std::move (r)); return; }
+        auto& rec = it->second;
+        if (r.ok())
+        {
+            rec.inviteId = r.get().id;
+            if (const auto at = json::parseIsoTime (r.get().deliverAt); at > 0) rec.state.deliverAtMs = at;
+        }
+        else if (r.code() == ErrorCode::alreadyInvited)
+        {
+            rec.state.phase = InviteState::Phase::sent;
+            rec.state.deliverAtMs = 0;
+        }
+        else
+        {
+            invites.erase (it);
+        }
+        if (cb) cb (std::move (r));
+    });
+}
+
+void HomeController::cancelInvite (const juce::String& userId)
+{
+    auto it = invites.find (userId);
+    if (it == invites.end() || inviteState (userId).phase != InviteState::Phase::pending) return;
+    auto& rec = it->second;
+    if (rec.inviteId.isEmpty()) { cancelOnArrival.insert (userId); invites.erase (it); return; }   // 응답 전: 응답이 오면 취소
+    const auto id = rec.inviteId;
+    invites.erase (it);   // 화면은 바로 "초대"로
+    std::weak_ptr<bool> weak = alive;
+    api.cancelInvite (id, [this, weak, userId] (Result<Done> r)
+    {
+        if (weak.expired() || r.ok()) return;
+        if (r.code() == ErrorCode::alreadyDelivered)
+        {
+            auto& rec = invites[userId];
+            rec.state.phase = InviteState::Phase::sent;
+            rec.state.deliverAtMs = 0;
+        }
+    });
 }
 
 } // namespace meon::core

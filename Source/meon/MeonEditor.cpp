@@ -4,9 +4,6 @@
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
 #include "ui/theme/LookAndFeel.h"
-#include "OnboardingScreens.h"
-#include "LobbyScreens.h"
-#include "JamScreen.h"
 #include "SettingsScreen.h"
 
 namespace meon
@@ -62,7 +59,6 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     settings = std::make_unique<MeonSettings>();
     session = std::make_unique<MeonSession> (processor, *settings, pluginMode);
     session->setAudioInfoProvider ([this] { return collectAudioInfo(); });
-    session->addListener (this);
 
     setOpaque (true);
     setWantsKeyboardFocus (true);
@@ -89,6 +85,8 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
         const auto scr = meon::devOptions()["screen"];
         if (scr == "home" || scr.startsWith ("home:"))
             devHomePreview = scr == "home" ? juce::String ("home") : scr.fromFirstOccurrenceOf (":", false, false);
+        else if (scr == "jam")
+            devHomePreview = "jam";   // 합주 화면 스냅숏: 가짜 계정으로 가입해 비공개 방을 만든다
     }
    #endif
     // R5 부터 로그인 뒤 화면은 새 홈(AppRoot)이고 합주는 새 로직(JamSession)만 쓴다.
@@ -112,11 +110,8 @@ MeonEditor::~MeonEditor()
     core.auth().removeListener (this);
     appRoot.reset();
     onboarding.reset();
-    session->removeListener (this);
     settingsOverlay = nullptr;
     settingsFadingOut = nullptr;
-    screen = nullptr;
-    fadingOut = nullptr;
     updater = nullptr;
     session = nullptr;
     settings = nullptr;
@@ -125,82 +120,6 @@ MeonEditor::~MeonEditor()
 }
 
 //==============================================================================
-MeonEditor::Screen MeonEditor::initialScreen() const
-{
-    if (session->isInRoom())
-        return Screen::Jam;   // 플러그인 창을 다시 연 경우
-    if (settings->getNickname().trim().isEmpty())
-        return Screen::Nickname;
-    if (! settings->isOnboardingDone (pluginMode))
-        return pluginMode ? Screen::Headphone : Screen::Audio;
-    return Screen::Home;
-}
-
-std::unique_ptr<juce::Component> MeonEditor::createScreen (Screen s)
-{
-    switch (s)
-    {
-        case Screen::Nickname:  return std::make_unique<NicknameScreen> (*this);
-        case Screen::Audio:     return std::make_unique<AudioDeviceScreen> (*this);
-        case Screen::Headphone: return std::make_unique<HeadphoneScreen> (*this);
-        case Screen::Level:     return std::make_unique<InputLevelScreen> (*this);
-        case Screen::Create:    return std::make_unique<CreateRoomScreen> (*this);
-        case Screen::Join:      return std::make_unique<JoinRoomScreen> (*this);
-        case Screen::Jam:       return std::make_unique<JamScreen> (*this);
-        case Screen::Home:
-        default:                return std::make_unique<HomeScreen> (*this);
-    }
-}
-
-void MeonEditor::go (Screen s, bool fade)
-{
-    if (pluginMode && (s == Screen::Audio || s == Screen::Level))
-        s = Screen::Home;
-    current = s;
-    showComponent (createScreen (s), fade);
-    if (s != Screen::Jam)
-        session->setServerPingInterval (s == Screen::Home ? 5000 : 15000);
-}
-
-void MeonEditor::showComponent (std::unique_ptr<juce::Component> c, bool fade)
-{
-    if (fadingOut != nullptr)
-    {
-        fader.cancel (fadingOut.get());
-        fadingOut = nullptr;
-    }
-
-    auto old = std::move (screen);
-    screen = std::move (c);
-    screen->setBounds (getLocalBounds());
-    addAndMakeVisible (*screen);
-    if (settingsOverlay != nullptr)
-        settingsOverlay->toFront (false);
-
-    if (old != nullptr)
-    {
-        if (fade)
-        {
-            fadingOut = std::move (old);
-            juce::Component::SafePointer<MeonEditor> safe (this);
-            fader.fade (fadingOut.get(), 1.0f, 0.0f, metric::fadeMs, [safe] { if (safe != nullptr) safe->finishFade(); });
-        }
-        else
-        {
-            old = nullptr;
-        }
-    }
-
-    if (fade)
-        fader.fade (screen.get(), 0.0f, 1.0f, metric::fadeMs);
-    grabKeyboardFocus();
-}
-
-void MeonEditor::finishFade()
-{
-    fadingOut = nullptr;
-}
-
 void MeonEditor::openSettings()
 {
     if (settingsOverlay != nullptr)
@@ -232,16 +151,7 @@ void MeonEditor::closeSettings()
 //==============================================================================
 bool MeonEditor::requestedQuit()
 {
-    if (session->isInRoom())
-    {
-        if (settingsOverlay != nullptr)
-            closeSettings();
-        if (auto* s = dynamic_cast<ScreenBase*> (screen.get()))
-            if (s->confirmLeaveForQuit())
-                return false;
-        session->leaveRoom();
-    }
-    // 새 합주 (R5~): 끄면 방에서 나간다. 확인 대화상자는 R6 의 합주 화면에서
+    // 끄면 방에서 나간다 (서버에 나가기를 알리고 엔진을 정리한다)
     if (core.store().state().inRoom())
         core.home().leaveRoom();
     saveAll();
@@ -250,14 +160,14 @@ bool MeonEditor::requestedQuit()
 
 void MeonEditor::startUpdate()
 {
-    if (! session->isInRoom() && ! core.store().state().inRoom())
+    if (! core.store().state().inRoom())
         updater->download();
 }
 
 void MeonEditor::installUpdate()
 {
     // 합주 중에 받기가 끝났으면 설치를 미룬다 (설정의 업데이트 버튼으로 다시 시작)
-    if (session->isInRoom() || core.store().state().inRoom())
+    if (core.store().state().inRoom())
         return;
     if (! updater->launchInstaller())
         return;
@@ -272,13 +182,6 @@ void MeonEditor::saveAll()
     settings->save();
     if (saveSettingsIfNeeded)
         saveSettingsIfNeeded();
-}
-
-void MeonEditor::copyRoomCodeToClipboard()
-{
-    auto code = session->getDisplayRoomCode();
-    if (code.isNotEmpty())
-        juce::SystemClipboard::copyTextToClipboard (code);
 }
 
 juce::String MeonEditor::getHostDescription() const
@@ -480,6 +383,13 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (TXT ("방장이 방을 닫았어요"), TXT ("금요일 밤 홍대 밴드 합주"));
     }
+    else if (p == "jam")
+    {
+        core::CreateRoom c;
+        c.type = "private";
+        c.title = TXT ("준호의 새벽 합주");
+        core.home().createRoom (c, [] (core::Result<core::RoomDetail>) {});
+    }
     else if (p == "disc")
     {
         if (auto* fake = core.fakeServer()) fake->devDropLink (60);
@@ -516,86 +426,7 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
         devScreen->setBounds (getLocalBounds());
         return;
     }
-    if (devHomePreview.isNotEmpty())
-        return;   // 새 홈 미리 보기는 가입이 끝난 뒤 showAppRoot 가 연다
-    const auto& keys = o.getAllKeys();
-    applyTestOptions (o["nickname"], o["screen"], keys.contains ("create"), o["join"], keys.contains ("enter"));
-}
-
-void MeonEditor::applyTestOptions (const juce::String& nickname, const juce::String& screenName,
-                                   bool autoCreateRoom, const juce::String& autoJoinCode, bool autoEnterJam)
-{
-    if (nickname.isNotEmpty())
-    {
-        settings->setNickname (nickname);
-        settings->setOnboardingDone (pluginMode, true);
-        session->applyNicknameChange();   // 이미 연결 중이면 새 이름으로 다시 연결
-    }
-
-    autoCreate = autoCreateRoom;
-    autoJoin = autoJoinCode.trim().toUpperCase();
-    autoEnter = autoEnterJam;
-
-    if (screenName.isNotEmpty())
-    {
-        const auto n = screenName.toLowerCase();
-        if (n.startsWith ("settings"))
-        {
-            go (Screen::Home, false);
-            openSettings();
-            const auto which = n.fromFirstOccurrenceOf (":", false, false);   // settings:input 처럼 드롭다운을 열어 둔다
-            if (auto* screen = which.isNotEmpty() ? dynamic_cast<SettingsScreen*> (settingsOverlay.get()) : nullptr)
-            {
-                juce::Component::SafePointer<SettingsScreen> sp (screen);
-                juce::Timer::callAfterDelay (700, [sp, which] { if (sp != nullptr) sp->showPopupForTest (which); });
-            }
-        }
-        else if (n == "nick" || n == "nickname") go (Screen::Nickname, false);
-        else if (n == "audio")     go (Screen::Audio, false);
-        else if (n == "hp" || n == "headphone")  go (Screen::Headphone, false);
-        else if (n == "level")     go (Screen::Level, false);
-        else if (n == "create")    go (Screen::Create, false);
-        else if (n == "join")      go (Screen::Join, false);
-        else if (n == "jam")       go (Screen::Jam, false);
-        else                       go (Screen::Home, false);
-    }
-    runAutoRoomAction();
-}
-
-void MeonEditor::runAutoRoomAction()
-{
-    if (! session->isServerConnected() || session->getRoomState() != MeonSession::RoomState::None)
-        return;
-    if (autoCreate)
-    {
-        autoCreate = false;
-        session->createRoom();
-        go (Screen::Create);
-    }
-    else if (autoJoin.isNotEmpty())
-    {
-        const auto code = autoJoin;
-        autoJoin.clear();
-        go (Screen::Join);
-        session->joinRoom (code);
-    }
-}
-
-void MeonEditor::sessionStateChanged()
-{
-    runAutoRoomAction();
-}
-
-void MeonEditor::roomJoined()
-{
-    if (current == Screen::Join || (autoEnter && current == Screen::Create))
-        go (Screen::Jam);
-}
-
-void MeonEditor::roomLeft()
-{
-    if (current == Screen::Jam)
-        go (Screen::Home);
+    // 홈·합주 미리 보기(--screen=home…|jam)는 가입이 끝난 뒤 showAppRoot 가 연다
 }
 
 //==============================================================================
@@ -606,10 +437,6 @@ void MeonEditor::paint (juce::Graphics& g)
 
 void MeonEditor::resized()
 {
-    if (screen != nullptr)
-        screen->setBounds (getLocalBounds());
-    if (fadingOut != nullptr)
-        fadingOut->setBounds (getLocalBounds());
     if (settingsOverlay != nullptr)
         settingsOverlay->setBounds (getLocalBounds());
     if (settingsFadingOut != nullptr)
@@ -666,8 +493,6 @@ bool MeonEditor::keyPressed (const juce::KeyPress& k)
             return s->handleShortcut (k);
         return false;
     }
-    if (auto* s = dynamic_cast<ScreenBase*> (screen.get()))
-        return s->handleShortcut (k);
     return false;
 }
 

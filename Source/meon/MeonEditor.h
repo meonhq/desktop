@@ -29,12 +29,9 @@ namespace ui { class OnboardingScreen; class LookAndFeel; class AppRoot; }
 
 class MeonEditor : public juce::AudioProcessorEditor,
                    public ShellHooks,
-                   private MeonSession::Listener,
                    private core::AuthController::Listener
 {
 public:
-    enum class Screen { Nickname, Audio, Headphone, Level, Home, Create, Join, Jam };
-
     explicit MeonEditor (SonobusAudioProcessor&);
     ~MeonEditor() override;
 
@@ -52,8 +49,6 @@ public:
     bool isPluginMode() const               { return pluginMode; }
     juce::AudioDeviceManager* deviceManager() const { return getAudioDeviceManager ? getAudioDeviceManager() : nullptr; }
 
-    void go (Screen s, bool fade = true);
-    Screen getCurrentScreen() const { return current; }
     void openSettings();
     void closeSettings();
     bool isSettingsOpen() const { return settingsOverlay != nullptr; }
@@ -63,12 +58,7 @@ public:
     void startUpdate();
     void installUpdate();
 
-    void copyRoomCodeToClipboard();
     void saveAll();
-
-    /** 개발·테스트용 실행 옵션 (독립 앱 명령줄): 닉네임 지정, 특정 화면 열기, 자동으로 방 만들기/입장 */
-    void applyTestOptions (const juce::String& nickname, const juce::String& screenName,
-                           bool autoCreateRoom, const juce::String& autoJoinCode, bool autoEnterJam);
 
     juce::String getHostDescription() const;
     juce::String getVersionText() const;
@@ -102,8 +92,6 @@ private:
     Fader fader;
     juce::TooltipWindow tooltipWindow { this, 500 };   // 좁은 플러그인 창의 서버 상태 툴팁
 
-    std::unique_ptr<juce::Component> screen;
-    std::unique_ptr<juce::Component> fadingOut;
     std::unique_ptr<juce::Component> settingsOverlay;
     std::unique_ptr<juce::Component> settingsFadingOut;
     std::unique_ptr<juce::Component> devScreen;   // 개발용 화면 (--screen=widgets)
@@ -119,23 +107,8 @@ private:
     void showAppRoot();
     void applyHomePreview();
     bool devPreview = false, devJam = false, devSignupStarted = false;
-    juce::String devHomePreview;   // --screen=home[:create|filter|code|notif|fail|toast|disc] (스냅숏용)
-    Screen current = Screen::Home;
-    bool quitAfterLeave = false;
-    bool autoCreate = false, autoEnter = false;
-    juce::String autoJoin;
-
-    std::unique_ptr<juce::Component> createScreen (Screen);
-    void showComponent (std::unique_ptr<juce::Component> c, bool fade);
-    void finishFade();
-    Screen initialScreen() const;
+    juce::String devHomePreview;   // --screen=home[:create|filter|code|notif|fail|toast|disc] | jam (스냅숏용)
     MeonSessionLog::AudioInfo collectAudioInfo() const;
-
-    // Session::Listener
-    void roomJoined() override;
-    void roomLeft() override;
-    void sessionStateChanged() override;
-    void runAutoRoomAction();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MeonEditor)
 };

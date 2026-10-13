@@ -199,6 +199,40 @@ public:
             expect (! r.store.state().hasUnreadNotifications);
         }
 
+        beginTest ("invite friend: pending 3s then sent; cancel inside 3s");
+        {
+            using P = HomeController::InviteState::Phase;
+            Rig r;
+            CreateRoom c;
+            c.type = "private";
+            c.title = "invite room";
+            r.home.createRoom (c, [] (Result<RoomDetail>) {});
+            r.wait();
+            expect (r.store.state().inRoom());
+            juce::String target, second;
+            for (auto& f : r.store.state().friends)
+                if (f.status == "online" && f.canInvite) { if (target.isEmpty()) target = f.user.id; else if (second.isEmpty()) second = f.user.id; }
+            expect (target.isNotEmpty() && second.isNotEmpty());
+
+            r.home.invite (target);
+            expect (r.home.inviteState (target).phase == P::pending);
+            r.wait (500);
+            expect (r.home.inviteState (target).phase == P::pending);
+            r.wait (3000);
+            expect (r.home.inviteState (target).phase == P::sent);
+
+            r.home.invite (second);
+            r.wait (500);
+            r.home.cancelInvite (second);
+            expect (r.home.inviteState (second).phase == P::none);
+            r.wait (4000);
+            expect (r.home.inviteState (second).phase == P::none);
+
+            r.home.leaveRoom();
+            r.wait();
+            expect (r.home.inviteState (target).phase == P::none);   // 방이 바뀌면 지운다
+        }
+
         beginTest ("accept invite joins the room; dismiss removes it");
         {
             Rig r;

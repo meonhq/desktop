@@ -93,11 +93,13 @@ public:
         }
     }
 
-    void addSystem (const juce::String& text)
+    /** 시스템 줄. aboutUser 가 있으면 화면이 그 사람의 지금 이름으로 다시 쓸 수 있다 (가짜 기간엔 프로필이 늦게 온다) */
+    void addSystem (const juce::String& text, const juce::String& aboutUser = {})
     {
         Message m;
         m.kind = Message::Kind::system;
         m.text = text;
+        m.fromUser = aboutUser;
         m.time = scheduler.nowMs();
         messages.push_back (m);
         changed();

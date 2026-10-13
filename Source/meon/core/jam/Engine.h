@@ -76,6 +76,7 @@ public:
     virtual void setSendMuted (bool) = 0;
     virtual void setSendGainDb (float) = 0;
     virtual void setSelfMonitor (bool on) = 0;
+    virtual void setSelfMonitorDb (float) {}            // 셀프 모니터 크기 (합주 화면 내 행의 볼륨)
     virtual void setMasterDb (float) = 0;
     virtual void setMonitorMuted (bool) = 0;   // 내가 듣는 모든 소리 (Q12)
     virtual void setBufferMode (BufferMode) = 0;
@@ -90,6 +91,20 @@ public:
     virtual juce::String audioDescription() const = 0;  // 로그용 장치 정보
 
     virtual bool sendChat (const EngineChat&) = 0;
+
+    // 파일 재생 (합주 화면의 파일 플레이어, 내 소리와 섞여 모두에게 간다). 기본은 없음 (테스트 엔진)
+    virtual bool loadFile (const juce::File&)       { return false; }
+    virtual void closeFile()                        {}
+    virtual bool hasFile() const                    { return false; }
+    virtual juce::String fileName() const           { return {}; }
+    virtual bool isFilePlaying() const              { return false; }
+    virtual void setFilePlaying (bool)              {}
+    virtual double filePosition() const             { return 0.0; }   // 초
+    virtual double fileLength() const               { return 0.0; }
+    virtual void setFilePosition (double)           {}
+    virtual float fileGainDb() const                { return 0.0f; }  // -30 ~ +10
+    virtual void setFileGainDb (float)              {}
+    static constexpr float fileMinDb = -30.0f, fileMaxDb = 10.0f;
 };
 
 } // namespace meon::core

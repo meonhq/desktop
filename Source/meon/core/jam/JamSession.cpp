@@ -335,7 +335,7 @@ void JamSession::tick()
             case PeerState::Change::connected:
                 membersChangedNow = needProfile = true;
                 if (sessionLog.isActive()) sessionLog.addEvent ("peerConnected", user);
-                if (phase == Phase::inRoom) chatChannel.addSystem (nameOf (user) + juce::String (juce::CharPointer_UTF8 ("님이 입장했어요")));
+                if (phase == Phase::inRoom) chatChannel.addSystem (nameOf (user) + juce::String (juce::CharPointer_UTF8 ("님이 입장했어요")), user);
                 break;
             case PeerState::Change::interrupted:
                 membersChangedNow = true;
@@ -519,6 +519,30 @@ void JamSession::resetMember (const String& u)
 //==============================================================================
 // 나
 
+bool JamSession::loadFile (const juce::File& f)
+{
+    if (! engine.loadFile (f)) return false;
+    if (sessionLog.isActive()) sessionLog.addEvent ("fileLoaded", f.getFileName() + " (" + String (engine.fileLength(), 1) + " s)");
+    listeners.call ([] (Listener& l) { l.jamFileChanged(); });
+    return true;
+}
+
+void JamSession::closeFile()
+{
+    if (! engine.hasFile()) return;
+    engine.closeFile();
+    if (sessionLog.isActive()) sessionLog.addEvent ("fileClosed", {});
+    listeners.call ([] (Listener& l) { l.jamFileChanged(); });
+}
+
+void JamSession::setFilePlaying (bool play)
+{
+    if (! engine.hasFile() || play == engine.isFilePlaying()) return;
+    engine.setFilePlaying (play);
+    if (sessionLog.isActive()) sessionLog.addEvent (play ? "filePlay" : "fileStop", String (engine.filePosition(), 1) + " s");
+    listeners.call ([] (Listener& l) { l.jamFileChanged(); });
+}
+
 void JamSession::setSendMuted (bool b)
 {
     engine.setSendMuted (b);
@@ -543,6 +567,13 @@ void JamSession::setSelfMonitor (bool on)
     savePrefs();
 }
 
+void JamSession::setSelfMonitorDb (float db)
+{
+    prefs.selfMonitorDb = juce::jlimit (-60.0f, 6.0f, db);
+    applyMonitor();
+    savePrefs();
+}
+
 void JamSession::setMasterDb (float db)
 {
     masterDb = juce::jlimit (-30.0f, 6.0f, db);
@@ -561,6 +592,7 @@ void JamSession::applyMonitor()
 {
     engine.setMasterDb (masterDb);
     engine.setSelfMonitor (prefs.selfMonitor);
+    engine.setSelfMonitorDb (prefs.selfMonitorDb);
     engine.setMonitorMuted (monitorMuted);
 }
 
