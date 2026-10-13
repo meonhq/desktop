@@ -18,6 +18,8 @@ public:
     Meter();
     void setSource (int channels, Source);
     void setActive (bool);   // 꺼지면 소리가 없는 것으로 (−60 으로 내려감)
+    void setGreyed (bool);   // 움직임은 그대로, 막대·피크를 회색으로 (송출 정지 중)
+    bool isGreyed() const { return greyed; }
     bool isClipped() const { return clipped; }
     void resetClip();
 
@@ -38,7 +40,7 @@ private:
     struct Chan { float db = -60.0f, peak = -60.0f; double peakAt = 0.0; };
     std::vector<Chan> chans;
     Source source;
-    bool active = true, clipped = false;
+    bool active = true, clipped = false, greyed = false;
     double lastMs = 0.0;
     juce::VBlankAttachment vblank;
 };

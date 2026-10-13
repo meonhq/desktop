@@ -8,6 +8,7 @@
 //   smallPrimary 19px 노랑 (수락·확인)                     500 12px
 //   smallDanger  19px 빨간 글자 (친구 삭제·차단·내보내기)
 //   largeSecondary 40px 흰 면 + #D5D5D5 (온보딩 "이전")      600 13px #767676
+//   cancel       32px 흰 면 + #D5D5D5 (취소·거절·중복 확인)  600 13px #767676 → 호버 #1A1A1A
 //   link         글자만 (전송)                             500 13px #767676 → 호버 #1A1A1A
 //   linkSmall    글자만 (비밀번호를 잊었나요?)             500 12px #767676 → 호버 #1A1A1A
 //   linkUnderline 밑줄 글자 (회원가입·로그인·코드 다시 받기) 500 12px #1A1A1A

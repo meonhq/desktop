@@ -380,6 +380,8 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     addCard.setTitle (TXT ("친구 추가"));
     addCard.addAndMakeVisible (addInput);
     addCard.addAndMakeVisible (addSend);
+    addCard.addChildComponent (addNote);
+    addNote.setLineHeight (15.0f);   // 긴 오류 문구는 줄을 바꾼다
     addInput.setFontPx (14.0f);
     addInput.setBorderless (true);
     addInput.setMaxLength (16);
@@ -849,7 +851,12 @@ void HomeScreen::resized()
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
     {
-        const int addH = 48 + 1 + addRowH + (addMessage.isNotEmpty() ? 15 + 12 - 6 : 0);
+        // 결과 문구: 입력 줄 아래 (디자인 padding 0 18px 12px, margin-top -6px)
+        addNote.setText (addMessage);
+        addNote.setVisible (addMessage.isNotEmpty());
+        const int noteW = sideW - 2 - metric::padX * 2;
+        const int noteH = addMessage.isNotEmpty() ? juce::jmax (15, addNote.getHeightForWidth (noteW)) : 0;
+        const int addH = 48 + 1 + addRowH + (addMessage.isNotEmpty() ? noteH + 12 - 6 : 0);
         addCard.setBounds (side.removeFromBottom (addH));
         side.removeFromBottom (metric::gap);
         friendsCard.setBounds (friendsOpen ? side : side.withHeight (48));
@@ -860,7 +867,9 @@ void HomeScreen::resized()
         friendList->setSize (fc.getWidth(), juce::jmax (fc.getHeight(), friendList->preferredHeight()));
         friendList->resized();
 
-        auto row = addCard.contentBounds().withHeight (addRowH).reduced (metric::padX, 12);
+        const auto ac = addCard.contentBounds();
+        addNote.setBounds (ac.getX() + metric::padX, ac.getY() + addRowH - 6, ac.getWidth() - metric::padX * 2, noteH);
+        auto row = ac.withHeight (addRowH).reduced (metric::padX, 12);
         const int sw = addSend.getIdealWidth();
         addSend.setBounds (row.removeFromRight (sw));
         row.removeFromRight (8);

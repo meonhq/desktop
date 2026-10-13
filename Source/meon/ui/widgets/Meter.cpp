@@ -18,6 +18,13 @@ void Meter::setSource (int channels, Source s)
 
 void Meter::setActive (bool a) { active = a; }
 
+void Meter::setGreyed (bool g)
+{
+    if (greyed == g) return;
+    greyed = g;
+    repaint();
+}
+
 void Meter::resetClip()
 {
     clipped = false;
@@ -107,7 +114,8 @@ void Meter::paint (juce::Graphics& g)
         clip.addRoundedRectangle (row, 1.0f);
         g.reduceClipRegion (clip);
 
-        g.setGradientFill (grad);
+        if (greyed) g.setColour (col::inkFaint);
+        else        g.setGradientFill (grad);
         g.fillRect (row);
         const float p = dbPos (c.db);
         g.setColour (col::meterCover);
@@ -117,7 +125,7 @@ void Meter::paint (juce::Graphics& g)
         const float pp = clipped ? juce::jmax (dbPos (c.peak), 0.9f) : dbPos (c.peak);
         if (c.peak > -59.0f || clipped)
         {
-            g.setColour (clipped ? col::meterRed : colourAt (pp));
+            g.setColour (greyed ? col::inkFaint : clipped ? col::meterRed : colourAt (pp));
             g.fillRect (juce::Rectangle<float> (row.getX() + pp * w - 1.0f, row.getY(), 2.0f, row.getHeight()));
         }
     }
