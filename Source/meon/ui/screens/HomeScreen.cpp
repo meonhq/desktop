@@ -621,7 +621,7 @@ void HomeScreen::showModal (std::unique_ptr<Modal> m)
     popover.reset();
     notifications.reset();
     modal = std::move (m);
-    modal->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<HomeScreen> (this)]
+    modal->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
                                                                { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
     addAndMakeVisible (*modal);
     modal->setBounds (getLocalBounds());
@@ -634,7 +634,7 @@ void HomeScreen::openJoinCode()
     auto* raw = m.get();
     m->onFailure = [this] (const core::ApiError& e)
     {
-        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<HomeScreen> (this), e]
+        juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf, e]
         {
             if (safe == nullptr) return;
             safe->modal.reset();
@@ -659,7 +659,7 @@ void HomeScreen::openFilter()
     m->onApply = [this] (const core::RoomFilter& f)
     {
         filter = f;
-        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<HomeScreen> (this)]
+        juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
         {
             if (safe == nullptr) return;
             safe->modal.reset();
@@ -682,7 +682,7 @@ void HomeScreen::toggleNotifications()
     core.home().markNotificationsRead();
     notifications = std::make_unique<NotificationList> (core);
     popover = std::make_unique<Popover> (TXT ("알림"));
-    popover->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<HomeScreen> (this)]
+    popover->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
                                                                  { if (safe != nullptr) { safe->popover.reset(); safe->notifications.reset(); } }); };
     notifications->onSizeChanged = [this] { resized(); };
     popover->setContent (notifications.get(), notifications->getPreferredHeight());

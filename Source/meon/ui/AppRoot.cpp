@@ -116,7 +116,7 @@ void AppRoot::syncInviteToasts()
         // 버튼 콜백 안에서 토스트가 지워지지 않게 다음 메시지에서 처리한다
         t->onAction = [this, id]
         {
-            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<AppRoot> (this), id]
+            juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf, id]
             {
                 if (safe == nullptr) return;
                 safe->core.home().acceptInvite (id, [safe] (core::Result<core::JoinResult> r)
@@ -127,7 +127,7 @@ void AppRoot::syncInviteToasts()
         };
         t->onClose = [this, id]
         {
-            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<AppRoot> (this), id]
+            juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf, id]
             {
                 if (safe != nullptr) safe->core.home().dismissInvite (id);
             });
@@ -186,11 +186,11 @@ void AppRoot::showJoinFailure (const core::ApiError& e)
 void AppRoot::showJoinFailure (core::HomeController::JoinFailure f)
 {
     fail = std::make_unique<JoinFailDialog>();
-    fail->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<AppRoot> (this)] { if (safe != nullptr) safe->fail.reset(); }); };
+    fail->onClose = [this] { juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) safe->fail.reset(); }); };
     fail->onUpdate = [this]
     {
         if (update.start) update.start();
-        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<AppRoot> (this)] { if (safe != nullptr) safe->fail.reset(); });
+        juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) safe->fail.reset(); });
     };
     fail->show (f);
     addAndMakeVisible (*fail);
