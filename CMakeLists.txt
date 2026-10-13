@@ -162,7 +162,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         VST3_CATEGORIES "${vst3cats}"
         AAX_CATEGORY "AAX_ePlugInCategory_None"
 
-	LV2URI "https://github.com/unzzonzz/meon/lv2/meon"
+	LV2URI "https://github.com/meonhq/desktop/lv2/meon"
 	
         # mac settings
         HARDENED_RUNTIME_ENABLED TRUE

@@ -37,7 +37,7 @@ SettingsScreen::Content::Content (SettingsScreen& o)
       driverPanelButton (TXT ("드라이버 설정")),
       saveButton (TXT ("저장")), logButton (TXT ("로그 폴더 열기")), updateButton (TXT ("다시 확인")),
       licenseLink (o.plugin ? TXT ("전문 보기") : TXT ("라이선스 전문 보기"), "https://www.gnu.org/licenses/gpl-3.0.html", o.plugin ? 13.0f : 14.0f),
-      sourceLink (TXT ("소스 코드"), "https://github.com/unzzonzz/meon", 14.0f),
+      sourceLink (TXT ("소스 코드"), "https://github.com/meonhq/desktop", 14.0f),
       showUpdate (! o.plugin && MeonUpdater::isSupported())
 {
     meter.setCornerRadius (3.0f);

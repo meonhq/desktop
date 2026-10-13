@@ -161,7 +161,7 @@ AudioDeviceScreen::AudioDeviceScreen (MeonEditor& e)
     rescanButton.setFont (13.0f, 500);
     asioGuideButton.setFont (13.0f, 500);
     rescanButton.onClick = [this] { if (auto* t = deviceType()) t->scanForDevices(); refreshDevices(); };
-    asioGuideButton.onClick = [] { juce::URL ("https://github.com/unzzonzz/meon/blob/main/doc/INSTALL.md#windows-asio").launchInDefaultBrowser(); };
+    asioGuideButton.onClick = [] { juce::URL ("https://github.com/meonhq/desktop/blob/main/doc/INSTALL.md#windows-asio").launchInDefaultBrowser(); };
     addChildComponent (warning);
     warning.addChildComponent (rescanButton);
     warning.addChildComponent (asioGuideButton);

@@ -17,10 +17,10 @@ namespace meon
 namespace
 {
    #if JUCE_MAC
-    const char* const releaseBase = "https://github.com/unzzonzz/meon/releases/download/mac-latest/";
+    const char* const releaseBase = "https://github.com/meonhq/desktop/releases/download/mac-latest/";
     const char* const packageName = "MEON-mac.zip";
    #else
-    const char* const releaseBase = "https://github.com/unzzonzz/meon/releases/download/windows-latest/";
+    const char* const releaseBase = "https://github.com/meonhq/desktop/releases/download/windows-latest/";
     const char* const packageName = "MEON-Installer.exe";
    #endif
 
