@@ -65,7 +65,7 @@ extern juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
  #define MEON_RESTORE_POINT_MACRO 1
 #endif
 #include "SonoStandaloneFilterWindow.h"
-#include "meon/MeonEditor.h"
+#include "meon/shell/ShellHooks.h"
 #if MEON_RESTORE_COMPONENT_MACRO
  #define Component juce::Component
 #endif
@@ -191,9 +191,10 @@ public:
     String loadSetupFilename;
     String cmdlineArgUrl;
 
-    // MEON 개발·테스트 옵션
-    String meonScreen, meonNickname, meonJoinCode, meonWindow, meonSnapshot;
-    bool meonCreate = false, meonEnter = false, meonNoInput = false;
+    // MEON 개발용 실행 옵션 (MEON_DEV_OPTIONS 빌드에서만 해석, 배포 빌드에는 없음)
+    StringPairArray meonDev;
+    String meonWindow, meonSnapshot;
+    bool meonNoInput = false;
 
     virtual StandalonePluginHolder* createHeadlessPlugin ()
     {
@@ -495,18 +496,21 @@ public:
             }
         }
 
-        // MEON 개발·테스트 옵션
-        meonNickname = arglist.removeValueForOption ("--nickname");
-        meonScreen   = arglist.removeValueForOption ("--screen");
-        meonJoinCode = arglist.removeValueForOption ("--join");
-        meonWindow   = arglist.removeValueForOption ("--window");
-        meonSnapshot = arglist.removeValueForOption ("--snapshot");
-        meonCreate   = arglist.removeOptionIfFound ("--create");
-        meonEnter    = arglist.removeOptionIfFound ("--enter");
-        meonNoInput  = arglist.removeOptionIfFound ("--no-input");
-        if (meonNickname.isNotEmpty() || meonScreen.isNotEmpty() || meonCreate || meonJoinCode.isNotEmpty() || meonNoInput)
-            std::cerr << "MEON test options: nickname=" << meonNickname << " screen=" << meonScreen << " create=" << (int) meonCreate
-                      << " join=" << meonJoinCode << " noinput=" << (int) meonNoInput << " window=" << meonWindow << std::endl;
+       #if MEON_DEV_OPTIONS
+        // MEON 개발용 실행 옵션: 남은 인자 중 --key=value / --flag 를 모두 가져간다
+        {
+            StringArray rest;
+            for (auto& a : arglist.arguments)
+                rest.add (a.text);
+            meonDev = meon::parseDevOptions (rest);
+            arglist = ArgumentList (arglist.executableName, rest);
+            meonWindow   = meonDev["window"];
+            meonSnapshot = meonDev["snapshot"];
+            meonNoInput  = meonDev.containsKey ("no-input");
+            if (meonDev.size() > 0)
+                std::cerr << "MEON dev options: " << meonDev.getDescription() << std::endl;
+        }
+       #endif
 
         // what args remain? assume it's a URL
         if (arglist.arguments.size() > 0) {
@@ -547,14 +551,16 @@ public:
 
             if (auto * sonoproc = dynamic_cast<SonobusAudioProcessor*>(mainWindow->pluginHolder->processor.get())) {
                 if (sonoproc->hasEditor()) {
-                    if (auto * meonEditor = dynamic_cast<meon::MeonEditor*>(sonoproc->createEditorIfNeeded())) {
-                        meonEditor->saveSettingsIfNeeded = [this]() {
+                    if (auto * hooks = dynamic_cast<meon::ShellHooks*>(sonoproc->createEditorIfNeeded())) {
+                        hooks->saveSettingsIfNeeded = [this]() {
                             mainWindow->pluginHolder->savePluginState();
                             mainWindow->pluginHolder->saveAudioDeviceState();
                             appProperties.saveIfNeeded();
                         };
-                        if (meonNickname.isNotEmpty() || meonScreen.isNotEmpty() || meonCreate || meonJoinCode.isNotEmpty())
-                            meonEditor->applyTestOptions (meonNickname, meonScreen, meonCreate, meonJoinCode, meonEnter);
+                       #if MEON_DEV_OPTIONS
+                        if (meonDev.size() > 0)
+                            hooks->applyDevOptions (meonDev);
+                       #endif
                     }
             }
             }
@@ -871,8 +877,8 @@ public:
         
         if (mainWindow.get() != nullptr) {
             if (auto * editor = mainWindow->getEditor()) {
-                if (auto * meonEditor = dynamic_cast<meon::MeonEditor*>(editor)) {
-                    if (!meonEditor->requestedQuit()) {
+                if (auto * hooks = dynamic_cast<meon::ShellHooks*>(editor)) {
+                    if (!hooks->requestedQuit()) {
                         // they'll handle it
                         return;
                     }

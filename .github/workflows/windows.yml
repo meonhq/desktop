@@ -62,6 +62,8 @@ jobs:
         run: cmake --build build --config Release --parallel --target MEON_Standalone MEON_VST3
 
       - name: 화면 확인용 스냅숏
+        # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
+        if: env.RELEASE != 'true'
         continue-on-error: true
         run: |
           mkdir -p snapshots
