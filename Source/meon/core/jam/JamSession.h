@@ -26,6 +26,7 @@ struct JamPrefs
     Engine::BufferMode bufferMode = Engine::BufferMode::latency;
     bool selfMonitor = false;                     // 기본 끔 (앱·플러그인 모두, Q30)
     float selfMonitorDb = 0.0f;                   // 합주 화면 내 행의 볼륨 (-60 ~ +6)
+    int selfMonitorPan = 0;                       // 합주 화면 내 행의 패닝 (-100 ~ 100, 모니터에만)
     bool keepMasterVolume = true;
     float masterDb = 0.0f;                        // -30 ~ +6 (Q10)
     int inputChannelStart = 0, inputChannelCount = 1;   // 앱만 (Q8: 입력 채널 위치)
@@ -101,6 +102,8 @@ public:
     bool isSelfMonitor() const { return prefs.selfMonitor; }
     float getSelfMonitorDb() const { return prefs.selfMonitorDb; }
     void setSelfMonitorDb (float);
+    int getSelfMonitorPan() const { return prefs.selfMonitorPan; }
+    void setSelfMonitorPan (int);
     void setSelfMonitor (bool);
     float getMasterDb() const { return masterDb; }
     void setMasterDb (float);

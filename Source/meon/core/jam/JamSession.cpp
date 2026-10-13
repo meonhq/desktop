@@ -446,6 +446,7 @@ void JamSession::writeSample (juce::int64)
         { "inputSilent", silence.isWarning() },
         { "sendChannels", engine.sendChannelCount() },
         { "masterDb", masterDb }, { "monitorMuted", monitorMuted }, { "selfMonitor", prefs.selfMonitor },
+        { "selfMonitorPan", prefs.selfMonitorPan },
         { "bufferMode", prefs.bufferMode == Engine::BufferMode::latency ? "latency" : "stable" },
         { "memberCount", (int) connection.members.size() },
         { "members", arr } }));
@@ -615,6 +616,13 @@ void JamSession::setSelfMonitorDb (float db)
     savePrefs();
 }
 
+void JamSession::setSelfMonitorPan (int pan)
+{
+    prefs.selfMonitorPan = juce::jlimit (-100, 100, pan);
+    applyMonitor();
+    savePrefs();
+}
+
 void JamSession::setMasterDb (float db)
 {
     masterDb = juce::jlimit (-30.0f, 6.0f, db);
@@ -634,6 +642,7 @@ void JamSession::applyMonitor()
     engine.setMasterDb (masterDb);
     engine.setSelfMonitor (prefs.selfMonitor);
     engine.setSelfMonitorDb (prefs.selfMonitorDb);
+    engine.setSelfMonitorPan (prefs.selfMonitorPan);
     engine.setMonitorMuted (monitorMuted);
 }
 

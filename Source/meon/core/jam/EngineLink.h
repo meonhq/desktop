@@ -44,6 +44,7 @@ public:
     void setSendGainDb (float) override;
     void setSelfMonitor (bool) override;
     void setSelfMonitorDb (float) override;
+    void setSelfMonitorPan (int) override;
     void setEarGuardLevel (int) override;
     void setMasterDb (float) override;
     void setMonitorMuted (bool) override;
@@ -81,6 +82,7 @@ private:
     int pcmFormatIndex = -1;
     bool selfMonitor = false, monitorMuted = false;
     float masterDb = 0.0f, selfMonitorDb = 0.0f;
+    int selfMonitorPan = 0;
     class PlaybackFader;
     std::unique_ptr<PlaybackFader> fader;
     juce::File loadedFile;

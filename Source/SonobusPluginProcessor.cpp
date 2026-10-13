@@ -2081,6 +2081,13 @@ void SonobusAudioProcessor::setInputMonitor(int changroup, float mgain)
     }
 }
 
+void SonobusAudioProcessor::setInputMonitorPan(int changroup, float pan)
+{
+    if (changroup >= 0 && changroup < MAX_CHANGROUPS) {
+        mInputChannelGroups[changroup].params.monitorPan = jlimit(-1.0f, 1.0f, pan);
+    }
+}
+
 float SonobusAudioProcessor::getInputMonitor(int changroup)
 {
     if (changroup >= 0 && changroup < MAX_CHANGROUPS) {
