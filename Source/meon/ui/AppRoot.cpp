@@ -1,5 +1,6 @@
 #include "AppRoot.h"
 #include "Messages.h"
+#include "../MeonSettings.h"
 #include "screens/JamScreen.h"
 #include "overlays/JamOverlays.h"
 
@@ -119,11 +120,13 @@ void AppRoot::syncInviteToasts()
     }
     if (s.inRoom()) { layoutToasts(); return; }
     // 새 초대
+    bool added = false;
     for (auto& inv : s.invites)
     {
         bool shown = false;
         for (auto* t : toasts) if (t->key == inv.id) shown = true;
         if (shown) continue;
+        added = true;
         auto* t = toasts.add (new Toast (inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title, TXT ("입장")));
         t->key = inv.id;
         const auto id = inv.id;
@@ -149,6 +152,13 @@ void AppRoot::syncInviteToasts()
         addAndMakeVisible (t);
     }
     layoutToasts();
+    // 초대 토스트 소리 (설정 › 알림). 합주 중에는 울리지 않는다 (여기까지 왔으면 방 밖). 잠정: 시스템 알림음 (Q13)
+    if (added)
+    {
+        MeonSettings settings;
+        if (settings.properties().getBoolValue ("toastSound", true))
+            juce::LookAndFeel::getDefaultLookAndFeel().playAlertSound();
+    }
 }
 
 void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub)
@@ -210,6 +220,18 @@ void AppRoot::showJoinFailure (core::HomeController::JoinFailure f)
     addAndMakeVisible (*fail);
     resized();
     fail->toFront (false);
+}
+
+bool AppRoot::handleShortcut (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey)
+    {
+        if (fail != nullptr) { fail.reset(); return true; }
+        if (home->isVisible() && home->hasOverlay()) { home->closeOverlays(); return true; }
+    }
+    if (auto* screen = dynamic_cast<JamScreen*> (jam.get()))
+        return screen->handleShortcut (k);
+    return false;
 }
 
 void AppRoot::resized()

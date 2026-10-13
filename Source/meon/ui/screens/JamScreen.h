@@ -31,6 +31,9 @@ public:
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
     bool keyPressed (const juce::KeyPress&) override;
+    /** 단축키 (설정 › 단축키, REMAKE_PLAN 4.4): M 송출, N 모니터, ⌘↑/⌘↓ 마스터 ±1 dB, Enter 채팅 입력, Esc 겹침 닫기 */
+    bool handleShortcut (const juce::KeyPress&);
+    void closeOverlays();
     void resized() override;
 
     static constexpr int rowH = 59;

@@ -26,6 +26,8 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    /** 에디터가 넘기는 단축키 (글자 입력 중이 아닐 때). Esc 는 맨 위 겹침부터 닫는다 */
+    bool handleShortcut (const juce::KeyPress&);
 
 private:
     core::MeonCore& core;

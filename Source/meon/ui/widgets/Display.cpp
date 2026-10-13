@@ -160,6 +160,8 @@ Modal::Modal (const juce::String& t, int w)
     : title (t), width (w), closeButton ((int) icons::Id::close24, IconButton::Style::plain24, 14.0f)
 {
     setWantsKeyboardFocus (true);
+    setFocusContainerType (FocusContainerType::keyboardFocusContainer);   // Tab 이동이 모달 안에서만 돈다
+    juce::Component::setTitle (t);
     addAndMakeVisible (closeButton);
     closeButton.setTooltip (TXT ("닫기"));
     closeButton.onClick = [this] { if (onClose) onClose(); };
