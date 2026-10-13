@@ -360,8 +360,8 @@ struct SignupView : StepView
         uid.transform = [] (const juce::String& s) { return s.toLowerCase(); };
         uid.onChange = [this] { uidState = Uid::idle; uidNote.set ({}); uid.setError (false); update(); };
         uid.onReturn = [this] { checkUid(); };
-        // 디자인 버튼: 흰 면 #D5D5D5, 600 13px #767676, 호버 #F5F5F5·#1A1A1A
-        check.setKind (Button::Kind::largeSecondary);
+        // 디자인 버튼: 32px 흰 면 #D5D5D5, 600 13px #767676, 호버 #F5F5F5·#1A1A1A (= cancel)
+        check.setKind (Button::Kind::cancel);
         check.onPress = [this] { checkUid(); };
         pw.input.setPassword (true);
         pw2.input.setPassword (true);

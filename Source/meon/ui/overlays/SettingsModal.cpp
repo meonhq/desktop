@@ -163,14 +163,8 @@ namespace
         {
             // 아이디
             idBox.addAndMakeVisible (copy);
-            copy.onPress = [this]
-            {
-                juce::SystemClipboard::copyTextToClipboard ("@" + username());
-                copy.setButtonText (TXT ("복사됨"));
-                juce::Component::SafePointer<AccountPage> safe (this);
-                juce::Timer::callAfterDelay (1500, [safe] { if (safe != nullptr) { safe->copy.setButtonText (TXT ("복사")); safe->idBox.resized(); } });
-                idBox.resized();
-            };
+            // 복사만 한다 (글자를 "복사됨" 으로 바꾸면 버튼 폭이 바뀐다)
+            copy.onPress = [this] { juce::SystemClipboard::copyTextToClipboard ("@" + username()); };
             idBox.owner = this;
             add (idRow).setControl (&idBox, 200);
 
@@ -1001,6 +995,8 @@ namespace
                 for (size_t i = 0; i < owner->blocks.size(); ++i)
                 {
                     const int y = (int) i * 38;
+                    // 앞 행의 글자색이 남아 있으므로 구분선 색을 매번 다시 정한다 (디자인 #E0E0E0)
+                    g.setColour (col::line);
                     if (i > 0) g.fillRect (1, y, getWidth() - 2, 1);
                     const auto& u = owner->blocks[i].user;
                     const auto nf = font (600, 13.0f);

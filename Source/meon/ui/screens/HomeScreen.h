@@ -103,6 +103,7 @@ private:
     TextInput addInput { TXT ("친구 아이디 입력") };
     Button addSend { Button::Kind::link, TXT ("요청") };
     juce::String addMessage;
+    Text addNote { {}, 400, 12.0f, col::inkSub };   // addMessage 를 입력 줄 아래에 (디자인 400 12px #767676)
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
     void sendFriendRequest();
 

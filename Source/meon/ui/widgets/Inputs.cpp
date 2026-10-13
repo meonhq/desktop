@@ -291,7 +291,8 @@ bool OtpInput::keyPressed (const juce::KeyPress& k)
         if (code == 'V' || k.getTextCharacter() == 0x314D)
         {
             juce::String got;
-            for (auto p = juce::SystemClipboard::getTextFromClipboard().getCharPointer(); ! p.isEmpty() && got.length() < 6;)
+            const auto clip = juce::SystemClipboard::getTextFromClipboard(); // 임시 문자열의 포인터를 쥐면 바로 해제된다
+            for (auto p = clip.getCharPointer(); ! p.isEmpty() && got.length() < 6;)
                 if (auto c = mapKey (p.getAndAdvance(), charset)) got += juce::String::charToString (c);
             if (got.isEmpty()) return true;
             setCode (got);

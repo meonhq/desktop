@@ -382,7 +382,7 @@ void FakeMeonServer::addMember (RoomRec& r, const String& userId)
     expireInvitesTo (userId);   // 7.11: 어느 방에든 들어가면 받아 둔 초대 소멸
 }
 
-void FakeMeonServer::removeMember (RoomRec& r, const String& userId)
+void FakeMeonServer::removeMember (RoomRec& r, String userId)
 {
     r.members.erase (std::remove_if (r.members.begin(), r.members.end(), [&] (const MemberRec& m) { return m.userId == userId; }),
                      r.members.end());
@@ -390,7 +390,7 @@ void FakeMeonServer::removeMember (RoomRec& r, const String& userId)
         removeJoinRequestsForRoom (r.id);   // 방장이 나가면 대기 요청 즉시 삭제 (5.7)
 }
 
-void FakeMeonServer::deleteRoom (const String& roomId, bool closedByHost)
+void FakeMeonServer::deleteRoom (String roomId, bool closedByHost)   // roomId 는 값: 방을 지운 뒤에도 쓴다
 {
     auto* r = findRoom (roomId);
     if (r == nullptr) return;
@@ -422,7 +422,7 @@ void FakeMeonServer::deleteRoom (const String& roomId, bool closedByHost)
         friendChanged (m.userId);
 }
 
-void FakeMeonServer::expireInvitesTo (const String& userId)
+void FakeMeonServer::expireInvitesTo (String userId)
 {
     for (auto it = invites.begin(); it != invites.end();)
     {
@@ -435,7 +435,7 @@ void FakeMeonServer::expireInvitesTo (const String& userId)
     }
 }
 
-void FakeMeonServer::removeJoinRequestsOf (const String& userId)
+void FakeMeonServer::removeJoinRequestsOf (String userId)
 {
     for (auto it = joinRequests.begin(); it != joinRequests.end();)
     {
@@ -448,7 +448,7 @@ void FakeMeonServer::removeJoinRequestsOf (const String& userId)
     }
 }
 
-void FakeMeonServer::removeJoinRequestsForRoom (const String& roomId)
+void FakeMeonServer::removeJoinRequestsForRoom (String roomId)
 {
     for (auto it = joinRequests.begin(); it != joinRequests.end();)
     {
@@ -461,7 +461,7 @@ void FakeMeonServer::removeJoinRequestsForRoom (const String& roomId)
     }
 }
 
-void FakeMeonServer::expireJoinRequest (const String& requestId)
+void FakeMeonServer::expireJoinRequest (String requestId)
 {
     for (auto it = joinRequests.begin(); it != joinRequests.end(); ++it)
     {

@@ -150,7 +150,7 @@ void Button::paintButton (juce::Graphics& g, bool highlighted, bool)
     const bool isLink = kind == Kind::link || kind == Kind::linkSmall || kind == Kind::linkUnderline;
     auto r = getLocalBounds().toFloat();
     if (! isLink)
-        r = r.withSizeKeepingCentre (r.getWidth(), (float) m.height);
+        r = r.withSizeKeepingCentre (r.getWidth(), (float) juce::jmin (m.height, getHeight())); // 칸보다 크게 그리면 위아래가 잘린다
 
     // 호버 (디자인 style-hover)
     if (highlighted && ! disabled && ! armed)

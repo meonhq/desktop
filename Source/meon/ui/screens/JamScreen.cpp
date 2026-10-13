@@ -78,18 +78,13 @@ struct JamScreen::SilenceRow : juce::Component
 
 //==============================================================================
 /** 입장 코드 상자 (높이 32, 테두리 #E0E0E0, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
-struct JamScreen::CodeBox : juce::Component, private juce::Timer
+struct JamScreen::CodeBox : juce::Component
 {
     CodeBox()
     {
         addAndMakeVisible (copy);
-        copy.onPress = [this]
-        {
-            juce::SystemClipboard::copyTextToClipboard (code);
-            copy.setButtonText (TXT ("복사됨"));
-            startTimer (1500);
-            resized();
-        };
+        // 복사만 한다 (글자를 "복사됨" 으로 바꾸면 버튼 폭이 바뀌어 상자가 흔들린다)
+        copy.onPress = [this] { juce::SystemClipboard::copyTextToClipboard (code); };
     }
     void setCode (const juce::String& c) { code = c; resized(); repaint(); }
     int idealWidth() const
@@ -118,7 +113,6 @@ struct JamScreen::CodeBox : juce::Component, private juce::Timer
         const int w = copy.getIdealWidth();
         copy.setBounds (getWidth() - 6 - w, (getHeight() - metric::smallH) / 2, w, metric::smallH);
     }
-    void timerCallback() override { stopTimer(); copy.setButtonText (TXT ("복사")); resized(); }
 
     juce::String code;
     Button copy { Button::Kind::small, TXT ("복사") };
@@ -757,7 +751,9 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     sendGain.onChange = [this] (float db) { jam.setSendGainDb (db); };
     master.onChange = [this] (float db) { jam.setMasterDb (db); };
     silenceRow->open.onPress = [this] { if (onOpenAudioSettings) onOpenAudioSettings(); };
-    inputMeter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()), [this] (int ch) { return jam.sendLevel (ch); });
+    // 송출 정지 중에는 보내는 신호가 0 이므로 입력 레벨을 회색으로 보여 준다 (refreshAudio)
+    inputMeter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()),
+                                [this] (int ch) { return jam.isSendMuted() ? jam.inputLevel (ch) : jam.sendLevel (ch); });
     outputMeter.meter.setSource (2, [this] (int ch) { return jam.monitorLevel (ch); });
 
     // 채팅
@@ -893,6 +889,7 @@ void JamScreen::refreshAudio()
     sendMute.setOn (sm);
     sendMute.setButtonText (sm ? TXT ("송출 재개") : TXT ("송출 정지"));
     sendGain.setMuted (sm);
+    inputMeter.meter.setGreyed (sm);
     if (! sendGain.isDragging()) sendGain.setValue (jam.getSendGainDb());
     monMute.setOn (mm);
     monMute.setButtonText (mm ? TXT ("음소거 해제") : TXT ("전체 음소거"));
@@ -991,6 +988,14 @@ void JamScreen::paintOverChildren (juce::Graphics& g)
     // 채팅 입력 남은 글자 (100 B 미만일 때만)
     if (chatOpen)
     {
+        // 목록과 입력 줄 사이 구분선 (디자인 border-top 1px #E0E0E0). resized() 가 목록 아래 1px 를 비워 둔다
+        if (chatViewport.isVisible())
+        {
+            const auto vb = chatViewport.getBounds() + chatCard.getPosition();
+            g.setColour (col::line);
+            g.fillRect (vb.getX(), vb.getBottom(), vb.getWidth(), 1);
+        }
+
         const int left = core::ChatChannel::maxBytes - core::ChatChannel::byteLength (chatInput.getText());
         if (left < 100 || chatNote.isNotEmpty())
         {
