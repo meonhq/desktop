@@ -146,6 +146,7 @@ public:
     ~NotificationList() override;
     int getPreferredHeight() const;
     std::function<void()> onSizeChanged;
+    std::function<void (const core::UserPublic&)> onOpenProfile;
     void paint (juce::Graphics&) override;
     void resized() override;
 

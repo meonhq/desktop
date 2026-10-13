@@ -62,6 +62,8 @@ public:
 
     /** 눌렀을 때 (두 번 눌러 확정이면 두 번째에). juce::Button::onClick 대신 이것을 쓴다 */
     std::function<void()> onPress;
+    /** 확정 대기로 바뀌거나 되돌아갈 때 (글자 폭이 바뀌므로 다시 배치) */
+    std::function<void()> onStateChange;
 
 protected:
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;

@@ -20,8 +20,23 @@ JamSession::JamSession (Engine& e, AppStore& s, Scheduler& sc, Options o)
 
     // 엔진 값은 방에 들어갈 때 넣는다 (R6 전까지는 옛 화면도 같은 엔진을 쓰므로 미리 건드리지 않는다)
 
+    engine.setEarGuardLevel (prefs.earGuard);
+    schedulePoll();
+
     // 플러그인 창을 다시 연 게 아니라 프로세서 단위라서, 이미 방에 있으면 이어받는다
     if (store.state().currentRoom) enter (*store.state().currentRoom);
+}
+
+void JamSession::schedulePoll()
+{
+    std::weak_ptr<bool> weak = alive;
+    pollTask = scheduler.post (1000, [this, weak]
+    {
+        if (weak.expired()) return;
+        pollTask = 0;
+        pollSharedPrefs();
+        schedulePoll();
+    });
 }
 
 JamSession::~JamSession()
@@ -29,6 +44,7 @@ JamSession::~JamSession()
     *alive = false;
     scheduler.cancel (tickTask);
     scheduler.cancel (retryTask);
+    scheduler.cancel (pollTask);
     if (phase != Phase::idle) exit (options.plugin ? "pluginClosed" : "quit");
     chatChannel.removeListener (this);
     store.removeListener (this);
@@ -565,6 +581,25 @@ void JamSession::setSelfMonitor (bool on)
     prefs.selfMonitor = on;
     applyMonitor();
     savePrefs();
+}
+
+void JamSession::setEarGuardLevel (int l)
+{
+    l = juce::jlimit (0, 2, l);
+    prefs.earGuard = l;
+    engine.setEarGuardLevel (l);
+    savePrefs();
+    if (sessionLog.isActive()) sessionLog.addEvent ("earGuard", String (l));
+}
+
+void JamSession::pollSharedPrefs()
+{
+    if (! options.pollEarGuard) return;
+    const int l = options.pollEarGuard();
+    if (l < 0 || l == prefs.earGuard) return;
+    prefs.earGuard = l;
+    engine.setEarGuardLevel (l);
+    if (sessionLog.isActive()) sessionLog.addEvent ("earGuard", String (l) + " (shared)");
 }
 
 void JamSession::setSelfMonitorDb (float db)

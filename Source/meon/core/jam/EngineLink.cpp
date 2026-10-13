@@ -411,6 +411,7 @@ void EngineLink::setSendMuted (bool b)               { setParam (SonobusAudioPro
 void EngineLink::setSendGainDb (float db)            { setParam (SonobusAudioProcessor::paramInGain, juce::Decibels::decibelsToGain (db)); }
 void EngineLink::setSelfMonitor (bool on)            { selfMonitor = on; applyMonitorParams(); }
 void EngineLink::setSelfMonitorDb (float db)         { selfMonitorDb = db; applyMonitorParams(); }
+void EngineLink::setEarGuardLevel (int l)            { processor.getEarGuard().setLevel ((meon::EarGuard::Level) juce::jlimit (0, 2, l)); }
 void EngineLink::setMasterDb (float db)              { masterDb = db; applyMonitorParams(); }
 void EngineLink::setMonitorMuted (bool m)            { monitorMuted = m; applyMonitorParams(); }
 

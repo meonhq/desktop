@@ -385,6 +385,7 @@ void Select::setValue (const juce::String& v, juce::NotificationType n)
 {
     const int idx = values.indexOf (v);
     if (idx >= 0) setSelectedId (idx + 1, n);
+    else if (! values.isEmpty() && getSelectedId() == 0) setSelectedId (1, juce::dontSendNotification);   // 목록에 없으면 첫 항목을 보여 준다
 }
 
 juce::String Select::getValue() const

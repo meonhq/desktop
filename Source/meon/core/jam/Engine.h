@@ -77,6 +77,7 @@ public:
     virtual void setSendGainDb (float) = 0;
     virtual void setSelfMonitor (bool on) = 0;
     virtual void setSelfMonitorDb (float) {}            // 셀프 모니터 크기 (합주 화면 내 행의 볼륨)
+    virtual void setEarGuardLevel (int) {}              // 귀 테러 방지 0 끔 / 1 보통 / 2 강하게
     virtual void setMasterDb (float) = 0;
     virtual void setMonitorMuted (bool) = 0;   // 내가 듣는 모든 소리 (Q12)
     virtual void setBufferMode (BufferMode) = 0;

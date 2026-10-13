@@ -21,6 +21,11 @@ static juce::PropertiesFile::Options makeOptions()
     return o;
 }
 
+juce::File MeonSettings::getSettingsFile()
+{
+    return makeOptions().getDefaultFile();
+}
+
 MeonSettings::MeonSettings()
 {
     props = std::make_unique<juce::PropertiesFile> (makeOptions());

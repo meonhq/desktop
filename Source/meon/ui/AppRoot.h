@@ -16,7 +16,8 @@ public:
     AppRoot (core::MeonCore&, HomeScreen::UpdateHooks);
     ~AppRoot() override;
 
-    std::function<void()> onOpenSettings;
+    /** tab: ui::SettingsModal::Tab 순서 (0 계정, 2 오디오 …) */
+    std::function<void (int tab)> onOpenSettings;
 
     HomeScreen* getHome() { return home.get(); }
     void showJoinFailure (const core::ApiError&);
@@ -32,6 +33,7 @@ private:
     std::unique_ptr<HomeScreen> home;
     std::unique_ptr<juce::Component> jam;
     std::unique_ptr<JoinFailDialog> fail;
+    std::unique_ptr<juce::Component> roomClosed;   // 내가 방을 닫은 뒤 덮개
     juce::OwnedArray<Toast> toasts;   // 아래에서 위로 (0 = 맨 아래)
     juce::String shownRoomId;
 

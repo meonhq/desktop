@@ -158,7 +158,18 @@ struct JamScreen::MemberRow : juce::Component
             meter.meter.setSource (juce::jlimit (1, 2, m.channels), [this, id] (int ch) { return owner.jam.memberLevel (id, ch); });
         }
         reset.setTooltip (TXT ("볼륨 0 dB · 패닝 가운데로"));
+        addChildComponent (manage);
+        manage.setTooltip (TXT ("방장 전용 · 내보내기, 방장 넘기기"));
+        manage.onPress = [this] { owner.openManage (member); };
         refresh();
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        // 아바타·이름을 누르면 프로필 (내 행 제외)
+        if (member.isMe || ! e.mouseWasClicked()) return;
+        if (e.x < 12 + 41 + 9 + 160 && e.y < 9 + 17 + 3) owner.openProfile (member.userId);
+        else if (avatar.getBounds().contains (e.getPosition())) owner.openProfile (member.userId);
     }
 
     void update (const core::JamSession::Member& m)
@@ -186,6 +197,9 @@ struct JamScreen::MemberRow : juce::Component
         volume.setTitle (DbSlider::dbText (vol) + TXT (" · 더블클릭하면 0 dB"));
         pan.setValue (pv);
         reset.setDimmed (vol == 0.0f && pv == 0);
+        const bool host = owner.core.store().state().amHost();
+        manage.setVisible (host && ! member.isMe);
+        hostLayout = host;
         avatar.setDimmed (muted);
         avatar.setPart (member.part.isNotEmpty() ? member.part : juce::String ("other"));   // 가짜 기간: 프로필은 입장 뒤에 온다
         if (member.isMe) ping.setText (TXT ("나"));
@@ -270,22 +284,26 @@ struct JamScreen::MemberRow : juce::Component
         const int mw = mute.getIdealWidth();
         mute.setBounds (x, y, mw, metric::smallH);
         x += mw + 9;
-        const int vw = juce::jlimit (60, 150, r.getRight() - x - 9 - 19 - 9 - reset.getIdealWidth());
+        const int vw = juce::jlimit (60, 150, r.getRight() - x - 9 - 19 - 9 - reset.getIdealWidth() - (hostLayout ? 9 + manage.getIdealWidth() : 0));
         volume.setBounds (x, y, vw, metric::smallH);
         x += vw + 9;
         pan.setBounds (x, y, 19, 19);
         x += 19 + 9;
         reset.setBounds (x, y, reset.getIdealWidth(), metric::smallH);
+        x += reset.getIdealWidth() + 9;
+        manage.setBounds (x, y, manage.getIdealWidth(), metric::smallH);
     }
 
     JamScreen& owner;
     core::JamSession::Member member;
+    bool hostLayout = false;   // 방장이면 내 행에도 "관리" 자리만큼 비운다 (디자인 manageGhost)
     Avatar avatar { 41.0f, 20.0f };
     Button mute { Button::Kind::small, TXT ("음소거") }, reset { Button::Kind::small, TXT ("초기화") };
     DbSlider volume { -60.0f, 6.0f };
     PanKnob pan;
     PingBadge ping;
     MeterBox meter;
+    Button manage { Button::Kind::small, TXT ("관리") };
 };
 
 struct JamScreen::MemberList : juce::Component
@@ -532,6 +550,7 @@ struct JamScreen::FriendList : juce::Component
 
         void mouseEnter (const juce::MouseEvent&) override { repaint(); }
         void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+        void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked()) owner.openProfile (fr.user.id); }
 
         JamScreen& owner;
         core::Friend fr;
@@ -694,6 +713,13 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     addChildComponent (*codeBox);
     addAndMakeVisible (settings);
     addAndMakeVisible (leave);
+    addChildComponent (gear);
+    addChildComponent (requests);
+    gear.setTooltip (TXT ("방 설정"));
+    requests.setTooltip (TXT ("입장 요청"));
+    gear.setInk (col::inkFaint, col::ink);
+    gear.onClick = [this] { showModal (std::make_unique<RoomSettingsModal> (core)); };
+    requests.onClick = [this] { toggleRequests(); };
     settings.onPress = [this] { if (onOpenSettings) onOpenSettings(); };
     leave.onPress = [this]
     {
@@ -730,7 +756,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     monMute.onPress = [this] { jam.setMonitorMuted (! jam.isMonitorMuted()); refreshAudio(); };
     sendGain.onChange = [this] (float db) { jam.setSendGainDb (db); };
     master.onChange = [this] (float db) { jam.setMasterDb (db); };
-    silenceRow->open.onPress = [this] { if (onOpenSettings) onOpenSettings(); };
+    silenceRow->open.onPress = [this] { if (onOpenAudioSettings) onOpenAudioSettings(); };
     inputMeter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()), [this] (int ch) { return jam.sendLevel (ch); });
     outputMeter.meter.setSource (2, [this] (int ch) { return jam.monitorLevel (ch); });
 
@@ -802,6 +828,11 @@ void JamScreen::refreshHeader()
 {
     const auto& room = core.store().state().currentRoom;
     if (! room) return;
+    const bool host = core.store().state().amHost();
+    gear.setVisible (host);
+    requests.setVisible (host && room->isApproval());
+    requests.setDot (! core.store().state().joinRequests.empty());
+    if (! requests.isVisible() && popover != nullptr) { popover.reset(); requestList.reset(); }
     roomTitle.setText (room->title);
     privateTag->setVisible (! room->isPublic());
     codeBox->setVisible (! room->isPublic() && room->inviteCode.has_value());
@@ -908,7 +939,7 @@ void JamScreen::jamFileChanged()
 void JamScreen::stateChanged (core::StateKey k)
 {
     using K = core::StateKey;
-    if (k == K::currentRoom) refreshHeader();
+    if (k == K::currentRoom || k == K::joinRequests || k == K::me) { refreshHeader(); jamStatsChanged(); }
     else if (k == K::friends) rebuildFriends();
     else if (k == K::link) { resized(); repaint(); }
 }
@@ -980,6 +1011,11 @@ void JamScreen::resized()
         leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));
         h.removeFromRight (metric::gap);
         settings.setBounds (h.removeFromRight (sw).withSizeKeepingCentre (sw, metric::buttonH));
+        if (requests.isVisible())
+        {
+            h.removeFromRight (metric::gap);
+            requests.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
+        }
         if (codeBox->isVisible())
         {
             h.removeFromRight (metric::gap);
@@ -987,12 +1023,17 @@ void JamScreen::resized()
             codeBox->setBounds (h.removeFromRight (cw).withSizeKeepingCentre (cw, metric::buttonH));
         }
         const int tx = (int) (metric::padX + logoW + 18.0f + 1.0f + 18.0f);
-        const int tagW = privateTag->isVisible() ? privateTag->getIdealWidth() + 6 : 0;
+        const int tagW = (privateTag->isVisible() ? privateTag->getIdealWidth() + 6 : 0) + (gear.isVisible() ? 24 + 6 : 0);
         const int titleMax = juce::jmax (40, h.getRight() - 18 - tx - tagW);
         const int tw = juce::jmin (titleMax, roomTitle.getIdealWidth() + 2);
         roomTitle.setBounds (tx, 0, tw, metric::headerH);
+        int gx = tx + tw + 6;
         if (privateTag->isVisible())
-            privateTag->setBounds (tx + tw + 6, (metric::headerH - 17) / 2, privateTag->getIdealWidth(), 17);
+        {
+            privateTag->setBounds (gx, (metric::headerH - 17) / 2, privateTag->getIdealWidth(), 17);
+            gx += privateTag->getIdealWidth() + 6;
+        }
+        gear.setBounds (gx, (metric::headerH - 24) / 2, 24, 24);
     }
     area.removeFromTop (headerLineY + 1 + (showBanner() ? bannerH : 0));
     area.reduce (metric::padX, metric::padX);
@@ -1082,7 +1123,81 @@ void JamScreen::resized()
         memberList->setSize (memberViewport.getWidth() - (listH + 2 > area.getHeight() ? memberViewport.getScrollBarThickness() : 0), listH);
         memberList->resized();
     }
+    if (modal != nullptr) modal->setBounds (getLocalBounds());
+    if (popover != nullptr && requestList != nullptr)
+        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + requestList->getPreferredHeight());
     repaint();
+}
+
+void JamScreen::showModal (std::unique_ptr<Modal> m)
+{
+    popover.reset();
+    requestList.reset();
+    modal = std::move (m);
+    juce::Component::SafePointer<JamScreen> safe (this);
+    modal->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
+    addAndMakeVisible (*modal);
+    modal->setBounds (getLocalBounds());
+    modal->toFront (true);
+}
+
+void JamScreen::toggleRequests()
+{
+    if (popover != nullptr) { popover.reset(); requestList.reset(); return; }
+    requestList = std::make_unique<JoinRequestList> (core);
+    popover = std::make_unique<Popover> (TXT ("입장 요청"));
+    juce::Component::SafePointer<JamScreen> safe (this);
+    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->popover.reset(); safe->requestList.reset(); } }); };
+    requestList->onSizeChanged = [this]
+    {
+        if (popover == nullptr) return;
+        const auto n = core.store().state().joinRequests.size();
+        popover->setCount (n > 0 ? juce::String ((int) n) : juce::String());
+        popover->setContent (requestList.get(), requestList->getPreferredHeight());
+        resized();
+    };
+    requestList->onOpenProfile = [this] (const core::UserPublic& u)
+    {
+        juce::Component::SafePointer<JamScreen> s2 (this);
+        auto user = u;
+        juce::MessageManager::callAsync ([s2, user] { if (s2 != nullptr) s2->showModal (std::make_unique<ProfileModal> (s2->core, user, true)); });
+    };
+    const auto n = core.store().state().joinRequests.size();
+    popover->setCount (n > 0 ? juce::String ((int) n) : juce::String());
+    popover->setContent (requestList.get(), requestList->getPreferredHeight());
+    addAndMakeVisible (*popover);
+    resized();
+    popover->toFront (false);
+}
+
+void JamScreen::openProfile (const juce::String& userId)
+{
+    core::UserPublic u;
+    u.id = userId;
+    if (const auto& room = core.store().state().currentRoom)
+        for (auto& m : room->members)
+            if (m.user.id == userId) u = m.user;
+    for (auto& f : core.store().state().friends)
+        if (f.user.id == userId) u = f.user;
+    if (u.username.isEmpty()) u.nickname = memberName (userId);
+    showModal (std::make_unique<ProfileModal> (core, u, true));
+}
+
+void JamScreen::openManage (const core::JamSession::Member& m)
+{
+    showModal (std::make_unique<ManageMemberModal> (core, m));
+}
+
+bool JamScreen::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey && (modal != nullptr || popover != nullptr))
+    {
+        modal.reset();
+        popover.reset();
+        requestList.reset();
+        return true;
+    }
+    return false;
 }
 
 } // namespace meon::ui

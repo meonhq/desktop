@@ -3,9 +3,7 @@
 
 #include "../SonobusPluginProcessor.h"
 #include "MeonTheme.h"
-#include "MeonLookAndFeel.h"
 #include "MeonSettings.h"
-#include "MeonSession.h"
 #include "MeonUpdater.h"
 #include "shell/ShellHooks.h"
 #include "core/MeonCore.h"
@@ -13,23 +11,13 @@
 namespace meon
 {
 
-/** 모든 화면의 공통 베이스 */
-class ScreenBase : public juce::Component
-{
-public:
-    ScreenBase() { setOpaque (true); }
-    /** 에디터가 전달하는 단축키. 처리했으면 true */
-    virtual bool handleShortcut (const juce::KeyPress&) { return false; }
-    /** 종료 요청 시 확인 대화상자를 띄웠으면 true (그 화면이 나가기 후 종료까지 처리한다) */
-    virtual bool confirmLeaveForQuit() { return false; }
-    void paint (juce::Graphics& g) override { g.fillAll (col::white); }
-};
-
 namespace ui { class OnboardingScreen; class LookAndFeel; class AppRoot; }
 
 class MeonEditor : public juce::AudioProcessorEditor,
                    public ShellHooks,
-                   private core::AuthController::Listener
+                   private core::AuthController::Listener,
+                   private core::AppStore::Listener,
+                   private juce::Timer
 {
 public:
     explicit MeonEditor (SonobusAudioProcessor&);
@@ -44,12 +32,12 @@ public:
 
     //==============================================================================
     SonobusAudioProcessor& getProcessor()   { return processor; }
-    MeonSession& getSession()               { return *session; }
     MeonSettings& getSettings()             { return *settings; }
     bool isPluginMode() const               { return pluginMode; }
     juce::AudioDeviceManager* deviceManager() const { return getAudioDeviceManager ? getAudioDeviceManager() : nullptr; }
 
-    void openSettings();
+    /** tab: 0 계정 … (ui::SettingsModal::Tab 순서). 무음 경고의 "설정 열기"는 오디오 탭 */
+    void openSettings (int tab = 0);
     void closeSettings();
     bool isSettingsOpen() const { return settingsOverlay != nullptr; }
 
@@ -72,9 +60,7 @@ public:
 private:
     SonobusAudioProcessor& processor;
     juce::SharedResourcePointer<FontCache> fontCache;
-    MeonLookAndFeel lookAndFeel;
     std::unique_ptr<MeonSettings> settings;
-    std::unique_ptr<MeonSession> session;
     std::unique_ptr<MeonUpdater> updater;
     const bool pluginMode;
 
@@ -90,25 +76,29 @@ private:
         void timerCallback() override;
     };
     Fader fader;
-    juce::TooltipWindow tooltipWindow { this, 500 };   // 좁은 플러그인 창의 서버 상태 툴팁
+    juce::TooltipWindow tooltipWindow { this, 500 };
 
     std::unique_ptr<juce::Component> settingsOverlay;
     std::unique_ptr<juce::Component> settingsFadingOut;
     std::unique_ptr<juce::Component> devScreen;   // 개발용 화면 (--screen=widgets)
 
-    // 리메이크 R3: 새 온보딩(로그인·가입). 마치면 옛 홈으로 간다 (옛 화면은 R6 에서 지운다)
     core::MeonCore& core;
     std::unique_ptr<ui::LookAndFeel> newLookAndFeel;
     std::unique_ptr<ui::OnboardingScreen> onboarding;
-    // 리메이크 R5: 로그인 뒤 새 홈 (방에 들어가면 R6 전까지 임시 합주 화면). 옛 세션은 시작하지 않는다
-    std::unique_ptr<ui::AppRoot> appRoot;
+    std::unique_ptr<ui::AppRoot> appRoot;   // 로그인 뒤: 홈 ↔ 합주
     void authStepChanged (core::AuthController::Step) override;
     void updateOnboarding();
     void showAppRoot();
     void applyHomePreview();
     bool devPreview = false, devJam = false, devSignupStarted = false;
     juce::String devHomePreview;   // --screen=home[:create|filter|code|notif|fail|toast|disc] | jam (스냅숏용)
-    MeonSessionLog::AudioInfo collectAudioInfo() const;
+
+    // 업데이트 (버그 #16): 켤 때 + 6시간마다 확인, 서버 config 의 latest_build 가 내 빌드보다 크면 바로 확인.
+    // 받기·설치는 "업데이트"를 눌렀을 때만, 합주 중에는 막는다
+    juce::int64 lastUpdateCheck = 0;
+    void checkForUpdate();
+    void timerCallback() override;
+    void stateChanged (core::StateKey) override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MeonEditor)
 };

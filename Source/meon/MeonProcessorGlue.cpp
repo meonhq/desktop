@@ -23,6 +23,7 @@ namespace
         j.masterDb = juce::jlimit (-30.0f, 6.0f, (float) p.getDoubleValue ("masterVolumeDb", 0.0));
         j.inputChannelStart = s.getInputChannelStart();
         j.inputChannelCount = s.getInputChannelCount();
+        j.earGuard = (int) s.getEarGuardLevel();
         return j;
     }
 
@@ -38,6 +39,7 @@ namespace
         p.setValue ("keepMasterVolume", j.keepMasterVolume);
         p.setValue ("masterVolumeDb", j.masterDb);
         if (! plugin) s.setInputChannels (j.inputChannelStart, j.inputChannelCount);
+        s.setEarGuardLevel ((meon::EarGuard::Level) j.earGuard);
         s.save();
     }
 }
@@ -62,6 +64,15 @@ meon::core::MeonCore& SonobusAudioProcessor::getMeonCore()
         jo.prefs = loadPrefs (o.plugin);
         const bool plugin = o.plugin;
         jo.savePrefs = [plugin] (const meon::core::JamPrefs& j) { savePrefs (j, plugin); };
+        // 버그 #18: 다른 인스턴스가 설정 파일을 바꿨으면(수정 시각) 귀 테러 방지 단계를 다시 읽는다
+        jo.pollEarGuard = [lastStamp = juce::Time()] () mutable
+        {
+            const auto stamp = meon::MeonSettings::getSettingsFile().getLastModificationTime();
+            if (stamp == lastStamp) return -1;
+            lastStamp = stamp;
+            meon::MeonSettings s;
+            return (int) s.getEarGuardLevel();
+        };
         mMeonCore->attachEngine (std::move (link), std::move (jo));
     }
     return *mMeonCore;

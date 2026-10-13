@@ -63,6 +63,7 @@ void Button::disarm()
     juce::Desktop::getInstance().removeGlobalMouseListener (&outside);
     setButtonText (normalText);
     repaint();
+    if (onStateChange) onStateChange();
 }
 
 void Button::clicked()
@@ -76,6 +77,7 @@ void Button::clicked()
         startTimer (3000);
         juce::Desktop::getInstance().addGlobalMouseListener (&outside);
         repaint();
+        if (onStateChange) onStateChange();
         return;
     }
     if (armed) disarm();

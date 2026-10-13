@@ -13,6 +13,8 @@
 #include "jam/JamSession.h"
 #include "jam/RttReporter.h"
 #include "home/HomeController.h"
+#include "room/RoomController.h"
+#include "account/AccountController.h"
 
 namespace meon::core
 {
@@ -47,6 +49,8 @@ public:
     AppStore& store()                   { return appStore; }
     AuthController& auth()              { return *authController; }
     HomeController& home()              { return *homeController; }
+    RoomController& room()              { return *roomController; }
+    AccountController& account()        { return *accountController; }
     FakeMeonServer* fakeServer()        { return fake.get(); }
 
     /** 프로세서가 엔진을 붙인다 (합주). 붙인 뒤에야 jam() 이 생긴다 */
@@ -64,6 +68,8 @@ private:
     std::unique_ptr<TokenStore> tokenStore;
     std::unique_ptr<AuthController> authController;
     std::unique_ptr<HomeController> homeController;
+    std::unique_ptr<RoomController> roomController;
+    std::unique_ptr<AccountController> accountController;
     bool started = false;
     juce::File fakeStateFile;
     std::unique_ptr<Engine> engineImpl;

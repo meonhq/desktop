@@ -137,7 +137,7 @@ public:
             r.wait();
             expect (err && err->code == ErrorCode::invalidCode && HomeController::classify (*err) == F::closed);
 
-            expect (HomeController::classify (ApiError::of (ErrorCode::network)) == F::network);
+            expect (HomeController::classify (ApiError::of (ErrorCode::network)) == F::server);
             expect (HomeController::classify (ApiError::of (ErrorCode::clientOutdated)) == F::version);
             expect (HomeController::classify (ApiError::of (ErrorCode::hostAbsent)) == F::hostAbsent);
             expect (HomeController::classify (ApiError::of (ErrorCode::kicked)) == F::kicked);

@@ -78,7 +78,7 @@ HomeController::JoinFailure HomeController::classify (const ApiError& e)
         case E::roomClosed: case E::roomNotFound:
         case E::invalidCode: case E::notFound:          return JoinFailure::closed;
         case E::network: case E::timeout:
-        case E::internal: case E::badResponse:          return JoinFailure::network;
+        case E::internal: case E::badResponse:          return JoinFailure::server;
         case E::clientOutdated:                         return JoinFailure::version;
         case E::hostAbsent:                             return JoinFailure::hostAbsent;
         case E::kicked:                                 return JoinFailure::kicked;

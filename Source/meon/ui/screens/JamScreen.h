@@ -11,6 +11,7 @@
 #include "../widgets/Meter.h"
 #include "../theme/Icons.h"
 #include "../../core/MeonCore.h"
+#include "../overlays/JamOverlays.h"
 
 namespace meon::ui
 {
@@ -25,10 +26,11 @@ public:
     explicit JamScreen (core::MeonCore&);
     ~JamScreen() override;
 
-    std::function<void()> onOpenSettings;
+    std::function<void()> onOpenSettings, onOpenAudioSettings;
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
+    bool keyPressed (const juce::KeyPress&) override;
     void resized() override;
 
     static constexpr int rowH = 59;
@@ -45,6 +47,17 @@ private:
     struct CodeBox;
     std::unique_ptr<CodeBox> codeBox;
     Button settings { Button::Kind::quiet, TXT ("설정") }, leave { Button::Kind::secondary, TXT ("방 나가기") };
+    IconButton gear { (int) icons::Id::gear, IconButton::Style::plain24, 14.0f };              // 방장: 방 설정
+    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장 + 승인 방: 입장 요청
+
+    // 겹침 (방 설정·멤버 관리·프로필, 입장 요청 팝오버)
+    std::unique_ptr<Modal> modal;
+    std::unique_ptr<Popover> popover;
+    std::unique_ptr<JoinRequestList> requestList;
+    void showModal (std::unique_ptr<Modal>);
+    void toggleRequests();
+    void openProfile (const juce::String& userId);
+    void openManage (const core::JamSession::Member&);
     bool showBanner() const;
 
     // 멤버

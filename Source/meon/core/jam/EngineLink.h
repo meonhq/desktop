@@ -44,6 +44,7 @@ public:
     void setSendGainDb (float) override;
     void setSelfMonitor (bool) override;
     void setSelfMonitorDb (float) override;
+    void setEarGuardLevel (int) override;
     void setMasterDb (float) override;
     void setMonitorMuted (bool) override;
     void setBufferMode (BufferMode) override;
