@@ -24,6 +24,13 @@ namespace
         BufferMode mode = BufferMode::latency;
         float masterDb = 0.0f, sendGain = 0.0f;
         std::map<juce::String, bool> recv;
+        bool file = false, filePlaying = false;
+
+        bool loadFile (const juce::File&) override { file = true; filePlaying = false; return true; }
+        void closeFile() override                  { file = filePlaying = false; }
+        bool hasFile() const override              { return file; }
+        bool isFilePlaying() const override        { return filePlaying; }
+        void setFilePlaying (bool p) override      { filePlaying = file && p; }
 
         void addListener (Listener* l) override { ls.add (l); }
         void removeListener (Listener* l) override { ls.remove (l); }
@@ -270,10 +277,16 @@ public:
             jam.setMasterDb (9.0f);
             expectEquals (engine.masterDb, 6.0f);
 
-            // 방에서 나오면 엔진도 나온다
+            // 파일을 틀어 둔 채
+            expect (jam.loadFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("song.wav")));
+            jam.setFilePlaying (true);
+            expect (engine.filePlaying);
+
+            // 방에서 나오면 엔진도 나오고, 파일도 닫는다 (방 닫힘·추방도 같은 길: currentRoom 이 빈다)
             store.setCurrentRoom (std::nullopt);
             expect (jam.getPhase() == JamSession::Phase::idle);
             expect (! engine.connected && engine.group.isEmpty() && ! engine.allowEnabled);
+            expect (! engine.file && ! engine.filePlaying && ! jam.hasFile());
             rt.removeListener (&store);
             o.logFolder.deleteRecursively();
         }

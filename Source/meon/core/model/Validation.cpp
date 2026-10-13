@@ -152,7 +152,8 @@ bool isRoomCodeChar (juce_wchar c)
 bool isRoomCode (const String& s)
 {
     if (s.length() != 6) return false;
-    for (auto p = s.toUpperCase().getCharPointer(); ! p.isEmpty();)
+    const auto upper = s.toUpperCase(); // 임시 문자열의 포인터를 쥐면 바로 해제된다
+    for (auto p = upper.getCharPointer(); ! p.isEmpty();)
         if (! isRoomCodeChar (p.getAndAdvance())) return false;
     return true;
 }

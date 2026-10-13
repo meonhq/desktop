@@ -227,13 +227,15 @@ private:
     // 규칙
     Out joinCommon (const juce::String& actor, RoomRec&, bool viaInviteFrom, const juce::String& inviterId);
     void addMember (RoomRec&, const juce::String& userId);
-    void removeMember (RoomRec&, const juce::String& userId);
-    void deleteRoom (const juce::String& roomId, bool closedByHost);
-    void expireInvitesTo (const juce::String& userId);
-    void removeJoinRequestsOf (const juce::String& userId);
-    void removeJoinRequestsForRoom (const juce::String& roomId);
+    // 아래 함수들은 컨테이너에서 지우므로, 지울 원소 안의 문자열을 참조로 받으면 지운 뒤 그 참조가 끊긴다.
+    // 그래서 값으로 받는다 (호출하는 쪽이 r->id, it->userId 처럼 넘겨도 안전하게)
+    void removeMember (RoomRec&, juce::String userId);
+    void deleteRoom (juce::String roomId, bool closedByHost);
+    void expireInvitesTo (juce::String userId);
+    void removeJoinRequestsOf (juce::String userId);
+    void removeJoinRequestsForRoom (juce::String roomId);
     void deliverInvite (const juce::String& inviteId);
-    void expireJoinRequest (const juce::String& requestId);
+    void expireJoinRequest (juce::String requestId);
     Connection connectionFor (const RoomRec&, const juce::String& viewer) const;
     void fakeHostConsider (const juce::String& requestId);
     void fakeUserAcceptFriend (const juce::String& requestId);

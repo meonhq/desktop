@@ -144,6 +144,8 @@ void JamSession::joinGroup()
 
 void JamSession::exit (const String& reason)
 {
+    // 방을 나가면(직접 퇴장·방 닫힘·추방·다른 방으로 옮김) 틀어 둔 파일을 닫는다 (옛 앱 동작)
+    closeFile();
     scheduler.cancel (tickTask);
     scheduler.cancel (retryTask);
     tickTask = retryTask = 0;

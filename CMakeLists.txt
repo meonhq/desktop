@@ -659,6 +659,7 @@ if (MEON_TESTS)
         Source/meon/tests/JamTests.cpp
         Source/meon/tests/HomeTests.cpp
         Source/meon/tests/RoomTests.cpp
+        Source/meon/tests/ScriptSoakTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
