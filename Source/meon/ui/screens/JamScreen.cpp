@@ -814,7 +814,8 @@ JamScreen::~JamScreen()
 juce::String JamScreen::memberName (const juce::String& userId) const
 {
     for (auto& m : jam.members())
-        if (m.userId == userId) return m.nickname;
+        if (m.userId == userId && m.nickname.isNotEmpty()) { knownNames[userId] = m.nickname; return m.nickname; }
+    if (auto it = knownNames.find (userId); it != knownNames.end()) return it->second;
     return TXT ("멤버");
 }
 
@@ -844,6 +845,8 @@ void JamScreen::refreshHeader()
 void JamScreen::rebuildMembers()
 {
     const auto list = jam.members();
+    for (auto& m : list)
+        if (m.nickname.isNotEmpty()) knownNames[m.userId] = m.nickname;
     bool same = (int) list.size() == memberList->rows.size();
     for (size_t i = 0; same && i < list.size(); ++i)
         same = memberList->rows[(int) i]->member.userId == list[i].userId && memberList->rows[(int) i]->member.isMe == list[i].isMe;

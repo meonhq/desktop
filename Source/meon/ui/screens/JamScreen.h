@@ -4,6 +4,8 @@
 // 방장 전용(방 설정·입장 요청·관리)은 R7 에서 붙인다.
 #pragma once
 
+#include <map>
+
 #include "../widgets/Button.h"
 #include "../widgets/Inputs.h"
 #include "../widgets/Controls.h"
@@ -38,6 +40,9 @@ public:
 
     static constexpr int rowH = 59;
     juce::String memberName (const juce::String& userId) const;
+private:
+    mutable std::map<juce::String, juce::String> knownNames;   // 나간 멤버의 채팅 줄도 이름으로 (마지막으로 본 이름)
+public:
 
 private:
     core::MeonCore& core;
