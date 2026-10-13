@@ -6,6 +6,7 @@
 #include "SonobusPluginProcessor.h"
 #include "meon/MeonEditor.h"
 #include "meon/MeonSettings.h"
+#include "meon/core/MeonCore.h"
 
 #include "RunCumulantor.h"
 
@@ -857,6 +858,7 @@ mState (*this, &mUndoManager, "SonoBusAoO",
 
 SonobusAudioProcessor::~SonobusAudioProcessor()
 {
+    mMeonCore.reset();   // MEON (E2): 엔진보다 먼저 정리
     mTransportSource.setSource(nullptr);
     mTransportSource.removeChangeListener(this);
 

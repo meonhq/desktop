@@ -7,7 +7,10 @@
 //   small        19px #FCFCFC + #E0E0E0 (관리·거절·복사…)  400 12px #767676
 //   smallPrimary 19px 노랑 (수락·확인)                     500 12px
 //   smallDanger  19px 빨간 글자 (친구 삭제·차단·내보내기)
-//   link         글자만 (전송·회원가입)                    500 13px #767676 → 호버 #1A1A1A
+//   largeSecondary 40px 흰 면 + #D5D5D5 (온보딩 "이전")      600 13px #767676
+//   link         글자만 (전송)                             500 13px #767676 → 호버 #1A1A1A
+//   linkSmall    글자만 (비밀번호를 잊었나요?)             500 12px #767676 → 호버 #1A1A1A
+//   linkUnderline 밑줄 글자 (회원가입·로그인·코드 다시 받기) 500 12px #1A1A1A
 // 상태: 켬(toggled)·대기(pending, 노란 연한 면)·비활성. 두 번 눌러 확정(setConfirm)도 여기서 한다.
 #pragma once
 
@@ -19,7 +22,7 @@ namespace meon::ui
 class Button : public juce::Button, private juce::Timer
 {
 public:
-    enum class Kind { primary, secondary, quiet, large, dangerOutline, small, smallPrimary, smallDanger, link };
+    enum class Kind { primary, secondary, quiet, large, largeSecondary, dangerOutline, small, smallPrimary, smallDanger, link, linkSmall, linkUnderline };
 
     struct Look
     {
@@ -79,6 +82,16 @@ private:
         Button& owner;
     };
     Outside outside { *this };
+};
+
+/** 디스코드 버튼 (#5865F2, 흰 로고·글자, 바깥 링크 표시). 높이 32(로고 16) 또는 40(로고 18) */
+class DiscordButton : public juce::Button
+{
+public:
+    DiscordButton (const juce::String& text, int height);
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+private:
+    int height;
 };
 
 /** 접기 화살표 (19×19, 12px 화살표). open 이면 아래, 아니면 왼쪽(-90°). 송출·모니터 카드는 90°/-90° */

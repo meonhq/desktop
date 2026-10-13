@@ -8,6 +8,7 @@
 #include "MeonSession.h"
 #include "MeonUpdater.h"
 #include "shell/ShellHooks.h"
+#include "core/MeonCore.h"
 
 namespace meon
 {
@@ -24,9 +25,12 @@ public:
     void paint (juce::Graphics& g) override { g.fillAll (col::white); }
 };
 
+namespace ui { class OnboardingScreen; class LookAndFeel; }
+
 class MeonEditor : public juce::AudioProcessorEditor,
                    public ShellHooks,
-                   private MeonSession::Listener
+                   private MeonSession::Listener,
+                   private core::AuthController::Listener
 {
 public:
     enum class Screen { Nickname, Audio, Headphone, Level, Home, Create, Join, Jam };
@@ -103,6 +107,14 @@ private:
     std::unique_ptr<juce::Component> settingsOverlay;
     std::unique_ptr<juce::Component> settingsFadingOut;
     std::unique_ptr<juce::Component> devScreen;   // 개발용 화면 (--screen=widgets)
+
+    // 리메이크 R3: 새 온보딩(로그인·가입). 마치면 옛 홈으로 간다 (옛 화면은 R6 에서 지운다)
+    core::MeonCore& core;
+    std::unique_ptr<ui::LookAndFeel> newLookAndFeel;
+    std::unique_ptr<ui::OnboardingScreen> onboarding;
+    void authStepChanged (core::AuthController::Step) override;
+    void updateOnboarding();
+    bool devPreview = false;
     Screen current = Screen::Home;
     bool quitAfterLeave = false;
     bool autoCreate = false, autoEnter = false;

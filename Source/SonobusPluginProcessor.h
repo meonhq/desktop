@@ -111,6 +111,8 @@ inline bool operator<(const AooServerConnectionInfo& lhs, const AooServerConnect
 }
 
 
+namespace meon { namespace core { class MeonCore; } }
+
 //==============================================================================
 /**
 */
@@ -821,6 +823,13 @@ public:
 
     void setLastPluginBounds(juce::Rectangle<int> bounds) { mPluginWindowWidth = bounds.getWidth(); mPluginWindowHeight = bounds.getHeight();}
     juce::Rectangle<int> getLastPluginBounds() const { return juce::Rectangle<int>(0,0,mPluginWindowWidth, mPluginWindowHeight); }
+
+    // MEON: 로그인·서버 연결·방 상태. 창(에디터)을 닫아도 살아 있도록 프로세서가 소유한다 (REMAKE_PLAN 엔진 수정 E2).
+    // 처음 부를 때 만든다 (Source/meon/MeonProcessorGlue.cpp)
+    meon::core::MeonCore& getMeonCore();
+private:
+    std::unique_ptr<meon::core::MeonCore> mMeonCore;
+public:
 
     // support dir path
     File getSupportDir() const { return mSupportDir; }

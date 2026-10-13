@@ -112,6 +112,10 @@ set(MEON_CORE_SOURCES
     Source/meon/core/state/AppStore.cpp
     Source/meon/core/auth/TokenStore.h
     Source/meon/core/auth/TokenStore.cpp
+    Source/meon/core/auth/AuthController.h
+    Source/meon/core/auth/AuthController.cpp
+    Source/meon/core/MeonCore.h
+    Source/meon/core/MeonCore.cpp
     Source/meon/core/model/Parts.h
     Source/meon/core/model/Validation.h
     Source/meon/core/model/Validation.cpp
@@ -136,6 +140,10 @@ set(MEON_UI_SOURCES
     Source/meon/ui/widgets/Display.h
     Source/meon/ui/widgets/Display.cpp
     Source/meon/ui/widgets/Masonry.h
+    Source/meon/ui/Messages.h
+    Source/meon/ui/Links.h
+    Source/meon/ui/screens/OnboardingScreen.h
+    Source/meon/ui/screens/OnboardingScreen.cpp
     Source/meon/ui/dev/WidgetGallery.h
     Source/meon/ui/dev/WidgetGallery.cpp
 )
@@ -368,6 +376,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonUpdater.cpp
         Source/meon/MeonUpdater.h
         Source/meon/shell/ShellHooks.h
+        Source/meon/MeonProcessorGlue.cpp
         ${MEON_CORE_SOURCES}
         ${MEON_UI_SOURCES}
     )
@@ -629,6 +638,7 @@ if (MEON_TESTS)
         Source/meon/tests/FakeServerTests.cpp
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
+        Source/meon/tests/AuthTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
