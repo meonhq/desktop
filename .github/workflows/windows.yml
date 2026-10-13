@@ -68,7 +68,7 @@ jobs:
         run: |
           mkdir -p snapshots
           EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
-          for s in audio settings home widgets; do
+          for s in login signup verify nickname part discord done home widgets; do
             timeout 60 "$EXE" --nickname=테스트 --screen=$s --window=0,0,1280,800 --snapshot=snapshots/win_$s.png || true
           done
           ls -la snapshots
