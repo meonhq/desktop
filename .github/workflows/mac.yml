@@ -1,6 +1,6 @@
-# macOS 빌드: main 에 push 할 때마다 Meon 디스크 이미지(.dmg)를 만든다.
+# macOS 빌드: Meon 디스크 이미지(.dmg)를 만든다. 배포(릴리스) 조건은 아래 '언제 도는가'.
 # - 실행 결과 페이지의 Artifacts 에서 받을 수 있고,
-# - main 빌드는 'mac-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 파일을 받을 수 있다:
+# - 릴리스 빌드는 'mac-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 파일을 받을 수 있다:
 #   https://github.com/meonhq/desktop/releases/download/mac-latest/meon.dmg
 # - 같은 릴리스에 앱 자동 업데이트용 MEON-mac.zip 과 build.txt(빌드 번호)도 올린다 (Source/meon/MeonUpdater.h).
 #   이 둘은 이미 설치된 앱에 이름이 박혀 있으므로 바꾸지 않는다. 앱은 Meon.app 이고, zip 안의 최상위도 Meon.app 이다
@@ -9,20 +9,35 @@
 #   처음 열 때 경고를 넘기는 방법은 doc/INSTALL.md 참고.
 name: macOS build
 
+# 언제 도는가
+# - main push, PR: 빌드만 한다. 릴리스는 건드리지 않는다. 빌드 번호는 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다)
+# - 릴리스: 'v*' 태그 push, 또는 main 에서 수동 실행(workflow_dispatch). 이때만 빌드 번호(run_number)를 앱에 넣고
+#   mac-latest 를 갱신한다. 다른 브랜치에서 수동 실행하면 빌드만 한다 (덜 된 브랜치가 배포되지 않게).
+# - docs/** 만 바뀐 push·PR 은 건너뛴다. (태그 push 에는 경로 필터가 적용되지 않는다)
+# - 이 파일 이름을 바꾸면 run_number 가 1 부터 다시 시작해 자동 업데이트가 깨진다. 바꾸지 않는다.
 on:
   push:
     branches: [main]
+    tags: ['v*']
+    paths-ignore: ['docs/**']
+  pull_request:
+    paths-ignore: ['docs/**']
   workflow_dispatch:
 
+# 릴리스는 한 줄로 세워서 차례로 돌리고 중간에 취소하지 않는다 (지우고 다시 만드는 도중에 끊기지 않게)
 concurrency:
-  group: mac-${{ github.ref }}
-  cancel-in-progress: true
+  group: mac-${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'release' || github.ref }}
+  cancel-in-progress: ${{ !(startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
 
 jobs:
   build:
     runs-on: macos-14
     permissions:
       contents: write
+    env:
+      RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
+      # 앱에 넣는 빌드 번호. 릴리스만 run_number, 나머지는 0
+      BUILD_ID: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && github.run_number || 0 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +49,7 @@ jobs:
 
       - name: CMake 구성
         # MEON_BUILD_ID: 앱이 자동 업데이트에서 mac-latest 의 build.txt 와 비교하는 빌드 번호
-        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -DMEON_BUILD_ID=${{ github.run_number }}
+        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -DMEON_BUILD_ID=${{ env.BUILD_ID }}
 
       - name: 빌드
         run: cmake --build build --config Release --parallel 4 --target MEON_Standalone MEON_AU MEON_VST3
@@ -46,7 +61,7 @@ jobs:
         run: |
           A=build/MEON_artefacts/Release
           for b in "$A/AU/Meon.component" "$A/VST3/Meon.vst3"; do
-            plutil -replace MeonBuildID -string "${{ github.run_number }}" "$b/Contents/Info.plist"
+            plutil -replace MeonBuildID -string "${{ env.BUILD_ID }}" "$b/Contents/Info.plist"
             plutil -convert xml1 "$b/Contents/Info.plist"
             codesign --force --deep --sign - "$b"
             codesign --verify --verbose "$b"
@@ -80,16 +95,16 @@ jobs:
           path: dist/*.dmg
 
       - name: mac-latest 프리릴리스 갱신
-        if: github.ref == 'refs/heads/main'
+        if: env.RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp dist/meon-*.dmg meon.dmg
           cp dist/MEON-mac.zip MEON-mac.zip
-          NOTES="main $(git rev-parse --short HEAD) 빌드 (v${{ steps.ver.outputs.version }}, run ${{ github.run_number }})"
+          NOTES="${{ github.ref_name }} $(git rev-parse --short HEAD) 빌드 (v${{ steps.ver.outputs.version }}, build ${{ env.BUILD_ID }})"
           gh release delete mac-latest --yes --cleanup-tag || true
           gh release create mac-latest meon.dmg MEON-mac.zip --prerelease --target "$GITHUB_SHA" \
-            --title "Meon macOS (최신 main 빌드)" --notes "$NOTES"
+            --title "Meon macOS (최신 릴리스)" --notes "$NOTES"
           # 앱의 업데이트 확인용 빌드 번호. zip 이 다 올라간 뒤에 올려야 앱이 반쯤 올라간 파일을 받지 않는다.
-          echo "${{ github.run_number }}" > build.txt
+          echo "${{ env.BUILD_ID }}" > build.txt
           gh release upload mac-latest build.txt
