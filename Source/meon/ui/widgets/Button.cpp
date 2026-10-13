@@ -129,6 +129,7 @@ Button::Look Button::currentLook() const
             if (disabled) return { col::softBg, col::line, col::inkFaint, 400 };
             return { col::softBg, col::line, col::inkSub, 400 };
         case Kind::largeSecondary:
+        case Kind::cancel:
             return { col::white, col::field, disabled ? col::inkFaint : col::inkSub, 600 };
         case Kind::link:
         case Kind::linkSmall:
@@ -158,7 +159,8 @@ void Button::paintButton (juce::Graphics& g, bool highlighted, bool)
             case Kind::large:     look.fill = col::accentHover; look.border = col::accentHover; break;
             case Kind::secondary:
             case Kind::quiet:     look.fill = col::hoverBg; break;
-            case Kind::largeSecondary: look.fill = col::hoverBg; look.ink = col::ink; break;
+            case Kind::largeSecondary:
+            case Kind::cancel:    look.fill = col::hoverBg; look.ink = col::ink; break;
             case Kind::linkSmall: look.ink = col::ink; break;
             case Kind::small:     if (! on && ! pending) look.ink = col::ink; break;
             case Kind::link:      look.ink = col::ink; break;

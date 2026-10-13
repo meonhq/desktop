@@ -118,13 +118,23 @@ void TextInput::setMaxBytes (int n)
 
 void TextInput::enablementChanged() { ed.setEnabled (isEnabled()); repaint(); }
 
+void TextInput::setBorderless (bool b)
+{
+    borderless = b;
+    resized();
+    repaint();
+}
+
 void TextInput::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    g.setColour (isEnabled() ? col::white : col::hoverBg);
-    g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (error ? col::danger : (isEnabled() ? col::field : col::line));
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    if (! borderless)
+    {
+        g.setColour (isEnabled() ? col::white : col::hoverBg);
+        g.fillRoundedRectangle (r, metric::radius);
+        g.setColour (error ? col::danger : (isEnabled() ? col::field : col::line));
+        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    }
     if (placeholder.isNotEmpty() && ed.getTotalNumChars() == 0)
     {
         g.setColour (col::inkFaint);
@@ -137,7 +147,9 @@ void TextInput::paint (juce::Graphics& g)
 
 void TextInput::resized()
 {
-    if (multi)
+    if (borderless)
+        ed.setBounds (getLocalBounds());
+    else if (multi)
         ed.setBounds (getLocalBounds().reduced (12, 8));
     else
         ed.setBounds (getLocalBounds().reduced (12, 0));
@@ -180,8 +192,8 @@ OtpInput::OtpInput (Charset c, Size s)
     switch (s)
     {
         case Size::large:  cellW = 44; cellH = 52; break;
-        case Size::medium: cellW = 40; cellH = 48; break;
-        case Size::small:  cellW = 36; cellH = 44; break;
+        case Size::medium: cellW = 40; cellH = 48; gap = 6; break;   // 코드로 입장 (칸 사이 6)
+        case Size::small:  cellW = 36; cellH = 44; gap = 6; break;   // 설정 이메일 변경
     }
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::IBeamCursor);

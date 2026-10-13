@@ -91,6 +91,10 @@ public:
     void setContentHeight (int);
     void setTitle (const juce::String& t) { title = t; repaint(); }
     void setShowHeader (bool b) { showHeader = b; resized(); }
+    /** 머리말 오른쪽 닫기 버튼 (코드로 입장·새 합주실은 없음) */
+    void setShowClose (bool b) { showClose = b; resized(); }
+    /** 머리말 오른쪽에 붙는 구성 요소 (방 필터의 "초기화"). 닫기 버튼이 없을 때 그 자리에 */
+    void setHeaderAccessory (juce::Component*);
     std::function<void()> onClose;
     /** 덮개를 둘 영역 (창 전체에서 맨 위 막대 등을 뺀 곳). 비면 부모 전체 */
     void setOverlayInsets (juce::BorderSize<int> b) { insets = b; resized(); }
@@ -104,8 +108,9 @@ public:
 private:
     juce::String title;
     int width, contentH = 100;
-    bool showHeader = true;
+    bool showHeader = true, showClose = true;
     juce::Component* content = nullptr;
+    juce::Component* accessory = nullptr;
     IconButton closeButton;
     juce::BorderSize<int> insets;
 };

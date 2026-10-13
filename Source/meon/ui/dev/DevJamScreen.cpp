@@ -172,8 +172,11 @@ DevJamScreen::DevJamScreen (core::MeonCore& c) : core (c), jam (*c.jam())
    #if MEON_DEV_OPTIONS
     // 자동 시험: --dev-create (방 만들고 코드를 표준 오류로), --dev-join=코드, --dev-chat=글 (입장 8초 뒤 보냄)
     const auto& dev = meon::devOptions();
-    if (dev.getAllKeys().contains ("dev-create")) createRoom();
-    if (dev["dev-join"].isNotEmpty()) { code.setCode (dev["dev-join"].toUpperCase()); joinCode(); }
+    if (! core.store().state().inRoom())   // 새 홈(R5~)에서 임시 합주 화면으로 열렸으면 이미 방 안이다
+    {
+        if (dev.getAllKeys().contains ("dev-create")) createRoom();
+        if (dev["dev-join"].isNotEmpty()) { code.setCode (dev["dev-join"].toUpperCase()); joinCode(); }
+    }
    #endif
 }
 
@@ -289,7 +292,7 @@ void DevJamScreen::refresh()
     const char* ph = phase == JamSession::Phase::idle ? "방 밖" : phase == JamSession::Phase::connecting ? "AOO 서버 접속 중"
                    : phase == JamSession::Phase::joining ? "그룹 입장 중" : "방 안";
     status.setText (TXT ("상태: ") + juce::String::fromUTF8 (ph) + TXT (" · AOO 서버 ") + (jam.isEngineConnected() ? TXT ("연결됨") : TXT ("끊김"))
-                    + TXT (" · 내 RTT ") + (st.myRttMs ? juce::String (*st.myRttMs) + "ms" : juce::String ("—"))
+                    + TXT (" · 내 RTT ") + (st.myRttMs ? juce::String (*st.myRttMs) + "ms" : TXT ("—"))
                     + TXT (" · 실시간 ") + (st.link == core::Realtime::Link::online ? TXT ("연결됨") : TXT ("끊김")));
     if (st.currentRoom)
         roomInfo.setText (TXT ("입장 코드 ") + st.currentRoom->inviteCode.value_or ("—") + "   " + st.currentRoom->title + " · "

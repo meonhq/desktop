@@ -27,6 +27,8 @@ public:
     std::function<juce::String (const juce::String&)> transform;
     void setFontPx (float px, int weight = 400);
     void setReadOnly (bool);
+    /** 테두리·여백 없는 입력 (홈의 친구 추가) */
+    void setBorderless (bool);
     void focus();
 
     juce::TextEditor& editor() { return ed; }
@@ -40,7 +42,7 @@ public:
 private:
     juce::TextEditor ed;
     juce::String placeholder;
-    bool error = false, multi;
+    bool error = false, multi, borderless = false;
     int maxLength = 0, maxBytes = 0;
     float fontPx = 13.0f;
     int weight = 400;

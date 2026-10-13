@@ -22,7 +22,7 @@ namespace meon::ui
 class Button : public juce::Button, private juce::Timer
 {
 public:
-    enum class Kind { primary, secondary, quiet, large, largeSecondary, dangerOutline, small, smallPrimary, smallDanger, link, linkSmall, linkUnderline };
+    enum class Kind { primary, secondary, quiet, large, largeSecondary, dangerOutline, small, smallPrimary, smallDanger, link, linkSmall, linkUnderline, cancel };
 
     struct Look
     {
