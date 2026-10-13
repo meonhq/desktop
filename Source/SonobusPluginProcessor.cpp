@@ -1246,6 +1246,44 @@ int SonobusAudioProcessor::getPublicGroupInfos(Array<AooPublicGroupInfo> & retar
 
 
 
+bool SonobusAudioProcessor::isPeerNameAllowed(const String & name) const
+{
+    const ScopedLock sl (mAllowedPeersLock);
+    return !mAllowedPeersEnabled || mAllowedPeerNames.contains(name);
+}
+
+void SonobusAudioProcessor::setAllowedPeerNames(const StringArray & names, bool enabled)
+{
+    // MEON E1 (메시지 스레드에서 부른다)
+    Array<DeferredPeer> toConnect;
+    {
+        const ScopedLock sl (mAllowedPeersLock);
+        mAllowedPeerNames = names;
+        mAllowedPeersEnabled = enabled;
+        for (int d = mDeferredPeers.size(); --d >= 0;) {
+            const auto & dp = mDeferredPeers.getReference(d);
+            if (!enabled || names.contains(dp.user)) {
+                toConnect.add(dp);
+                mDeferredPeers.remove(d);
+            }
+        }
+    }
+
+    if (enabled) {
+        // 목록에서 빠진 피어는 끊는다 (다시 허용되면 상대가 다시 들어올 때 연결된다)
+        for (int i = getNumberRemotePeers(); --i >= 0;) {
+            const auto user = getRemotePeerUserName(i);
+            if (user.isNotEmpty() && !names.contains(user)) {
+                removeRemotePeer(i);
+            }
+        }
+    }
+
+    for (auto & dp : toConnect) {
+        connectRemotePeerRaw(dp.address.getData(), dp.user, dp.group, !mMainRecvMute.get());
+    }
+}
+
 void SonobusAudioProcessor::setAutoconnectToGroupPeers(bool flag)
 {
     mAutoconnectGroupPeers = flag;
@@ -4340,7 +4378,16 @@ int32_t SonobusAudioProcessor::handleClientEvents(const aoo_event ** events, int
                     }
                     else {
                         if (mAutoconnectGroupPeers) {
-                            connectRemotePeerRaw(e->address, CharPointer_UTF8 (e->user), CharPointer_UTF8 (e->group), !mMainRecvMute.get());
+                            // MEON E1: 허용 목록이 켜져 있고 목록에 없으면 연결을 미룬다
+                            const String user = CharPointer_UTF8 (e->user);
+                            if (isPeerNameAllowed(user)) {
+                                connectRemotePeerRaw(e->address, user, CharPointer_UTF8 (e->group), !mMainRecvMute.get());
+                            } else {
+                                const ScopedLock sl (mAllowedPeersLock);
+                                for (int d = mDeferredPeers.size(); --d >= 0;)
+                                    if (mDeferredPeers.getReference(d).user == user) mDeferredPeers.remove(d);
+                                mDeferredPeers.add({ MemoryBlock(e->address, (size_t) jmax(0, (int) e->length)), user, CharPointer_UTF8 (e->group) });
+                            }
                         }
                         
                         //aoo_node_add_peer(x->x_node, gensym(e->group), gensym(e->user),
@@ -4379,6 +4426,13 @@ int32_t SonobusAudioProcessor::handleClientEvents(const aoo_event ** events, int
             if (e->result > 0){
 
                 DBG("Peer leave group " <<  e->group << " - user " << e->user);
+                {
+                    // MEON E1: 대기 중이던 피어는 잊는다
+                    const ScopedLock sl (mAllowedPeersLock);
+                    const String user = CharPointer_UTF8 (e->user);
+                    for (int d = mDeferredPeers.size(); --d >= 0;)
+                        if (mDeferredPeers.getReference(d).user == user) mDeferredPeers.remove(d);
+                }
 
                 EndpointState * endpoint = findOrAddRawEndpoint(e->address);
                 if (endpoint) {

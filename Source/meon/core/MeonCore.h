@@ -10,11 +10,13 @@
 #include "auth/AuthController.h"
 #include "auth/TokenStore.h"
 #include "util/Scheduler.h"
+#include "jam/JamSession.h"
+#include "jam/RttReporter.h"
 
 namespace meon::core
 {
 
-class MeonCore
+class MeonCore : private AuthController::Listener
 {
 public:
     struct Options
@@ -45,6 +47,11 @@ public:
     AuthController& auth()              { return *authController; }
     FakeMeonServer* fakeServer()        { return fake.get(); }
 
+    /** 프로세서가 엔진을 붙인다 (합주). 붙인 뒤에야 jam() 이 생긴다 */
+    void attachEngine (std::unique_ptr<Engine>, JamSession::Options);
+    JamSession* jam()                   { return jamSession.get(); }
+    Engine* engine()                    { return engineImpl.get(); }
+
 private:
     Options options;
     RealScheduler sched;
@@ -56,6 +63,11 @@ private:
     std::unique_ptr<AuthController> authController;
     bool started = false;
     juce::File fakeStateFile;
+    std::unique_ptr<Engine> engineImpl;
+    std::unique_ptr<JamSession> jamSession;
+    std::unique_ptr<RttReporter> rtt;
+
+    void authStepChanged (AuthController::Step) override;
 
     JUCE_DECLARE_NON_COPYABLE (MeonCore)
 };

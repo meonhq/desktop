@@ -114,7 +114,7 @@ private:
     std::unique_ptr<ui::OnboardingScreen> onboarding;
     void authStepChanged (core::AuthController::Step) override;
     void updateOnboarding();
-    bool devPreview = false;
+    bool devPreview = false, devJam = false, devSignupStarted = false;
     Screen current = Screen::Home;
     bool quitAfterLeave = false;
     bool autoCreate = false, autoEnter = false;

@@ -1062,6 +1062,7 @@ private:
                 // 에디터가 오디오 장치 관리자에 접근할 수 있게 연결
                 if (auto * hooks = dynamic_cast<meon::ShellHooks*>(editor.get())) {
                     hooks->getAudioDeviceManager = [this]() { return &owner.getDeviceManager();  };
+                    meon::deviceManagerProvider() = [this]() { return &owner.getDeviceManager(); };
                 }
 
                 // 에디터의 최소·최대 크기를 창에도 적용 (독립 앱 최소 1024×680)

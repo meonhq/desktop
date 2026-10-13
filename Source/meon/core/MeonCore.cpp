@@ -27,10 +27,42 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     tokenStore = TokenStore::createDefault ("fake-refresh-token");
     if (options.resetFakeState) tokenStore->clear();
     authController = std::make_unique<AuthController> (*meonApi, *rt, appStore, *tokenStore, sched);
+    authController->addListener (this);
+}
+
+void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
+{
+    jamSession.reset();
+    engineImpl = std::move (e);
+    o.plugin = options.plugin;
+    o.fake = fake.get();
+    jamSession = std::make_unique<JamSession> (*engineImpl, appStore, sched, std::move (o));
+}
+
+void MeonCore::authStepChanged (AuthController::Step s)
+{
+    // RTT 는 프로필까지 마친 계정만 보고할 수 있다 (API 3.4). 그 뒤로는 1분마다
+    if (s != AuthController::Step::ready && s != AuthController::Step::done && s != AuthController::Step::discord)
+    {
+        if (s == AuthController::Step::login) rtt.reset();
+        return;
+    }
+    if (rtt != nullptr) return;
+    rtt = std::make_unique<RttReporter> ([this] (int ms)
+    {
+        appStore.setMyRtt (ms);
+        meonApi->reportRtt (ms, [] (Result<Done>) {});
+    });
+    // 가짜 기간: 지금 쓰는 AOO 서버 (진짜 서버 단계에서는 마지막 Connection 이나 config 의 주소)
+    rtt->start (options.fake.aooHost, options.fake.aooPort);
 }
 
 MeonCore::~MeonCore()
 {
+    rtt.reset();
+    jamSession.reset();
+    engineImpl.reset();
+    authController->removeListener (this);
     authController.reset();
     rt->removeListener (&appStore);
     rt->disconnect();

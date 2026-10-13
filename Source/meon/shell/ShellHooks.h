@@ -26,6 +26,13 @@ public:
 
 /** 개발용 실행 옵션을 해석한다. "--key=value" → key:value, "--flag" → flag:"1". 해석한 인자는 목록에서 뺀다.
     셸이 쓰는 키(window, snapshot, no-input)도 같은 표에 들어 있다. */
+/** 독립 앱의 오디오 장치 관리자 (셸이 창을 만들 때 넣는다. 플러그인은 비어 있다) */
+inline std::function<juce::AudioDeviceManager*()>& deviceManagerProvider()
+{
+    static std::function<juce::AudioDeviceManager*()> provider;
+    return provider;
+}
+
 /** 셸이 해석한 개발용 실행 옵션 (프로세서가 MeonCore 를 만들 때 읽는다). 배포 빌드에서는 늘 비어 있다 */
 inline juce::StringPairArray& devOptions()
 {

@@ -1,5 +1,6 @@
 #include "MeonEditor.h"
 #include "ui/dev/WidgetGallery.h"
+#include "ui/dev/DevJamScreen.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/theme/LookAndFeel.h"
 #include "OnboardingScreens.h"
@@ -82,7 +83,12 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     updater->onDownloaded = [this] { installUpdate(); };
 
     go (initialScreen(), false);
-    session->start();
+   #if MEON_DEV_OPTIONS
+    devJam = meon::devOptions().getAllKeys().contains ("dev-jam");
+   #endif
+    // --dev-jam: 새 합주 로직(JamSession)만 쓴다. 옛 세션은 서버에 붙이지 않는다 (둘을 동시에 쓰지 않음)
+    if (! devJam)
+        session->start();
 
     newLookAndFeel = std::make_unique<ui::LookAndFeel>();
     core.auth().addListener (this);
@@ -326,6 +332,30 @@ void MeonEditor::updateOnboarding()
 {
     using Step = core::AuthController::Step;
     const auto step = core.auth().step();
+
+   #if MEON_DEV_OPTIONS
+    // 개발용 자동 가입 (--dev-signup=아이디): 두 인스턴스 자동 시험용. 비밀번호 abcd123!x, 인증 코드는 가짜 서버 값
+    const auto autoUser = meon::devOptions()["dev-signup"];
+    if (autoUser.isNotEmpty())
+    {
+        auto& auth = core.auth();
+        auto ignore = [] (core::Result<core::Done>) {};
+        if (step == Step::login && ! devSignupStarted)
+        {
+            devSignupStarted = true;
+            auth.signup (autoUser + "@example.com", autoUser, "abcd123!x", true, [this, autoUser] (core::Result<core::Done> r)
+            {
+                if (! r.ok()) core.auth().login (autoUser + "@example.com", "abcd123!x", [] (core::Result<core::Done>) {});
+            });
+        }
+        else if (step == Step::verify && core.fakeServer() != nullptr) auth.verify (core.fakeServer()->getLastMailedCode(), ignore);
+        else if (step == Step::nickname) auth.setNickname (autoUser, ignore);
+        else if (step == Step::part) auth.setPart ("guitar", ignore);
+        else if (step == Step::discord) auth.finishDiscord();
+        else if (step == Step::done) auth.finishDone();
+        if (auth.step() != step) return;   // 위에서 단계가 넘어갔으면 그 호출이 이미 처리했다
+    }
+   #endif
     if (step != Step::ready)
     {
         if (onboarding == nullptr)
@@ -336,6 +366,19 @@ void MeonEditor::updateOnboarding()
             onboarding->setBounds (getLocalBounds());
         }
         onboarding->toFront (true);
+        return;
+    }
+
+    if (devJam)
+    {
+        if (onboarding != nullptr) { removeChildComponent (onboarding.get()); onboarding.reset(); }
+        if (devScreen == nullptr && core.jam() != nullptr)
+        {
+            devScreen = std::make_unique<ui::DevJamScreen> (core);
+            devScreen->setLookAndFeel (newLookAndFeel.get());
+            addAndMakeVisible (*devScreen);
+            devScreen->setBounds (getLocalBounds());
+        }
         return;
     }
 
