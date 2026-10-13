@@ -25,7 +25,7 @@ public:
     void paint (juce::Graphics& g) override { g.fillAll (col::white); }
 };
 
-namespace ui { class OnboardingScreen; class LookAndFeel; }
+namespace ui { class OnboardingScreen; class LookAndFeel; class AppRoot; }
 
 class MeonEditor : public juce::AudioProcessorEditor,
                    public ShellHooks,
@@ -112,9 +112,14 @@ private:
     core::MeonCore& core;
     std::unique_ptr<ui::LookAndFeel> newLookAndFeel;
     std::unique_ptr<ui::OnboardingScreen> onboarding;
+    // 리메이크 R5: 로그인 뒤 새 홈 (방에 들어가면 R6 전까지 임시 합주 화면). 옛 세션은 시작하지 않는다
+    std::unique_ptr<ui::AppRoot> appRoot;
     void authStepChanged (core::AuthController::Step) override;
     void updateOnboarding();
+    void showAppRoot();
+    void applyHomePreview();
     bool devPreview = false, devJam = false, devSignupStarted = false;
+    juce::String devHomePreview;   // --screen=home[:create|filter|code|notif|fail|toast|disc] (스냅숏용)
     Screen current = Screen::Home;
     bool quitAfterLeave = false;
     bool autoCreate = false, autoEnter = false;

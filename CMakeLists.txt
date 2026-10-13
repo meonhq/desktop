@@ -114,6 +114,8 @@ set(MEON_CORE_SOURCES
     Source/meon/core/auth/TokenStore.cpp
     Source/meon/core/auth/AuthController.h
     Source/meon/core/auth/AuthController.cpp
+    Source/meon/core/home/HomeController.h
+    Source/meon/core/home/HomeController.cpp
     Source/meon/core/jam/Engine.h
     Source/meon/core/jam/PeerState.h
     Source/meon/core/jam/SilenceDetector.h
@@ -153,6 +155,12 @@ set(MEON_UI_SOURCES
     Source/meon/ui/Links.h
     Source/meon/ui/screens/OnboardingScreen.h
     Source/meon/ui/screens/OnboardingScreen.cpp
+    Source/meon/ui/screens/HomeScreen.h
+    Source/meon/ui/screens/HomeScreen.cpp
+    Source/meon/ui/overlays/HomeOverlays.h
+    Source/meon/ui/overlays/HomeOverlays.cpp
+    Source/meon/ui/AppRoot.h
+    Source/meon/ui/AppRoot.cpp
     Source/meon/ui/dev/WidgetGallery.h
     Source/meon/ui/dev/WidgetGallery.cpp
     Source/meon/ui/dev/DevJamScreen.h
@@ -653,6 +661,7 @@ if (MEON_TESTS)
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp
         Source/meon/tests/JamTests.cpp
+        Source/meon/tests/HomeTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)

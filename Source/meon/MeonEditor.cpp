@@ -2,6 +2,7 @@
 #include "ui/dev/WidgetGallery.h"
 #include "ui/dev/DevJamScreen.h"
 #include "ui/screens/OnboardingScreen.h"
+#include "ui/AppRoot.h"
 #include "ui/theme/LookAndFeel.h"
 #include "OnboardingScreens.h"
 #include "LobbyScreens.h"
@@ -82,13 +83,16 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     updater = std::make_unique<MeonUpdater>();
     updater->onDownloaded = [this] { installUpdate(); };
 
-    go (initialScreen(), false);
    #if MEON_DEV_OPTIONS
     devJam = meon::devOptions().getAllKeys().contains ("dev-jam");
+    {
+        const auto scr = meon::devOptions()["screen"];
+        if (scr == "home" || scr.startsWith ("home:"))
+            devHomePreview = scr == "home" ? juce::String ("home") : scr.fromFirstOccurrenceOf (":", false, false);
+    }
    #endif
-    // --dev-jam: 새 합주 로직(JamSession)만 쓴다. 옛 세션은 서버에 붙이지 않는다 (둘을 동시에 쓰지 않음)
-    if (! devJam)
-        session->start();
+    // R5 부터 로그인 뒤 화면은 새 홈(AppRoot)이고 합주는 새 로직(JamSession)만 쓴다.
+    // 옛 세션(MeonSession)은 서버에 붙이지 않는다 (둘을 동시에 쓰지 않음). 옛 화면 파일은 R6 에서 지운다.
 
     newLookAndFeel = std::make_unique<ui::LookAndFeel>();
     core.auth().addListener (this);
@@ -106,6 +110,7 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
 MeonEditor::~MeonEditor()
 {
     core.auth().removeListener (this);
+    appRoot.reset();
     onboarding.reset();
     session->removeListener (this);
     settingsOverlay = nullptr;
@@ -236,20 +241,23 @@ bool MeonEditor::requestedQuit()
                 return false;
         session->leaveRoom();
     }
+    // 새 합주 (R5~): 끄면 방에서 나간다. 확인 대화상자는 R6 의 합주 화면에서
+    if (core.store().state().inRoom())
+        core.home().leaveRoom();
     saveAll();
     return true;
 }
 
 void MeonEditor::startUpdate()
 {
-    if (! session->isInRoom())
+    if (! session->isInRoom() && ! core.store().state().inRoom())
         updater->download();
 }
 
 void MeonEditor::installUpdate()
 {
     // 합주 중에 받기가 끝났으면 설치를 미룬다 (설정의 업데이트 버튼으로 다시 시작)
-    if (session->isInRoom())
+    if (session->isInRoom() || core.store().state().inRoom())
         return;
     if (! updater->launchInstaller())
         return;
@@ -335,7 +343,8 @@ void MeonEditor::updateOnboarding()
 
    #if MEON_DEV_OPTIONS
     // 개발용 자동 가입 (--dev-signup=아이디): 두 인스턴스 자동 시험용. 비밀번호 abcd123!x, 인증 코드는 가짜 서버 값
-    const auto autoUser = meon::devOptions()["dev-signup"];
+    auto autoUser = meon::devOptions()["dev-signup"];
+    if (autoUser.isEmpty() && devHomePreview.isNotEmpty()) autoUser = "snapshot";   // 홈 스냅숏: 가짜 계정으로 자동 가입
     if (autoUser.isNotEmpty())
     {
         auto& auth = core.auth();
@@ -358,6 +367,7 @@ void MeonEditor::updateOnboarding()
    #endif
     if (step != Step::ready)
     {
+        appRoot.reset();   // 로그아웃 등
         if (onboarding == nullptr)
         {
             onboarding = std::make_unique<ui::OnboardingScreen> (core);
@@ -382,7 +392,7 @@ void MeonEditor::updateOnboarding()
         return;
     }
 
-    // 온보딩을 마쳤다: 서버 계정의 닉네임·파트를 옛 화면 설정에 넣고 옛 홈으로 (R6 까지 임시)
+    // 온보딩을 마쳤다: 서버 계정의 닉네임·파트를 옛 설정에도 넣고(옛 설정 화면이 R7 까지 남는다) 새 홈으로
     if (const auto& me = core.store().state().me)
     {
         if (me->nickname) settings->setNickname (*me->nickname);
@@ -394,7 +404,85 @@ void MeonEditor::updateOnboarding()
     {
         removeChildComponent (onboarding.get());
         onboarding.reset();
-        if (current != Screen::Jam) go (Screen::Home, false);
+    }
+    showAppRoot();
+}
+
+void MeonEditor::showAppRoot()
+{
+    if (appRoot != nullptr) return;
+    ui::HomeScreen::UpdateHooks hooks;
+    if (MeonUpdater::isSupported() && ! pluginMode)
+    {
+        using S = ui::HomeScreen::UpdateHooks::State;
+        hooks.state = [this]
+        {
+            switch (updater->getState())
+            {
+                case MeonUpdater::State::Available:   return S::available;
+                case MeonUpdater::State::Downloading: return S::downloading;
+                case MeonUpdater::State::Ready:       return S::installing;
+                case MeonUpdater::State::Failed:      return updater->lastFailureWasDownload() ? S::failed : S::none;
+                default:                              return S::none;
+            }
+        };
+        hooks.progress = [this] { return updater->getProgress(); };
+        hooks.latestBuild = [this] { return updater->getLatestBuild(); };
+        hooks.start = [this] { startUpdate(); };
+    }
+    appRoot = std::make_unique<ui::AppRoot> (core, std::move (hooks));
+    appRoot->setLookAndFeel (newLookAndFeel.get());
+    appRoot->onOpenSettings = [this] { openSettings(); };
+    addAndMakeVisible (*appRoot);
+    appRoot->setBounds (getLocalBounds());
+    if (settingsOverlay != nullptr) settingsOverlay->toFront (false);
+    if (devHomePreview.isNotEmpty())
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (500, [safe] { if (safe != nullptr) safe->applyHomePreview(); });
+    }
+   #if MEON_DEV_OPTIONS
+    // 개발용 자동 시험 (새 홈에서): --dev-create 비공개 방 만들기, --dev-join=코드
+    const auto& dev = meon::devOptions();
+    if (! core.store().state().inRoom())
+    {
+        if (dev.getAllKeys().contains ("dev-create"))
+        {
+            core::CreateRoom c;
+            c.type = "private";
+            c.title = TXT ("개발용 방");
+            core.home().createRoom (c, [] (core::Result<core::RoomDetail> r)
+            {
+                if (r.ok()) std::cerr << "MEON dev: room code " << r.get().inviteCode.value_or ("").toStdString() << std::endl;
+            });
+        }
+        else if (dev["dev-join"].isNotEmpty())
+        {
+            core.home().joinByCode (dev["dev-join"], [] (core::Result<core::JoinResult>) {});
+        }
+    }
+   #endif
+}
+
+void MeonEditor::applyHomePreview()
+{
+    // 개발용 스냅숏: 홈의 겹침 요소를 열어 둔다
+    if (appRoot == nullptr) return;
+    auto* home = appRoot->getHome();
+    const auto p = devHomePreview;
+    if (p == "create")      home->openCreateRoom();
+    else if (p == "filter") home->openFilter();
+    else if (p == "code")   home->openJoinCode();
+    else if (p == "notif")  home->toggleNotifications();
+    else if (p == "fail")   appRoot->showJoinFailure (core::HomeController::JoinFailure::full);
+    else if (p == "toast")
+    {
+        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        appRoot->addInfoToast (TXT ("방장이 방을 닫았어요"), TXT ("금요일 밤 홍대 밴드 합주"));
+    }
+    else if (p == "disc")
+    {
+        if (auto* fake = core.fakeServer()) fake->devDropLink (60);
     }
 }
 
@@ -428,6 +516,8 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
         devScreen->setBounds (getLocalBounds());
         return;
     }
+    if (devHomePreview.isNotEmpty())
+        return;   // 새 홈 미리 보기는 가입이 끝난 뒤 showAppRoot 가 연다
     const auto& keys = o.getAllKeys();
     applyTestOptions (o["nickname"], o["screen"], keys.contains ("create"), o["join"], keys.contains ("enter"));
 }
@@ -526,6 +616,8 @@ void MeonEditor::resized()
         settingsFadingOut->setBounds (getLocalBounds());
     if (devScreen != nullptr)
         devScreen->setBounds (getLocalBounds());
+    if (appRoot != nullptr)
+        appRoot->setBounds (getLocalBounds());
     if (onboarding != nullptr)
         onboarding->setBounds (getLocalBounds());
     processor.setLastPluginBounds (getLocalBounds());

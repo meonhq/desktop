@@ -175,6 +175,13 @@ void Modal::setContent (juce::Component* c, int h)
 
 void Modal::setContentHeight (int h) { contentH = h; resized(); repaint(); }
 
+void Modal::setHeaderAccessory (juce::Component* c)
+{
+    accessory = c;
+    if (c != nullptr) addAndMakeVisible (c);
+    resized();
+}
+
 juce::Rectangle<int> Modal::boxBounds() const
 {
     auto area = insets.subtractedFrom (getLocalBounds()).reduced (metric::padX);
@@ -185,8 +192,15 @@ juce::Rectangle<int> Modal::boxBounds() const
 void Modal::resized()
 {
     const auto box = boxBounds();
-    closeButton.setVisible (showHeader);
+    closeButton.setVisible (showHeader && showClose);
     closeButton.setBounds (box.getRight() - metric::padX - 24, box.getY() + 12, 24, 24);
+    if (accessory != nullptr)
+    {
+        const int w = accessory->getWidth() > 0 ? accessory->getWidth() : 60;
+        const int right = box.getRight() - metric::padX - (showClose ? 24 + 9 : 0);
+        accessory->setBounds (right - w, box.getY() + 24 - metric::smallH / 2, w, metric::smallH);
+        accessory->setVisible (showHeader);
+    }
     if (content != nullptr)
         content->setBounds (box.withTrimmedTop (showHeader ? 49 : 0));
 }
