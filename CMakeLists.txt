@@ -93,6 +93,36 @@ add_subdirectory(deps/juce EXCLUDE_FROM_ALL )
 
 juce_add_modules(deps/ff_meters)
 
+# MEON core: 화면 없는 로직 (서버 API, 가짜 서버, 상태, 모델). 앱·플러그인과 단위 테스트가 같이 쓴다.
+set(MEON_CORE_SOURCES
+    Source/meon/core/util/Scheduler.h
+    Source/meon/core/api/ApiTypes.h
+    Source/meon/core/api/ApiError.h
+    Source/meon/core/api/ApiJson.h
+    Source/meon/core/api/ApiJson.cpp
+    Source/meon/core/api/Transport.h
+    Source/meon/core/api/MeonApi.h
+    Source/meon/core/api/MeonApi.cpp
+    Source/meon/core/api/Realtime.h
+    Source/meon/core/api/Realtime.cpp
+    Source/meon/core/api/fake/FakeMeonServer.h
+    Source/meon/core/api/fake/FakeMeonServer.cpp
+    Source/meon/core/api/fake/FakeWorld.cpp
+    Source/meon/core/state/AppStore.h
+    Source/meon/core/state/AppStore.cpp
+    Source/meon/core/auth/TokenStore.h
+    Source/meon/core/auth/TokenStore.cpp
+    Source/meon/core/model/Parts.h
+    Source/meon/core/model/Validation.h
+    Source/meon/core/model/Validation.cpp
+    Source/meon/core/model/RoomFilter.h
+)
+
+# 가짜 서버 초기 데이터 (MeonFixtures::world_json)
+juce_add_binary_data(MEON_Fixtures HEADER_NAME MeonFixtures.h NAMESPACE MeonFixtures SOURCES
+    Source/meon/core/api/fake/fixtures/world.json)
+set_target_properties(MEON_Fixtures PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 
 
 set (FormatsToBuild VST3 Standalone)
@@ -316,6 +346,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonUpdater.cpp
         Source/meon/MeonUpdater.h
         Source/meon/shell/ShellHooks.h
+        ${MEON_CORE_SOURCES}
     )
     set(AOOSourceFiles        
         deps/aoo/lib/src/SLIP.hpp
@@ -527,6 +558,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             ff_meters
             
             ${target_name}_SBData
+            MEON_Fixtures
 
             opus
         PUBLIC
@@ -534,7 +566,11 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             juce::juce_recommended_lto_flags
         #   juce::juce_recommended_warning_flags
         )
-            
+
+    if (APPLE)
+        target_link_libraries("${target_name}" PRIVATE "-framework Security")   # 로그인 토큰 키체인
+    endif()
+
 endfunction()
 
 # MEON: 독립 앱 + AU + VST3 (하나의 타깃)
@@ -565,7 +601,14 @@ if (MEON_TESTS)
     target_sources(MEON_Tests PRIVATE
         Source/meon/tests/TestMain.cpp
         Source/meon/tests/EarGuardTests.cpp
-        Source/meon/MeonEarGuard.cpp)
+        Source/meon/tests/ApiJsonTests.cpp
+        Source/meon/tests/ValidationTests.cpp
+        Source/meon/tests/FakeServerTests.cpp
+        Source/meon/tests/AppStoreTests.cpp
+        Source/meon/MeonEarGuard.cpp
+        ${MEON_CORE_SOURCES})
+    target_compile_features(MEON_Tests PRIVATE cxx_std_17)
+    target_compile_options(MEON_Tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
     target_compile_definitions(MEON_Tests PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
@@ -578,8 +621,13 @@ if (MEON_TESTS)
         juce::juce_data_structures
         juce::juce_audio_basics
         juce::juce_dsp
+        juce::juce_cryptography
+        MEON_Fixtures
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+    if (APPLE)
+        target_link_libraries(MEON_Tests PRIVATE "-framework Security")
+    endif()
 endif()
 
 # Mobile targets
