@@ -53,7 +53,7 @@ jobs:
           mkdir -p "$HOME"
           for size in 1280x800 900x600; do
             W=${size%x*}; H=${size#*x}
-            for s in audio settings home; do
+            for s in audio settings home widgets; do
               timeout 60 xvfb-run -a -s "-screen 0 1600x1000x24" \
                 "$APP" --nickname=테스트 --screen=$s --window=0,0,$W,$H --no-input \
                 --snapshot="$PWD/snapshots/linux_${s}_${size}.png" || true

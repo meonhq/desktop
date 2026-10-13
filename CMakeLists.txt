@@ -118,6 +118,28 @@ set(MEON_CORE_SOURCES
     Source/meon/core/model/RoomFilter.h
 )
 
+# MEON ui: 새 화면·위젯 (리메이크). 앱·플러그인 타깃만 쓴다 (GUI)
+set(MEON_UI_SOURCES
+    Source/meon/ui/theme/Tokens.h
+    Source/meon/ui/theme/Icons.h
+    Source/meon/ui/theme/Icons.cpp
+    Source/meon/ui/theme/LookAndFeel.h
+    Source/meon/ui/theme/LookAndFeel.cpp
+    Source/meon/ui/widgets/Button.h
+    Source/meon/ui/widgets/Button.cpp
+    Source/meon/ui/widgets/Inputs.h
+    Source/meon/ui/widgets/Inputs.cpp
+    Source/meon/ui/widgets/Controls.h
+    Source/meon/ui/widgets/Controls.cpp
+    Source/meon/ui/widgets/Meter.h
+    Source/meon/ui/widgets/Meter.cpp
+    Source/meon/ui/widgets/Display.h
+    Source/meon/ui/widgets/Display.cpp
+    Source/meon/ui/widgets/Masonry.h
+    Source/meon/ui/dev/WidgetGallery.h
+    Source/meon/ui/dev/WidgetGallery.cpp
+)
+
 # 가짜 서버 초기 데이터 (MeonFixtures::world_json)
 juce_add_binary_data(MEON_Fixtures HEADER_NAME MeonFixtures.h NAMESPACE MeonFixtures SOURCES
     Source/meon/core/api/fake/fixtures/world.json)
@@ -347,6 +369,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonUpdater.h
         Source/meon/shell/ShellHooks.h
         ${MEON_CORE_SOURCES}
+        ${MEON_UI_SOURCES}
     )
     set(AOOSourceFiles        
         deps/aoo/lib/src/SLIP.hpp
@@ -605,6 +628,7 @@ if (MEON_TESTS)
         Source/meon/tests/ValidationTests.cpp
         Source/meon/tests/FakeServerTests.cpp
         Source/meon/tests/AppStoreTests.cpp
+        Source/meon/tests/MasonryTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)

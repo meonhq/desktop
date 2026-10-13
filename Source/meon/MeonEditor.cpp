@@ -1,4 +1,5 @@
 #include "MeonEditor.h"
+#include "ui/dev/WidgetGallery.h"
 #include "OnboardingScreens.h"
 #include "LobbyScreens.h"
 #include "JamScreen.h"
@@ -307,6 +308,13 @@ MeonSessionLog::AudioInfo MeonEditor::collectAudioInfo() const
 //==============================================================================
 void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
 {
+    if (o["screen"] == "widgets")
+    {
+        devScreen = std::make_unique<ui::WidgetGallery>();
+        addAndMakeVisible (*devScreen);
+        devScreen->setBounds (getLocalBounds());
+        return;
+    }
     const auto& keys = o.getAllKeys();
     applyTestOptions (o["nickname"], o["screen"], keys.contains ("create"), o["join"], keys.contains ("enter"));
 }
@@ -403,6 +411,8 @@ void MeonEditor::resized()
         settingsOverlay->setBounds (getLocalBounds());
     if (settingsFadingOut != nullptr)
         settingsFadingOut->setBounds (getLocalBounds());
+    if (devScreen != nullptr)
+        devScreen->setBounds (getLocalBounds());
     processor.setLastPluginBounds (getLocalBounds());
 }
 

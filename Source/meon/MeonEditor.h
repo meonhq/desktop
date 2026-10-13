@@ -102,6 +102,7 @@ private:
     std::unique_ptr<juce::Component> fadingOut;
     std::unique_ptr<juce::Component> settingsOverlay;
     std::unique_ptr<juce::Component> settingsFadingOut;
+    std::unique_ptr<juce::Component> devScreen;   // 개발용 화면 (--screen=widgets)
     Screen current = Screen::Home;
     bool quitAfterLeave = false;
     bool autoCreate = false, autoEnter = false;
