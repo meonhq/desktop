@@ -38,6 +38,9 @@ public:
 
     void save();
 
+    /** 리메이크 core 가 쓰는 키 (sendMuted, sendGainDb, bufferMode, selfMonitorApp/Plugin, keepMasterVolume, masterVolumeDb …) */
+    juce::PropertiesFile& properties() { return *props; }
+
     static juce::File getSettingsFolder();
     static juce::File getLogFolder();
 

@@ -305,6 +305,12 @@ public:
     void setAutoconnectToGroupPeers(bool flag);
     bool getAutoconnectToGroupPeers() const { return mAutoconnectGroupPeers; }
 
+    // MEON (엔진 수정 E1): 피어 허용 목록. 켜져 있으면 그룹에 들어온 피어 중 목록에 있는 AOO 이름만 자동 연결하고,
+    // 나머지는 연결하지 않고 대기열에 둔다 (서버에 붙어 있는 동안 엔진은 모르는 피어의 초대에 응하지 않는다).
+    // 목록이 바뀌면 새로 허용된 대기 피어를 연결하고, 빠진 피어는 끊는다. enabled=false 면 원래 동작.
+    void setAllowedPeerNames(const StringArray & names, bool enabled);
+    bool isPeerNameAllowed(const String & name) const;
+
     bool joinServerGroup(const String & group, const String & groupsecret = "", bool isPublic=false);
     bool leaveServerGroup(const String & group);
     String getCurrentJoinedGroup() const ;
@@ -1102,6 +1108,18 @@ private:
     std::unique_ptr<EndpointState> mServerEndpoint;
     
     bool mAutoconnectGroupPeers = true;
+    
+    // MEON E1
+    
+    struct DeferredPeer { MemoryBlock address; String user, group; };
+    
+    mutable CriticalSection mAllowedPeersLock;
+    
+    StringArray mAllowedPeerNames;
+    
+    bool mAllowedPeersEnabled = false;
+    
+    Array<DeferredPeer> mDeferredPeers;
     bool mIsConnectedToServer = false;
     String mCurrentJoinedGroup;
     double mSessionConnectionStamp = 0.0;

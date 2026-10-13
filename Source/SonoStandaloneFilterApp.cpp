@@ -179,7 +179,15 @@ public:
 
     const String getApplicationName() override              { return JucePlugin_Name; }
     const String getApplicationVersion() override           { return JucePlugin_VersionString; }
-    bool moreThanOneInstanceAllowed() override              { return false; }
+    bool moreThanOneInstanceAllowed() override
+    {
+       #if MEON_DEV_OPTIONS
+        // 개발용: --allow-multi 면 한 컴퓨터에서 여러 개 (자동 시험용)
+        if (JUCEApplicationBase::getCommandLineParameters().contains ("--allow-multi"))
+            return true;
+       #endif
+        return false;
+    }
 
 
     AooServerConnectionInfo cmdlineConnInfo;
@@ -524,7 +532,7 @@ public:
     void initialise (const String&) override
     {
 #if JUCE_WINDOWS
-        if (meonActivateExistingInstance()) {
+        if (! moreThanOneInstanceAllowed() && meonActivateExistingInstance()) {
             quit();
             return;
         }
@@ -573,7 +581,8 @@ public:
 
             if (meonSnapshot.isNotEmpty()) {
                 // 개발용: 화면을 PNG 로 저장하고 끝낸다 (CI 에서 Windows 렌더링 확인용)
-                Timer::callAfterDelay (3000, [this]() {
+                const int delayMs = meonDev.getAllKeys().contains ("snapshot-delay") ? meonDev["snapshot-delay"].getIntValue() : 3000;
+                Timer::callAfterDelay (delayMs, [this]() {
                     if (mainWindow != nullptr) {
                         auto* content = mainWindow->getContentComponent();
                         auto image = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);

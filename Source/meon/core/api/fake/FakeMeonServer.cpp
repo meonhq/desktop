@@ -184,7 +184,7 @@ UserPublic FakeMeonServer::publicOf (const User& u) const { return { u.id, u.use
 UserPublic FakeMeonServer::publicOf (const String& id) const
 {
     if (auto* u = findUser (id)) return publicOf (*u);
-    return { id, "unknown", String ("알 수 없음"), String ("other") };
+    return { id, "unknown", String::fromUTF8 ("알 수 없음"), String ("other") };
 }
 
 Me FakeMeonServer::meOf (const User& u) const
@@ -633,7 +633,7 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
         {
             auto* u = findByEmail (body.getProperty ("email", "").toString().trim());
             if (u == nullptr || u->passwordHash != hashPassword (u->salt, body.getProperty ("password", "").toString()))
-                return fail (ErrorCode::invalidCredentials, String ("이메일 또는 비밀번호가 맞지 않아요"));
+                return fail (ErrorCode::invalidCredentials, String::fromUTF8 ("이메일 또는 비밀번호가 맞지 않아요"));
             return issueTokens (*u, 200, true);
         }
 
@@ -931,7 +931,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
                 RoomRec nr;
                 nr.id = "r_code_" + code;
                 nr.type = "private";
-                nr.title = "비공개 방";
+                nr.title = String::fromUTF8 ("비공개 방");
                 nr.capacity = 7;
                 nr.hostId = "u_remote_" + code;
                 nr.inviteCode = code;
@@ -1482,7 +1482,7 @@ void FakeMeonServer::remotePeerJoined (const String& userId, const String& nickn
     u.online = true;
     if (nickname.isNotEmpty()) u.nickname = nickname;
     if (parts::isValid (part)) u.part = part;
-    if (! u.nickname) u.nickname = String ("멤버");
+    if (! u.nickname) u.nickname = String::fromUTF8 ("멤버");
     if (! u.part) u.part = String ("other");
 
     if (! isMember (r->id, userId)) r->members.push_back ({ userId, now() });

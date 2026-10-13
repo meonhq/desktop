@@ -311,7 +311,7 @@ void MeonSession::applyProcessorDefaults()
     setParam (SonobusAudioProcessor::paramSendFileAudio, 1.0f);   // 파일 재생(MR)은 송신에 섞어 보낸다
     setParam (SonobusAudioProcessor::paramSendSoundboardAudio, 0.0f);
     setParam (SonobusAudioProcessor::paramHearLatencyTest, 0.0f);
-    setParam (SonobusAudioProcessor::paramMainSendMute, 0.0f);
+    // 송출 정지는 덮지 않는다 (버그 #1, 리메이크 R4)
 
     // 그룹 피어에 자동 연결, 서버 끊김 시 자동 재접속(엔진 내장)
     processor.setAutoconnectToGroupPeers (true);

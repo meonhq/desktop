@@ -114,6 +114,15 @@ set(MEON_CORE_SOURCES
     Source/meon/core/auth/TokenStore.cpp
     Source/meon/core/auth/AuthController.h
     Source/meon/core/auth/AuthController.cpp
+    Source/meon/core/jam/Engine.h
+    Source/meon/core/jam/PeerState.h
+    Source/meon/core/jam/SilenceDetector.h
+    Source/meon/core/jam/ChatChannel.h
+    Source/meon/core/jam/JamSession.h
+    Source/meon/core/jam/JamSession.cpp
+    Source/meon/core/log/SessionLog.h
+    Source/meon/core/log/SessionLog.cpp
+    Source/meon/core/jam/RttReporter.h
     Source/meon/core/MeonCore.h
     Source/meon/core/MeonCore.cpp
     Source/meon/core/model/Parts.h
@@ -146,6 +155,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/screens/OnboardingScreen.cpp
     Source/meon/ui/dev/WidgetGallery.h
     Source/meon/ui/dev/WidgetGallery.cpp
+    Source/meon/ui/dev/DevJamScreen.h
+    Source/meon/ui/dev/DevJamScreen.cpp
 )
 
 # 가짜 서버 초기 데이터 (MeonFixtures::world_json)
@@ -377,6 +388,8 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonUpdater.h
         Source/meon/shell/ShellHooks.h
         Source/meon/MeonProcessorGlue.cpp
+        Source/meon/core/jam/EngineLink.h
+        Source/meon/core/jam/EngineLink.cpp
         ${MEON_CORE_SOURCES}
         ${MEON_UI_SOURCES}
     )
@@ -639,6 +652,7 @@ if (MEON_TESTS)
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp
+        Source/meon/tests/JamTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
@@ -648,6 +662,7 @@ if (MEON_TESTS)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         MEON_BUILD_ID=${MEON_BUILD_ID}
+        MEON_BUILD_VERSION="${PROJECT_VERSION}"
         MEON_DEV_OPTIONS=${MEON_DEV_OPTIONS})
     target_link_libraries(MEON_Tests PRIVATE
         juce::juce_core
