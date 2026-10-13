@@ -35,8 +35,9 @@
 #include "CrossPlatformUtils.h"
 
 // HACK
-#include "meon/MeonEditor.h"
+#include "meon/shell/ShellHooks.h"
 #include "meon/MeonAudio.h"
+#include "SonobusPluginProcessor.h"
 
 #include <limits>
 #include <algorithm>
@@ -1059,8 +1060,8 @@ private:
             if (editor != nullptr)
             {
                 // 에디터가 오디오 장치 관리자에 접근할 수 있게 연결
-                if (auto * meonEditor = dynamic_cast<meon::MeonEditor*>(editor.get())) {
-                    meonEditor->getAudioDeviceManager = [this]() { return &owner.getDeviceManager();  };
+                if (auto * hooks = dynamic_cast<meon::ShellHooks*>(editor.get())) {
+                    hooks->getAudioDeviceManager = [this]() { return &owner.getDeviceManager();  };
                 }
 
                 // 에디터의 최소·최대 크기를 창에도 적용 (독립 앱 최소 1024×680)

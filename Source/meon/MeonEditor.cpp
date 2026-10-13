@@ -305,6 +305,12 @@ MeonSessionLog::AudioInfo MeonEditor::collectAudioInfo() const
 }
 
 //==============================================================================
+void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
+{
+    const auto& keys = o.getAllKeys();
+    applyTestOptions (o["nickname"], o["screen"], keys.contains ("create"), o["join"], keys.contains ("enter"));
+}
+
 void MeonEditor::applyTestOptions (const juce::String& nickname, const juce::String& screenName,
                                    bool autoCreateRoom, const juce::String& autoJoinCode, bool autoEnterJam)
 {

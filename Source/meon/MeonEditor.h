@@ -7,6 +7,7 @@
 #include "MeonSettings.h"
 #include "MeonSession.h"
 #include "MeonUpdater.h"
+#include "shell/ShellHooks.h"
 
 namespace meon
 {
@@ -24,6 +25,7 @@ public:
 };
 
 class MeonEditor : public juce::AudioProcessorEditor,
+                   public ShellHooks,
                    private MeonSession::Listener
 {
 public:
@@ -34,10 +36,10 @@ public:
 
     //==============================================================================
     // 셸(독립 앱)과의 연결점
-    std::function<juce::AudioDeviceManager*()> getAudioDeviceManager;
-    std::function<void()> saveSettingsIfNeeded;
     /** 독립 앱 종료 요청. true 를 돌려주면 바로 종료해도 된다. false 면 확인 뒤 스스로 종료한다. */
-    bool requestedQuit();
+    bool requestedQuit() override;
+    /** 개발용 실행 옵션 (--nickname= --screen= --create --join= --enter) */
+    void applyDevOptions (const juce::StringPairArray& options) override;
 
     //==============================================================================
     SonobusAudioProcessor& getProcessor()   { return processor; }
