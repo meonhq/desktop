@@ -855,6 +855,14 @@ namespace
     {
         JamPage (SettingsModal& o, core::MeonCore& c) : Page (o), core (c)
         {
+            if (core.isPlugin())
+            {
+                add (sendRow).setControl (&sendCh, 0);
+                sendCh.setOptions ({ "1", "2" }, { TXT ("모노"), TXT ("스테레오") });
+                sendRow.controlW = sendCh.getPreferredWidth();
+                if (auto* jam = core.jam()) sendCh.setSelected (juce::String (jam->getPrefs().pluginSendChannels));
+                sendCh.onChange = [this] { if (auto* jam = core.jam()) jam->setPluginSendChannels (sendCh.getSelected().getIntValue()); };
+            }
             add (bufRow).setControl (&bufMode, 0);
             add (selfRow).setControl (&selfMon, 26, 16);
             add (keepRow).setControl (&keepVol, 26, 16);
@@ -898,6 +906,8 @@ namespace
         }
 
         core::MeonCore& core;
+        SettingsModal::Row sendRow { TXT ("보내는 채널"), TXT ("DAW 트랙의 소리를 모노 또는 스테레오로 보내요. 파일 소리도 같은 채널에 섞여요") };
+        Choice sendCh { Choice::Style::small };
         SettingsModal::Row bufRow { TXT ("버퍼 모드 기본값"), TXT ("방에 들어갈 때 처음 적용돼요. 합주 중에도 바꿀 수 있어요") },
                            selfRow { TXT ("셀프 모니터 기본값") },
                            keepRow { TXT ("마스터 볼륨 기억"), TXT ("방을 나갔다 들어와도 마지막 볼륨을 유지해요") },

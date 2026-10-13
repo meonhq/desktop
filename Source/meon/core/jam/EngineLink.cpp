@@ -432,8 +432,13 @@ void EngineLink::setBufferMode (BufferMode m)
 
 void EngineLink::setInputChannels (int start, int count)
 {
-    if (plugin) return;
     count = juce::jlimit (1, 2, count);
+    if (plugin)
+    {
+        // 플러그인: 입력은 DAW 버스 그대로, 보내는 채널만 모노/스테레오로 고정 (버그 #13, "Match # Inputs" 를 쓰지 않음)
+        setParam (SonobusAudioProcessor::paramSendChannels, (float) count);
+        return;
+    }
     processor.setInputGroupCount (1);
     processor.setInputGroupChannelStartAndCount (0, juce::jmax (0, start), count);
     processor.setInputGroupChannelDestStartAndCount (0, 0, 2);

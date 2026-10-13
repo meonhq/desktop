@@ -30,6 +30,7 @@ struct JamPrefs
     float masterDb = 0.0f;                        // -30 ~ +6 (Q10)
     int inputChannelStart = 0, inputChannelCount = 1;   // 앱만 (Q8: 입력 채널 위치)
     int earGuard = 1;                             // 0 끔 / 1 보통 / 2 강하게
+    int pluginSendChannels = 2;                   // 플러그인만: 보내는 채널 1 모노 / 2 스테레오 (버그 #13)
 };
 
 class JamSession : private AppStore::Listener,
@@ -117,6 +118,8 @@ public:
     void pollSharedPrefs();
     /** 앱: 입력 채널 위치·모노/스테레오 (합주 중이면 바로) */
     void setInputChannels (int start, int count);
+    /** 플러그인: 보내는 채널 1 모노 / 2 스테레오 (버그 #13, 합주 중이면 바로) */
+    void setPluginSendChannels (int count);
 
     float inputLevel (int ch) const   { return engine.inputLevel (ch); }
     float sendLevel (int ch) const    { return engine.sendLevel (ch); }

@@ -50,7 +50,11 @@ void MeonEditor::Fader::timerCallback()
 
 MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     : juce::AudioProcessorEditor (&p), processor (p),
-      pluginMode (! juce::JUCEApplicationBase::isStandaloneApp()),
+      pluginMode (! juce::JUCEApplicationBase::isStandaloneApp()
+                 #if MEON_DEV_OPTIONS
+                  || meon::devOptions().getAllKeys().contains ("as-plugin")
+                 #endif
+                  ),
       core (p.getMeonCore())
 {
     newLookAndFeel = std::make_unique<ui::LookAndFeel>();
@@ -63,9 +67,9 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     setWantsKeyboardFocus (true);
     addMouseListener (this, true);   // 어느 자식을 클릭해도 mouseDown 을 받아 텍스트 입력 포커스를 거둘 수 있게
 
-    // 크기: 독립 앱 기본 1280×800 (최소 1024×680), 플러그인 기본 900×600 (최소 760×520)
+    // 크기: 독립 앱 기본 1280×800 (최소 1024×680), 플러그인 기본·최소 900×600 (Q19: 더 작으면 디자인이 깨진다)
     {
-        const int minW = pluginMode ? 760 : 1024, minH = pluginMode ? 520 : 680;
+        const int minW = pluginMode ? 900 : 1024, minH = pluginMode ? 600 : 680;
         const int defW = pluginMode ? 900 : 1280, defH = pluginMode ? 600 : 800;
         auto last = processor.getLastPluginBounds();
         const int w = last.getWidth() >= minW ? last.getWidth() : defW;

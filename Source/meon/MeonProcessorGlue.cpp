@@ -24,6 +24,7 @@ namespace
         j.inputChannelStart = s.getInputChannelStart();
         j.inputChannelCount = s.getInputChannelCount();
         j.earGuard = (int) s.getEarGuardLevel();
+        j.pluginSendChannels = juce::jlimit (1, 2, p.getIntValue ("pluginSendChannels", 2));
         return j;
     }
 
@@ -40,6 +41,7 @@ namespace
         p.setValue ("masterVolumeDb", j.masterDb);
         if (! plugin) s.setInputChannels (j.inputChannelStart, j.inputChannelCount);
         s.setEarGuardLevel ((meon::EarGuard::Level) j.earGuard);
+        if (plugin) p.setValue ("pluginSendChannels", j.pluginSendChannels);
         s.save();
     }
 }
@@ -50,6 +52,9 @@ meon::core::MeonCore& SonobusAudioProcessor::getMeonCore()
     {
         meon::core::MeonCore::Options o;
         o.plugin = ! juce::JUCEApplicationBase::isStandaloneApp();
+       #if MEON_DEV_OPTIONS
+        if (meon::devOptions().getAllKeys().contains ("as-plugin")) o.plugin = true;   // 개발용: 독립 앱에서 플러그인 화면 보기
+       #endif
         o.build = MEON_BUILD_ID;
         o.dataFolder = meon::MeonSettings::getSettingsFolder();
        #if MEON_DEV_OPTIONS

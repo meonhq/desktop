@@ -602,7 +602,7 @@ SonobusAudioProcessor::SonobusAudioProcessor()
 mReconnectTimer(*this),
 soundboardChannelProcessor(std::make_unique<SoundboardChannelProcessor>()),
 mGlobalState("SonobusGlobalState"),
-mState (*this, &mUndoManager, "SonoBusAoO",
+mState (mHiddenParams, &mUndoManager, "SonoBusAoO",
 {
            std::make_unique<AudioParameterFloat>(ParameterID(paramInGain, 1),     TRANS ("In Gain"),    NormalisableRange<float>(0.0, 4.0, 0.0, 0.33), mInGain.get(), "", AudioProcessorParameter::genericParameter,
                                           [](float v, int maxlen) -> String { return Decibels::toString(Decibels::gainToDecibels(v), 1); }, 

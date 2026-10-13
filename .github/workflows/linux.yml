@@ -60,6 +60,12 @@ jobs:
                 --snapshot="$PWD/snapshots/linux_${s//:/_}_${size}.png" || true
             done
           done
+          # 플러그인 화면 (독립 앱에서 --as-plugin, 900×600)
+          for s in home jam settings:jam; do
+            timeout 60 xvfb-run -a -s "-screen 0 1600x1000x24" \
+              "$APP" --as-plugin --screen=$s --window=0,0,900,600 --no-input --snapshot-delay=5000 \
+              --snapshot="$PWD/snapshots/linux_plugin_${s//:/_}_900x600.png" || true
+          done
           ls -la snapshots
 
       - uses: actions/upload-artifact@v4

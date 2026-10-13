@@ -113,6 +113,33 @@ inline bool operator<(const AooServerConnectionInfo& lhs, const AooServerConnect
 
 namespace meon { namespace core { class MeonCore; } }
 
+namespace meon
+{
+    /** MEON (버그 #17): 엔진 파라미터를 붙여 두는, 호스트에 보이지 않는 프로세서.
+        엔진은 지금처럼 mState 로 값을 읽고 쓰지만 DAW 가 보는 프로세서에는 파라미터가 없다. 오디오는 처리하지 않는다. */
+    class HiddenParameterHolder : public juce::AudioProcessor
+    {
+    public:
+        HiddenParameterHolder() : juce::AudioProcessor (BusesProperties()) {}
+        const juce::String getName() const override { return "MEON parameters"; }
+        void prepareToPlay (double, int) override {}
+        void releaseResources() override {}
+        void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+        double getTailLengthSeconds() const override { return 0.0; }
+        bool acceptsMidi() const override { return false; }
+        bool producesMidi() const override { return false; }
+        juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+        bool hasEditor() const override { return false; }
+        int getNumPrograms() override { return 1; }
+        int getCurrentProgram() override { return 0; }
+        void setCurrentProgram (int) override {}
+        const juce::String getProgramName (int) override { return {}; }
+        void changeProgramName (int, const juce::String&) override {}
+        void getStateInformation (juce::MemoryBlock&) override {}
+        void setStateInformation (const void*, int) override {}
+    };
+}
+
 //==============================================================================
 /**
 */
@@ -1297,7 +1324,8 @@ private:
     String mLangOverrideCode;
     bool mUseUniversalFont = false;
 
-    // main state
+    // main state (MEON: 파라미터는 숨긴 프로세서에 붙인다, 버그 #17)
+    meon::HiddenParameterHolder  mHiddenParams;
     AudioProcessorValueTreeState mState;
     UndoManager                  mUndoManager;
 

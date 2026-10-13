@@ -101,6 +101,10 @@ void JamSession::enter (const RoomDetail& room)
         engine.setSendMuted (prefs.sendMuted);
         engine.setInputChannels (prefs.inputChannelStart, prefs.inputChannelCount);
     }
+    else
+    {
+        engine.setInputChannels (0, prefs.pluginSendChannels);   // 플러그인: 보내는 채널만 고정 (버그 #13)
+    }
     engine.setBufferMode (prefs.bufferMode);
     engine.setSendGainDb (prefs.sendGainDb);
     applyMonitor();
@@ -629,6 +633,13 @@ void JamSession::applyMonitor()
     engine.setSelfMonitor (prefs.selfMonitor);
     engine.setSelfMonitorDb (prefs.selfMonitorDb);
     engine.setMonitorMuted (monitorMuted);
+}
+
+void JamSession::setPluginSendChannels (int count)
+{
+    prefs.pluginSendChannels = juce::jlimit (1, 2, count);
+    if (phase != Phase::idle) engine.setInputChannels (0, prefs.pluginSendChannels);
+    savePrefs();
 }
 
 void JamSession::setInputChannels (int start, int count)
