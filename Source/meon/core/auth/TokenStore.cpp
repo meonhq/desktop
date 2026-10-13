@@ -1,21 +1,22 @@
-#include "TokenStore.h"
-
-#if JUCE_LINUX || JUCE_BSD
+#if defined (__linux__) || defined (__FreeBSD__)
  #include <sys/stat.h>
 #endif
 
-#if JUCE_MAC
+#if defined (__APPLE__)
  #include <Security/Security.h>
-#elif JUCE_WINDOWS
+#elif defined (_WIN32)
  #ifndef NOMINMAX
   #define NOMINMAX
  #endif
  #include <windows.h>
  #include <wincred.h>
- #if JUCE_MSVC
+ #if defined (_MSC_VER)
   #pragma comment (lib, "advapi32.lib")
  #endif
 #endif
+
+// 시스템 헤더를 JuceHeader(using namespace juce) 보다 먼저 넣는다 (그래서 JUCE_MAC 대신 컴파일러 매크로로 가른다): macOS MacTypes.h 의 Point 가 juce::Point 와 겹친다
+#include "TokenStore.h"
 
 namespace meon::core
 {
