@@ -81,8 +81,9 @@ void TextInput::setFontPx (float px, int w)
 
 void TextInput::setPlaceholder (const juce::String& p)
 {
+    // 브라우저처럼 포커스가 있어도 비어 있으면 보이게 직접 그린다 (TextEditor 기본은 포커스 때 숨김)
     placeholder = p;
-    ed.setTextToShowWhenEmpty (placeholder, col::inkFaint);
+    repaint();
 }
 
 void TextInput::setText (const juce::String& t, bool notify)
@@ -124,6 +125,14 @@ void TextInput::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r, metric::radius);
     g.setColour (error ? col::danger : (isEnabled() ? col::field : col::line));
     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    if (placeholder.isNotEmpty() && ed.getTotalNumChars() == 0)
+    {
+        g.setColour (col::inkFaint);
+        g.setFont (meon::Fonts::get (weight, fontPx));
+        const auto area = ed.getBounds();
+        g.drawText (placeholder, multi ? area.withHeight ((int) (fontPx * 1.5f)) : area,
+                    multi ? juce::Justification::topLeft : juce::Justification::centredLeft, true);
+    }
 }
 
 void TextInput::resized()
@@ -150,6 +159,7 @@ void TextInput::textEditorTextChanged (juce::TextEditor&)
             applying = false;
         }
     }
+    repaint();   // placeholder
     if (! applying && onChange) onChange();
 }
 

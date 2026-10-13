@@ -503,6 +503,7 @@ public:
             for (auto& a : arglist.arguments)
                 rest.add (a.text);
             meonDev = meon::parseDevOptions (rest);
+            meon::devOptions() = meonDev;
             arglist = ArgumentList (arglist.executableName, rest);
             meonWindow   = meonDev["window"];
             meonSnapshot = meonDev["snapshot"];

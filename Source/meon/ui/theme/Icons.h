@@ -24,6 +24,9 @@ enum class Id
 /** area 안에 비율을 지켜 그린다. angleRad 만큼 가운데 기준 회전 */
 void draw (juce::Graphics&, Id, juce::Rectangle<float> area, juce::Colour, float angleRad = 0.0f);
 
+/** 디스코드 로고 (공식 경로, 비율 유지) */
+void drawDiscord (juce::Graphics&, juce::Rectangle<float> area, juce::Colour);
+
 /** 파트 아이콘 (API 의 part 키). 굵기 1.5px, size×size 를 area 가운데에 */
 void drawPart (juce::Graphics&, const juce::String& partKey, juce::Rectangle<float> area, float size, juce::Colour);
 

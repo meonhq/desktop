@@ -13,7 +13,10 @@ namespace
         using K = Button::Kind;
         switch (k)
         {
-            case K::large:         return { metric::bigButtonH, 12, metric::radius, 13.0f };
+            case K::large:
+            case K::largeSecondary: return { metric::bigButtonH, 12, metric::radius, 13.0f };
+            case K::linkSmall:
+            case K::linkUnderline: return { 17, 0, 0.0f, 12.0f };
             case K::small:
             case K::smallDanger:   return { metric::smallH, 6, metric::smallRadius, 12.0f };
             case K::smallPrimary:  return { metric::smallH, 8, metric::smallRadius, 12.0f };
@@ -92,7 +95,8 @@ int Button::getIdealWidth() const
     if (fixedWidth > 0) return fixedWidth;
     const auto m = metricsFor (kind);
     const auto look = currentLook();
-    return (int) std::ceil (textWidth (font (look.weight, m.fontPx), getButtonText())) + m.padX * 2 + (kind == Kind::link ? 0 : 2);
+    const bool isLink = kind == Kind::link || kind == Kind::linkSmall || kind == Kind::linkUnderline;
+    return (int) std::ceil (textWidth (font (look.weight, m.fontPx), getButtonText())) + m.padX * 2 + (isLink ? 1 : 2);
 }
 
 Button::Look Button::currentLook() const
@@ -124,8 +128,13 @@ Button::Look Button::currentLook() const
             if (pending) return { col::accentSoft, col::accent, col::ink, 400 };
             if (disabled) return { col::softBg, col::line, col::inkFaint, 400 };
             return { col::softBg, col::line, col::inkSub, 400 };
+        case Kind::largeSecondary:
+            return { col::white, col::field, disabled ? col::inkFaint : col::inkSub, 600 };
         case Kind::link:
+        case Kind::linkSmall:
             return { juce::Colours::transparentWhite, juce::Colours::transparentWhite, disabled ? col::inkFaint : col::inkSub, 500 };
+        case Kind::linkUnderline:
+            return { juce::Colours::transparentWhite, juce::Colours::transparentWhite, disabled ? col::inkFaint : col::ink, 500 };
     }
     return {};
 }
@@ -135,8 +144,9 @@ void Button::paintButton (juce::Graphics& g, bool highlighted, bool)
     const auto m = metricsFor (kind);
     auto look = currentLook();
     const bool disabled = dimmed || ! isEnabled();
+    const bool isLink = kind == Kind::link || kind == Kind::linkSmall || kind == Kind::linkUnderline;
     auto r = getLocalBounds().toFloat();
-    if (kind != Kind::link)
+    if (! isLink)
         r = r.withSizeKeepingCentre (r.getWidth(), (float) m.height);
 
     // 호버 (디자인 style-hover)
@@ -148,13 +158,15 @@ void Button::paintButton (juce::Graphics& g, bool highlighted, bool)
             case Kind::large:     look.fill = col::accentHover; look.border = col::accentHover; break;
             case Kind::secondary:
             case Kind::quiet:     look.fill = col::hoverBg; break;
+            case Kind::largeSecondary: look.fill = col::hoverBg; look.ink = col::ink; break;
+            case Kind::linkSmall: look.ink = col::ink; break;
             case Kind::small:     if (! on && ! pending) look.ink = col::ink; break;
             case Kind::link:      look.ink = col::ink; break;
             default: break;
         }
     }
 
-    if (kind != Kind::link)
+    if (! isLink)
     {
         g.setColour (look.fill);
         g.fillRoundedRectangle (r, m.radius);
@@ -164,9 +176,42 @@ void Button::paintButton (juce::Graphics& g, bool highlighted, bool)
 
     g.setColour (look.ink);
     g.setFont (font (look.weight, m.fontPx));
-    const auto just = kind == Kind::link ? juce::Justification::centredLeft : juce::Justification::centred;
+    const auto f = font (look.weight, m.fontPx);
+    const auto just = isLink ? juce::Justification::centred : juce::Justification::centred;
     g.drawText (getButtonText(), r.toNearestInt(), just, false);
+    if (kind == Kind::linkUnderline)
+    {
+        // text-underline-offset 2px
+        const float tw = textWidth (f, getButtonText());
+        const float base = r.getCentreY() + f.getAscent() * 0.5f - f.getDescent() * 0.2f + 2.0f;
+        g.fillRect (r.getCentreX() - tw * 0.5f, std::round (base), tw, 1.0f);
+    }
     juce::ignoreUnused (isSmall);
+}
+
+//==============================================================================
+DiscordButton::DiscordButton (const juce::String& text, int h) : juce::Button (text), height (h)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void DiscordButton::paintButton (juce::Graphics& g, bool highlighted, bool)
+{
+    auto r = getLocalBounds().toFloat().withSizeKeepingCentre ((float) getWidth(), (float) height);
+    g.setColour (highlighted ? col::discordHover : col::discord);
+    g.fillRoundedRectangle (r, metric::radius);
+    const auto f = font (600, 13.0f);
+    const float logo = height >= 40 ? 18.0f : 16.0f;
+    const float tw = textWidth (f, getButtonText());
+    const float total = logo + 8.0f + tw + 8.0f + 10.0f;
+    float x = r.getCentreX() - total * 0.5f;
+    icons::drawDiscord (g, { x, r.getCentreY() - logo * 0.5f, logo, logo }, col::white);
+    x += logo + 8.0f;
+    g.setColour (col::white);
+    g.setFont (f);
+    g.drawText (getButtonText(), juce::Rectangle<float> (x, r.getY(), tw + 1.0f, r.getHeight()), juce::Justification::centredLeft, false);
+    x += tw + 8.0f;
+    icons::draw (g, icons::Id::external, { x, r.getCentreY() - 5.0f, 10.0f, 10.0f }, col::white);
 }
 
 //==============================================================================

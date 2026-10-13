@@ -1,6 +1,6 @@
 {
   "_comment": "가짜 서버 초기 데이터. 이름·방·문구는 디자인(MEON_Lab)의 예시 데이터. host_rtt_ms 는 디자인의 ping 이 나오도록 잡은 값",
-  "config": { "min_build": 0, "latest_build": 0, "latency_coefficient": 0.7, "discord_url": "https://discord.gg/meon" },
+  "config": { "min_build": 0, "latest_build": 0, "latency_coefficient": 0.7, "discord_url": "https://discord.gg/vtGQpnc2HQ" },
   "users": [
     { "id": "u_f_taeo", "username": "taeo", "nickname": "태오", "part": "drums", "rtt_ms": 6 },
     { "id": "u_f_yuna", "username": "yuna_v", "nickname": "유나", "part": "vocal", "rtt_ms": 8 },

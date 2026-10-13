@@ -1,5 +1,7 @@
 #include "MeonEditor.h"
 #include "ui/dev/WidgetGallery.h"
+#include "ui/screens/OnboardingScreen.h"
+#include "ui/theme/LookAndFeel.h"
 #include "OnboardingScreens.h"
 #include "LobbyScreens.h"
 #include "JamScreen.h"
@@ -49,7 +51,8 @@ void MeonEditor::Fader::timerCallback()
 
 MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     : juce::AudioProcessorEditor (&p), processor (p),
-      pluginMode (! juce::JUCEApplicationBase::isStandaloneApp())
+      pluginMode (! juce::JUCEApplicationBase::isStandaloneApp()),
+      core (p.getMeonCore())
 {
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
@@ -81,6 +84,11 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     go (initialScreen(), false);
     session->start();
 
+    newLookAndFeel = std::make_unique<ui::LookAndFeel>();
+    core.auth().addListener (this);
+    core.start();
+    updateOnboarding();
+
     // 켤 때 한 번 새 버전 확인 (첫 화면이 뜨고 서버 연결이 시작된 뒤)
     if (MeonUpdater::isSupported())
     {
@@ -91,6 +99,8 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
 
 MeonEditor::~MeonEditor()
 {
+    core.auth().removeListener (this);
+    onboarding.reset();
     session->removeListener (this);
     settingsOverlay = nullptr;
     settingsFadingOut = nullptr;
@@ -306,8 +316,68 @@ MeonSessionLog::AudioInfo MeonEditor::collectAudioInfo() const
 }
 
 //==============================================================================
+void MeonEditor::authStepChanged (core::AuthController::Step)
+{
+    if (devPreview) return;
+    updateOnboarding();
+}
+
+void MeonEditor::updateOnboarding()
+{
+    using Step = core::AuthController::Step;
+    const auto step = core.auth().step();
+    if (step != Step::ready)
+    {
+        if (onboarding == nullptr)
+        {
+            onboarding = std::make_unique<ui::OnboardingScreen> (core);
+            onboarding->setLookAndFeel (newLookAndFeel.get());
+            addAndMakeVisible (*onboarding);
+            onboarding->setBounds (getLocalBounds());
+        }
+        onboarding->toFront (true);
+        return;
+    }
+
+    // 온보딩을 마쳤다: 서버 계정의 닉네임·파트를 옛 화면 설정에 넣고 옛 홈으로 (R6 까지 임시)
+    if (const auto& me = core.store().state().me)
+    {
+        if (me->nickname) settings->setNickname (*me->nickname);
+        if (me->part) settings->setPartKey (*me->part);
+        settings->setOnboardingDone (pluginMode, true);   // 옛 오디오·헤드폰 단계는 뺀다 (기획 결정)
+        settings->save();
+    }
+    if (onboarding != nullptr)
+    {
+        removeChildComponent (onboarding.get());
+        onboarding.reset();
+        if (current != Screen::Jam) go (Screen::Home, false);
+    }
+}
+
 void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
 {
+    {
+        // 개발용: 온보딩 단계 미리 보기 (--screen=login|signup|verify|nickname|part|discord|done)
+        using Step = core::AuthController::Step;
+        const std::pair<const char*, Step> steps[] = { { "login", Step::login }, { "signup", Step::signup }, { "verify", Step::verify },
+                                                        { "nickname", Step::nickname }, { "part", Step::part }, { "discord", Step::discord },
+                                                        { "done", Step::done } };
+        for (auto& st : steps)
+        {
+            if (o["screen"] != st.first) continue;
+            if (onboarding == nullptr)
+            {
+                onboarding = std::make_unique<ui::OnboardingScreen> (core);
+                onboarding->setLookAndFeel (newLookAndFeel.get());
+                addAndMakeVisible (*onboarding);
+                onboarding->setBounds (getLocalBounds());
+            }
+            devPreview = true;
+            onboarding->showStepForPreview (st.second);
+            return;
+        }
+    }
     if (o["screen"] == "widgets")
     {
         devScreen = std::make_unique<ui::WidgetGallery>();
@@ -413,6 +483,8 @@ void MeonEditor::resized()
         settingsFadingOut->setBounds (getLocalBounds());
     if (devScreen != nullptr)
         devScreen->setBounds (getLocalBounds());
+    if (onboarding != nullptr)
+        onboarding->setBounds (getLocalBounds());
     processor.setLastPluginBounds (getLocalBounds());
 }
 
