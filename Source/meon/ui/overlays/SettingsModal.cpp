@@ -1246,6 +1246,8 @@ SettingsModal::SettingsModal (core::MeonCore& c, UpdateHooks u, Tab first)
     : core (c), update (std::move (u)), plugin (c.isPlugin())
 {
     setWantsKeyboardFocus (true);
+    setFocusContainerType (FocusContainerType::keyboardFocusContainer);
+    juce::Component::setTitle (TXT ("설정"));
     tabs = { Tab::account, Tab::profile, Tab::audio, Tab::jam, Tab::privacy, Tab::notif, Tab::keys, Tab::about };
     if (plugin) tabs.erase (std::remove (tabs.begin(), tabs.end(), Tab::audio), tabs.end());
     addAndMakeVisible (close);

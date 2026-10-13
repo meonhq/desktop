@@ -217,3 +217,23 @@ SonoBus 1.7.2(upstream `sonosaurus/sonobus`, 커밋 35f1062d)를 포크한 MEON 
 ### 판단이 필요한 것
 - 위 기준값은 초기값. 직접 들어 보고 조정.
 - 같은 PC 에서 독립 앱과 플러그인(또는 플러그인 두 개)이 설정 파일을 공유한다. 한쪽에서 바꾸면 다른 쪽은 창을 다시 열 때 따라간다.
+
+---
+
+## 리메이크 R0–R9 (2026-10-13, `remake` 브랜치)
+
+계획: `docs/REMAKE_PLAN.md`. 단계마다 PR 하나(`remake-rN` → `remake`), mac·windows·linux CI 통과 후 머지.
+
+### 한 것
+- R0 기반: `linux.yml`(빌드·`MEON_Tests`·화면 스냅숏), 개발 옵션(`MEON_DEV_OPTIONS`, 빌드 번호 0 에서만), `ShellHooks`.
+- R1 core: API.md 모델·JSON·오류 코드, `MeonApi`·`Realtime`, 가짜 서버(`FakeMeonServer`, fixtures), `AppStore`, 입력 규칙, 토큰 보관(키체인·자격 증명 관리자).
+- R2 테마·위젯 (디자인 토큰·아이콘·버튼·입력·슬라이더·노브·미터·모달·메이슨리).
+- R3 온보딩 7단계. `MeonCore` 를 프로세서가 소유(E2).
+- R4 합주 로직 `JamSession`(Connection 접속·멤버 필터 E1·PeerState·무음 경고·채팅 전달 확인·RTT 보고·세션 로그).
+- R5 홈, R6 합주 화면(옛 온보딩·로비·합주 화면 삭제), R7 방장 모달·프로필·설정 8탭·업데이트 확인(옛 설정·`MeonSession` 삭제).
+- R8 플러그인: 호스트 파라미터 숨김(#17), 보내는 채널 고정(#13), 최소 900×600.
+- R9 다듬기: 단축키(M·N·⌘↑↓·Enter·Esc), 초대 토스트 소리, 새 방 카드 0.3초 등장, 모달 안 Tab 이동.
+
+### 판단이 필요한 것
+- API 질문: 이메일 변경·탈퇴의 비밀번호(API 4.4·4.5 와 Q2 결정이 다름). 지금은 빈 비밀번호로 보내고 가짜 서버가 받아 준다.
+- 잠정 결정 목록은 각 PR 본문에 있다.

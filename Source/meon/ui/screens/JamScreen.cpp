@@ -814,7 +814,8 @@ JamScreen::~JamScreen()
 juce::String JamScreen::memberName (const juce::String& userId) const
 {
     for (auto& m : jam.members())
-        if (m.userId == userId) return m.nickname;
+        if (m.userId == userId && m.nickname.isNotEmpty()) { knownNames[userId] = m.nickname; return m.nickname; }
+    if (auto it = knownNames.find (userId); it != knownNames.end()) return it->second;
     return TXT ("멤버");
 }
 
@@ -844,6 +845,8 @@ void JamScreen::refreshHeader()
 void JamScreen::rebuildMembers()
 {
     const auto list = jam.members();
+    for (auto& m : list)
+        if (m.nickname.isNotEmpty()) knownNames[m.userId] = m.nickname;
     bool same = (int) list.size() == memberList->rows.size();
     for (size_t i = 0; same && i < list.size(); ++i)
         same = memberList->rows[(int) i]->member.userId == list[i].userId && memberList->rows[(int) i]->member.isMe == list[i].isMe;
@@ -1188,16 +1191,40 @@ void JamScreen::openManage (const core::JamSession::Member& m)
     showModal (std::make_unique<ManageMemberModal> (core, m));
 }
 
-bool JamScreen::keyPressed (const juce::KeyPress& k)
+void JamScreen::closeOverlays()
 {
-    if (k == juce::KeyPress::escapeKey && (modal != nullptr || popover != nullptr))
+    modal.reset();
+    popover.reset();
+    requestList.reset();
+}
+
+bool JamScreen::handleShortcut (const juce::KeyPress& k)
+{
+    const auto mods = k.getModifiers();
+    const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+    if (k == juce::KeyPress::escapeKey && (modal != nullptr || popover != nullptr)) { closeOverlays(); return true; }
+    if (modal != nullptr) return false;   // 모달이 떠 있으면 합주 단축키는 쉰다
+    if (mods.isCommandDown() && (k.getKeyCode() == juce::KeyPress::upKey || k.getKeyCode() == juce::KeyPress::downKey))
     {
-        modal.reset();
-        popover.reset();
-        requestList.reset();
+        jam.setMasterDb (jam.getMasterDb() + (k.getKeyCode() == juce::KeyPress::upKey ? 1.0f : -1.0f));
+        refreshAudio();
+        return true;
+    }
+    if (mods.isAnyModifierKeyDown() && ! mods.isShiftDown()) return false;
+    if (c == 'm') { jam.setSendMuted (! jam.isSendMuted()); refreshAudio(); return true; }
+    if (c == 'n') { jam.setMonitorMuted (! jam.isMonitorMuted()); refreshAudio(); return true; }
+    if (k.getKeyCode() == juce::KeyPress::returnKey)
+    {
+        if (! chatOpen) { chatOpen = true; resized(); }
+        chatInput.focus();
         return true;
     }
     return false;
+}
+
+bool JamScreen::keyPressed (const juce::KeyPress& k)
+{
+    return handleShortcut (k);
 }
 
 } // namespace meon::ui

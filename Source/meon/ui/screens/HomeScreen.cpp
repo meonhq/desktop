@@ -60,8 +60,15 @@ struct HomeScreen::FilterButton : juce::Button
 /** 공개 방 카드 (디자인 cardH 식의 높이, 여백 12·18, 간격 9) */
 struct HomeScreen::RoomCard : juce::Component
 {
-    RoomCard (HomeScreen& o) : owner (o)
+    RoomCard (HomeScreen& o, bool animateIn) : owner (o),
+        vblank (this, [this]
+        {
+            if (! fade.tick (juce::Time::getMillisecondCounterHiRes())) return;
+            setAlpha (fade.get() * (full ? 0.45f : 1.0f));
+        })
     {
+        // 새로 생긴 방은 0.3초에 걸쳐 나타난다 (디자인 hCardIn)
+        if (animateIn) { fade.jumpTo (0.0f); fade.setTarget (1.0f, 300.0); }
         addAndMakeVisible (ping);
         addAndMakeVisible (join);
         ping.setInterceptsMouseClicks (false, false);
@@ -81,7 +88,7 @@ struct HomeScreen::RoomCard : juce::Component
         else                                          label = TXT ("바로 입장");
         join.setButtonText (label);
         join.setEnabled (! full);
-        setAlpha (full ? 0.45f : 1.0f);
+        setAlpha (fade.get() * (full ? 0.45f : 1.0f));
         setMouseCursor (full ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
         resized();
         repaint();
@@ -166,6 +173,8 @@ struct HomeScreen::RoomCard : juce::Component
     HomeScreen& owner;
     core::Room room;
     bool full = false;
+    AnimatedValue fade { 1.0f };
+    juce::VBlankAttachment vblank;
     PingBadge ping;
     Button join { Button::Kind::small };
 };
@@ -487,7 +496,7 @@ void HomeScreen::rebuildRooms()
             if (roomList->cards[i]->room.id == r->id) { card = roomList->cards.removeAndReturn (i); break; }
         if (card == nullptr)
         {
-            card = new RoomCard (*this);
+            card = new RoomCard (*this, roomsShownOnce);
             roomList->addAndMakeVisible (card);
         }
         card->setRoom (*r);
@@ -495,6 +504,7 @@ void HomeScreen::rebuildRooms()
     }
     roomList->cards.clear();
     roomList->cards.swapWith (next);
+    if (s.publicRoomsLoaded || ! roomList->cards.isEmpty()) roomsShownOnce = true;
     layoutRooms();
     roomList->repaint();
 }

@@ -4,6 +4,8 @@
 // 방장 전용(방 설정·입장 요청·관리)은 R7 에서 붙인다.
 #pragma once
 
+#include <map>
+
 #include "../widgets/Button.h"
 #include "../widgets/Inputs.h"
 #include "../widgets/Controls.h"
@@ -31,10 +33,16 @@ public:
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
     bool keyPressed (const juce::KeyPress&) override;
+    /** 단축키 (설정 › 단축키, REMAKE_PLAN 4.4): M 송출, N 모니터, ⌘↑/⌘↓ 마스터 ±1 dB, Enter 채팅 입력, Esc 겹침 닫기 */
+    bool handleShortcut (const juce::KeyPress&);
+    void closeOverlays();
     void resized() override;
 
     static constexpr int rowH = 59;
     juce::String memberName (const juce::String& userId) const;
+private:
+    mutable std::map<juce::String, juce::String> knownNames;   // 나간 멤버의 채팅 줄도 이름으로 (마지막으로 본 이름)
+public:
 
 private:
     core::MeonCore& core;

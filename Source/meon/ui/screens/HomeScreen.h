@@ -81,6 +81,7 @@ private:
     std::unique_ptr<RoomList> roomList;
     juce::Viewport roomViewport;
     Masonry masonry;
+    bool roomsShownOnce = false;   // 처음 목록은 애니메이션 없이
     core::RoomFilter filter;
 
     // 내 오디오

@@ -533,11 +533,13 @@ bool MeonEditor::keyPressed (const juce::KeyPress& k)
         if (dynamic_cast<juce::TextEditor*> (focused) != nullptr && ! k.getModifiers().isCommandDown())
             return false;
 
-    if (settingsOverlay != nullptr && k == juce::KeyPress::escapeKey)
+    if (settingsOverlay != nullptr)
     {
-        closeSettings();
-        return true;
+        if (k == juce::KeyPress::escapeKey) { closeSettings(); return true; }
+        return false;
     }
+    if (appRoot != nullptr && appRoot->handleShortcut (k))
+        return true;
     return false;
 }
 
