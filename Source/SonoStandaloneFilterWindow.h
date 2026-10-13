@@ -39,6 +39,7 @@
 #include "meon/MeonAudio.h"
 
 #include <limits>
+#include <atomic>
 #include <algorithm>
 
 namespace juce
@@ -553,6 +554,9 @@ public:
     bool processorHasPotentialFeedbackLoop = false;
     Value shouldMuteInput;
     AudioBuffer<float> emptyBuffer;
+    std::atomic<bool> meonOutputMuted { false };   // 전체 음소거. 켤 때마다 꺼진 상태로 시작 (저장 안 함)
+    float meonOutputGain = 1.0f;                   // 오디오 스레드 전용
+    float meonOutputRampStep = 1.0f / 960.0f;
     bool autoOpenMidiDevices;
 
     Value shouldOverrideSampleRate;
@@ -743,10 +747,46 @@ private:
 
         player.audioDeviceIOCallbackWithContext (inputChannelData, numInputChannels,
                                       outputChannelData, numOutputChannels, numSamples, context);
+
+        applyMeonOutputMute (outputChannelData, numOutputChannels, numSamples);
+    }
+
+    // MEON 전체 음소거 (상태 표시 아이콘): 이 컴퓨터에서 듣는 소리만 끈다. 보내는 소리·상대 쪽에는 영향 없음.
+    // 툭 끊기지 않게 20ms 동안 줄이고 키운다.
+    void applyMeonOutputMute (float* const* out, int numChannels, int numSamples)
+    {
+        const float target = meonOutputMuted.load() ? 0.0f : 1.0f;
+        if (meonOutputGain == target && target == 1.0f)
+            return;
+
+        float g = meonOutputGain;
+        if (g == 0.0f && target == 0.0f)
+        {
+            for (int ch = 0; ch < numChannels; ++ch)
+                if (out[ch] != nullptr)
+                    FloatVectorOperations::clear (out[ch], numSamples);
+            return;
+        }
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            if (out[ch] == nullptr)
+                continue;
+            g = meonOutputGain;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                g = target > g ? jmin (target, g + meonOutputRampStep) : jmax (target, g - meonOutputRampStep);
+                out[ch][i] *= g;
+            }
+        }
+        meonOutputGain = numChannels > 0 ? g : target;
     }
 
     void audioDeviceAboutToStart (AudioIODevice* device) override
     {
+        meonOutputRampStep = 1.0f / jmax (1.0f, (float) (device->getCurrentSampleRate() * 0.02));
+        meonOutputGain = meonOutputMuted.load() ? 0.0f : 1.0f;
+
         emptyBuffer.setSize (device->getActiveInputChannels().countNumberOfSetBits(), device->getCurrentBufferSizeSamples());
         emptyBuffer.clear();
 
