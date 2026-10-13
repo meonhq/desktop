@@ -1,6 +1,7 @@
 #include "AppRoot.h"
 #include "Messages.h"
 #include "screens/JamScreen.h"
+#include "overlays/JamOverlays.h"
 
 namespace meon::ui
 {
@@ -9,7 +10,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 {
     setOpaque (true);
     home = std::make_unique<HomeScreen> (core, update);
-    home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings(); };
+    home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     addChildComponent (*home);
     core.store().addListener (this);
@@ -41,7 +42,8 @@ void AppRoot::updateScreen()
         if (jam == nullptr && core.jam() != nullptr)
         {
             auto screen = std::make_unique<JamScreen> (core);
-            screen->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings(); };
+            screen->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
+            screen->onOpenAudioSettings = [this] { if (onOpenSettings) onOpenSettings (core.isPlugin() ? 0 : 2); };
             jam = std::move (screen);
             addAndMakeVisible (*jam);
         }
@@ -59,6 +61,17 @@ void AppRoot::updateScreen()
         jam.reset();
         shownRoomId = {};
         home->setVisible (true);
+        if (core.room().takeClosedByMe())
+        {
+            auto overlay = std::make_unique<RoomClosedOverlay>();
+            overlay->onHome = [this]
+            {
+                juce::Component::SafePointer<AppRoot> safe (this);
+                juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->roomClosed.reset(); safe->resized(); } });
+            };
+            roomClosed = std::move (overlay);
+            addAndMakeVisible (*roomClosed);
+        }
         core.home().setHomeVisible (true);
     }
     resized();
@@ -203,6 +216,7 @@ void AppRoot::resized()
 {
     home->setBounds (getLocalBounds());
     if (jam != nullptr) jam->setBounds (getLocalBounds());
+    if (roomClosed != nullptr) { roomClosed->setBounds (getLocalBounds()); roomClosed->toFront (false); }
     if (fail != nullptr)
         fail->setBounds (juce::Rectangle<int> (380, fail->getPreferredHeight()).withCentre (getLocalBounds().getCentre()));
     layoutToasts();

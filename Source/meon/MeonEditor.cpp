@@ -4,7 +4,7 @@
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
 #include "ui/theme/LookAndFeel.h"
-#include "SettingsScreen.h"
+#include "ui/overlays/SettingsModal.h"
 
 namespace meon
 {
@@ -53,12 +53,11 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
       pluginMode (! juce::JUCEApplicationBase::isStandaloneApp()),
       core (p.getMeonCore())
 {
-    setLookAndFeel (&lookAndFeel);
-    juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
+    newLookAndFeel = std::make_unique<ui::LookAndFeel>();
+    setLookAndFeel (newLookAndFeel.get());
+    juce::LookAndFeel::setDefaultLookAndFeel (newLookAndFeel.get());
 
     settings = std::make_unique<MeonSettings>();
-    session = std::make_unique<MeonSession> (processor, *settings, pluginMode);
-    session->setAudioInfoProvider ([this] { return collectAudioInfo(); });
 
     setOpaque (true);
     setWantsKeyboardFocus (true);
@@ -85,46 +84,100 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
         const auto scr = meon::devOptions()["screen"];
         if (scr == "home" || scr.startsWith ("home:"))
             devHomePreview = scr == "home" ? juce::String ("home") : scr.fromFirstOccurrenceOf (":", false, false);
-        else if (scr == "jam")
-            devHomePreview = "jam";   // 합주 화면 스냅숏: 가짜 계정으로 가입해 비공개 방을 만든다
+        else if (scr == "jam" || scr.startsWith ("jam:") || scr.startsWith ("settings"))
+            devHomePreview = scr;   // 합주 화면(가짜 계정으로 비공개 방)·설정 탭 스냅숏
     }
    #endif
-    // R5 부터 로그인 뒤 화면은 새 홈(AppRoot)이고 합주는 새 로직(JamSession)만 쓴다.
-    // 옛 세션(MeonSession)은 서버에 붙이지 않는다 (둘을 동시에 쓰지 않음). 옛 화면 파일은 R6 에서 지운다.
-
-    newLookAndFeel = std::make_unique<ui::LookAndFeel>();
     core.auth().addListener (this);
+    core.store().addListener (this);
     core.start();
     updateOnboarding();
 
-    // 켤 때 한 번 새 버전 확인 (첫 화면이 뜨고 서버 연결이 시작된 뒤)
-    if (MeonUpdater::isSupported())
+    // 켤 때 한 번 새 버전 확인 (첫 화면이 뜨고 서버 연결이 시작된 뒤), 그 뒤 6시간마다
+    if (MeonUpdater::isSupported() && ! pluginMode)
     {
         juce::Component::SafePointer<MeonEditor> safe (this);
-        juce::Timer::callAfterDelay (3000, [safe] { if (safe != nullptr) safe->updater->check(); });
+        juce::Timer::callAfterDelay (3000, [safe] { if (safe != nullptr) safe->checkForUpdate(); });
+        startTimer (60 * 1000);
     }
+}
+
+void MeonEditor::checkForUpdate()
+{
+    if (! MeonUpdater::isSupported() || pluginMode) return;
+    const auto st = updater->getState();
+    if (st == MeonUpdater::State::Checking || st == MeonUpdater::State::Downloading || st == MeonUpdater::State::Ready) return;
+    lastUpdateCheck = juce::Time::currentTimeMillis();
+    updater->check();
+}
+
+void MeonEditor::timerCallback()
+{
+    if (juce::Time::currentTimeMillis() - lastUpdateCheck >= (juce::int64) 6 * 60 * 60 * 1000)
+        checkForUpdate();
+}
+
+void MeonEditor::stateChanged (core::StateKey k)
+{
+    // 서버가 더 새 빌드를 알려 주면 바로 확인한다 (build.txt 와 같은 번호 체계)
+    if (k != core::StateKey::config) return;
+    const auto& cfg = core.store().state().config;
+    if (cfg.latestBuild > MeonUpdater::currentBuild() && MeonUpdater::currentBuild() > 0
+        && updater->getState() != MeonUpdater::State::Available)
+        checkForUpdate();
 }
 
 MeonEditor::~MeonEditor()
 {
+    stopTimer();
+    core.store().removeListener (this);
     core.auth().removeListener (this);
     appRoot.reset();
     onboarding.reset();
     settingsOverlay = nullptr;
     settingsFadingOut = nullptr;
     updater = nullptr;
-    session = nullptr;
     settings = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
 
 //==============================================================================
-void MeonEditor::openSettings()
+void MeonEditor::openSettings (int tab)
 {
     if (settingsOverlay != nullptr)
         return;
-    settingsOverlay = std::make_unique<SettingsScreen> (*this);
+    if (core.auth().step() != core::AuthController::Step::ready)
+        return;   // 로그인 전에는 설정이 없다
+    ui::SettingsModal::UpdateHooks hooks;
+    if (MeonUpdater::isSupported() && ! pluginMode)
+    {
+        using S = ui::SettingsModal::UpdateHooks::State;
+        hooks.state = [this]
+        {
+            switch (updater->getState())
+            {
+                case MeonUpdater::State::Checking:    return S::checking;
+                case MeonUpdater::State::UpToDate:    return S::upToDate;
+                case MeonUpdater::State::Available:   return S::available;
+                case MeonUpdater::State::Downloading: return S::downloading;
+                case MeonUpdater::State::Ready:       return S::installing;
+                case MeonUpdater::State::Failed:      return S::failed;
+                default:                              return S::idle;
+            }
+        };
+        hooks.progress = [this] { return updater->getProgress(); };
+        hooks.latestBuild = [this] { return updater->getLatestBuild(); };
+        hooks.check = [this] { checkForUpdate(); };
+        hooks.start = [this] { startUpdate(); };
+    }
+    auto modal = std::make_unique<ui::SettingsModal> (core, std::move (hooks), (ui::SettingsModal::Tab) tab);
+    modal->onClose = [this]
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closeSettings(); });
+    };
+    settingsOverlay = std::move (modal);
     settingsOverlay->setBounds (getLocalBounds());
     addAndMakeVisible (*settingsOverlay);
     settingsOverlay->toFront (false);
@@ -205,33 +258,6 @@ juce::String MeonEditor::getVersionText() const
     return v;
 }
 
-MeonSessionLog::AudioInfo MeonEditor::collectAudioInfo() const
-{
-    MeonSessionLog::AudioInfo info;
-    if (pluginMode)
-    {
-        info.deviceType = "host";
-        info.host = getHostDescription();
-        info.sampleRate = processor.getSampleRate();
-        info.bufferSize = processor.getCurrSamplesPerBlock();
-    }
-    else if (auto* dm = deviceManager())
-    {
-        auto setup = dm->getAudioDeviceSetup();
-        info.deviceType = dm->getCurrentAudioDeviceType();
-        info.inputDevice = setup.inputDeviceName;
-        info.outputDevice = setup.outputDeviceName;
-        info.sampleRate = setup.sampleRate;
-        info.bufferSize = setup.bufferSize;
-        if (auto* dev = dm->getCurrentAudioDevice())
-        {
-            info.sampleRate = dev->getCurrentSampleRate();
-            info.bufferSize = dev->getCurrentBufferSizeSamples();
-        }
-    }
-    return info;
-}
-
 //==============================================================================
 void MeonEditor::authStepChanged (core::AuthController::Step)
 {
@@ -271,6 +297,8 @@ void MeonEditor::updateOnboarding()
     if (step != Step::ready)
     {
         appRoot.reset();   // 로그아웃 등
+        settingsOverlay = nullptr;
+        settingsFadingOut = nullptr;
         if (onboarding == nullptr)
         {
             onboarding = std::make_unique<ui::OnboardingScreen> (core);
@@ -335,7 +363,7 @@ void MeonEditor::showAppRoot()
     }
     appRoot = std::make_unique<ui::AppRoot> (core, std::move (hooks));
     appRoot->setLookAndFeel (newLookAndFeel.get());
-    appRoot->onOpenSettings = [this] { openSettings(); };
+    appRoot->onOpenSettings = [this] (int tab) { openSettings (tab); };
     addAndMakeVisible (*appRoot);
     appRoot->setBounds (getLocalBounds());
     if (settingsOverlay != nullptr) settingsOverlay->toFront (false);
@@ -383,12 +411,26 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (TXT ("방장이 방을 닫았어요"), TXT ("금요일 밤 홍대 밴드 합주"));
     }
-    else if (p == "jam")
+    else if (p == "jam" || p.startsWith ("jam:"))
     {
         core::CreateRoom c;
-        c.type = "private";
+        c.type = p == "jam:host" ? "public" : "private";
+        if (p == "jam:host") c.entryMode = juce::String ("approval");
         c.title = TXT ("준호의 새벽 합주");
-        core.home().createRoom (c, [] (core::Result<core::RoomDetail>) {});
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        core.home().createRoom (c, [safe, p] (core::Result<core::RoomDetail>)
+        {
+            if (safe == nullptr || p != "jam:host") return;
+            if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();   // 입장 요청 하나
+        });
+    }
+    else if (p.startsWith ("settings"))
+    {
+        static const char* tabNames[] = { "account", "profile", "audio", "jam", "privacy", "notif", "keys", "about" };
+        int tab = 0;
+        const auto name = p.fromFirstOccurrenceOf (":", false, false);
+        for (int i = 0; i < 8; ++i) if (name == tabNames[i]) tab = i;
+        openSettings (tab);
     }
     else if (p == "disc")
     {
@@ -487,11 +529,10 @@ bool MeonEditor::keyPressed (const juce::KeyPress& k)
         if (dynamic_cast<juce::TextEditor*> (focused) != nullptr && ! k.getModifiers().isCommandDown())
             return false;
 
-    if (settingsOverlay != nullptr)
+    if (settingsOverlay != nullptr && k == juce::KeyPress::escapeKey)
     {
-        if (auto* s = dynamic_cast<ScreenBase*> (settingsOverlay.get()))
-            return s->handleShortcut (k);
-        return false;
+        closeSettings();
+        return true;
     }
     return false;
 }

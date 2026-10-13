@@ -29,7 +29,8 @@ public:
     //==============================================================================
     // 입장 (API 5.5, 5.7)
     /** 입장 실패 모달의 종류 (5.5 표). other 는 모달 대신 일반 오류 */
-    enum class JoinFailure { full, closed, network, version, hostAbsent, kicked, alreadyInRoom, other };
+    /** network = 멤버와 직접 연결 실패(P2P), server = 서버 요청 실패(네트워크·500·시간 초과, Q17) */
+    enum class JoinFailure { full, closed, network, server, version, hostAbsent, kicked, alreadyInRoom, other };
     static JoinFailure classify (const ApiError&);
 
     /** 공개 방. 200 이면 store 의 현재 방이 바뀌고, 202 면 그 방의 myJoinRequestUntil 이 바뀐다 */

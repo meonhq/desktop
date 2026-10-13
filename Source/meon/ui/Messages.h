@@ -75,6 +75,7 @@ inline JoinFailText joinFailure (core::HomeController::JoinFailure f)
         case F::full:       return { TXT ("방이 가득 찼어요"), TXT ("들어가는 사이에 마지막 자리가 찼어요. 자리가 나면 다시 시도해 주세요.") };
         case F::closed:     return { TXT ("방이 닫혔어요"), TXT ("방이 닫혀서 들어갈 수 없어요") };
         case F::network:    return { TXT ("방에 연결하지 못했어요"), TXT ("멤버들과 직접 연결되지 않아요. 방화벽이나 공유기 설정을 확인해 주세요.") };
+        case F::server:     return { TXT ("방에 연결하지 못했어요"), TXT ("서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요") };
         case F::version:    return { TXT ("앱 버전이 달라요"), TXT ("새 버전이 나왔어요. 업데이트한 뒤 들어갈 수 있어요"), true };
         case F::hostAbsent: return { TXT ("방장이 자리에 없어요"), TXT ("방장이 돌아오면 다시 요청해 주세요") };
         case F::kicked:     return { TXT ("들어갈 수 없어요"), TXT ("이 방에서 내보내져서 다시 들어갈 수 없어요") };

@@ -262,6 +262,7 @@ struct HomeScreen::FriendList : juce::Component
 
         void mouseEnter (const juce::MouseEvent&) override { repaint(); }
         void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+        void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked()) owner.openProfile (fr.user); }
 
         HomeScreen& owner;
         core::Friend fr;
@@ -610,6 +611,13 @@ void HomeScreen::showModal (std::unique_ptr<Modal> m)
     modal->toFront (true);
 }
 
+void HomeScreen::openProfile (const core::UserPublic& u)
+{
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    auto user = u;
+    juce::MessageManager::callAsync ([safe, user] { if (safe != nullptr) safe->showModal (std::make_unique<ProfileModal> (safe->core, user, false)); });
+}
+
 void HomeScreen::openJoinCode()
 {
     auto m = std::make_unique<JoinCodeModal> (core);
@@ -667,6 +675,7 @@ void HomeScreen::toggleNotifications()
     popover->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
                                                                  { if (safe != nullptr) { safe->popover.reset(); safe->notifications.reset(); } }); };
     notifications->onSizeChanged = [this] { resized(); };
+    notifications->onOpenProfile = [this] (const core::UserPublic& u) { openProfile (u); };
     popover->setContent (notifications.get(), notifications->getPreferredHeight());
     addAndMakeVisible (*popover);
     resized();

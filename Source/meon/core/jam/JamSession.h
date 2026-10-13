@@ -29,6 +29,7 @@ struct JamPrefs
     bool keepMasterVolume = true;
     float masterDb = 0.0f;                        // -30 ~ +6 (Q10)
     int inputChannelStart = 0, inputChannelCount = 1;   // 앱만 (Q8: 입력 채널 위치)
+    int earGuard = 1;                             // 0 끔 / 1 보통 / 2 강하게
 };
 
 class JamSession : private AppStore::Listener,
@@ -67,6 +68,8 @@ public:
         juce::File logFolder;
         JamPrefs prefs;
         std::function<void (const JamPrefs&)> savePrefs;
+        /** 다른 인스턴스(앱·플러그인)가 설정 파일의 귀 테러 방지 단계를 바꿨으면 그 값, 아니면 -1 (버그 #18, 1초마다) */
+        std::function<int()> pollEarGuard;
         FakeMeonServer* fake = nullptr;           // 가짜 기간에만
     };
 
@@ -105,6 +108,13 @@ public:
     Engine::BufferMode getBufferMode() const { return prefs.bufferMode; }
     void setBufferMode (Engine::BufferMode);
     const JamPrefs& getPrefs() const { return prefs; }
+    int getEarGuardLevel() const { return prefs.earGuard; }
+    void setEarGuardLevel (int);
+    /** 설정 화면의 기본값 바꾸기 (다음 입장부터) */
+    void setDefaultBufferMode (Engine::BufferMode m) { prefs.bufferMode = m; savePrefs(); }
+    void setKeepMasterVolume (bool b) { prefs.keepMasterVolume = b; savePrefs(); }
+    /** 1초마다 (방 밖에서도): 다른 인스턴스가 바꾼 귀 테러 방지 단계를 따라간다 */
+    void pollSharedPrefs();
     /** 앱: 입력 채널 위치·모노/스테레오 (합주 중이면 바로) */
     void setInputChannels (int start, int count);
 
@@ -155,7 +165,8 @@ private:
     ChatChannel chatChannel;
     SessionLog sessionLog;
 
-    int tickTask = 0, retryTask = 0;
+    int tickTask = 0, retryTask = 0, pollTask = 0;
+    void schedulePoll();
     juce::int64 lastSampleAt = 0;
     float sendPeakDb = -100.0f, inputPeakDb = -100.0f;
     // 서버 끊김 기록 (버그 #12): 상태가 바뀔 때만

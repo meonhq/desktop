@@ -1,54 +1,12 @@
 #include "HomeOverlays.h"
 #include "../Messages.h"
 #include "../theme/Icons.h"
+#include "FormText.h"
 
 namespace meon::ui
 {
 
-namespace
-{
-    // 디자인의 작은 제목 (font: 500 12px, #767676)
-    void drawLabel (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> r, const juce::String& faint = {})
-    {
-        const auto f = font (500, 12.0f);
-        g.setFont (f);
-        g.setColour (col::inkSub);
-        g.drawText (text, r, juce::Justification::centredLeft, false);
-        if (faint.isNotEmpty())
-        {
-            const int w = (int) std::ceil (textWidth (f, text + " "));
-            g.setColour (col::inkFaint);
-            g.drawText (faint, r.withTrimmedLeft (w), juce::Justification::centredLeft, false);
-        }
-    }
-
-    // 안내 (font: 400 12px/1.5)
-    void drawHint (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> r, juce::Colour ink = col::inkFaint)
-    {
-        g.setFont (font (400, 12.0f));
-        g.setColour (ink);
-        g.drawFittedText (text, r, juce::Justification::topLeft, 3, 1.0f);
-    }
-
-    int hintHeight (const juce::String& text, int width)
-    {
-        juce::AttributedString a;
-        a.append (text, font (400, 12.0f), col::inkFaint);
-        a.setLineSpacing (6.0f);
-        juce::TextLayout t;
-        t.createLayout (a, (float) width);
-        return juce::jmax (18, (int) std::ceil (t.getHeight()));
-    }
-
-    void drawCounter (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> r)
-    {
-        g.setFont (font (400, 12.0f));
-        g.setColour (col::inkFaint);
-        g.drawText (text, r, juce::Justification::centredRight, false);
-    }
-
-    int countChars (const juce::String& s) { return s.length(); }
-}
+using namespace form;
 
 //==============================================================================
 void ModalFooter::setButtons (std::initializer_list<Button*> list)
@@ -488,6 +446,7 @@ struct NotificationList::Row : juce::Component
 
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && owner.onOpenProfile) owner.onOpenProfile (request.from); }
 
     NotificationList& owner;
     core::FriendRequest request;

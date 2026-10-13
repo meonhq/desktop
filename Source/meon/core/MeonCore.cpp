@@ -28,6 +28,8 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     if (options.resetFakeState) tokenStore->clear();
     authController = std::make_unique<AuthController> (*meonApi, *rt, appStore, *tokenStore, sched);
     homeController = std::make_unique<HomeController> (*meonApi, *rt, appStore, sched);
+    roomController = std::make_unique<RoomController> (*meonApi, appStore);
+    accountController = std::make_unique<AccountController> (*meonApi, appStore, *authController);
     authController->addListener (this);
 }
 
@@ -63,6 +65,8 @@ MeonCore::~MeonCore()
     rtt.reset();
     jamSession.reset();
     engineImpl.reset();
+    accountController.reset();
+    roomController.reset();
     homeController.reset();
     authController->removeListener (this);
     authController.reset();

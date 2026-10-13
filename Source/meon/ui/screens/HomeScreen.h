@@ -10,6 +10,7 @@
 #include "../widgets/Masonry.h"
 #include "../theme/Icons.h"
 #include "../overlays/HomeOverlays.h"
+#include "../overlays/JamOverlays.h"
 #include "../../core/MeonCore.h"
 
 namespace meon::ui
@@ -109,6 +110,7 @@ private:
     std::unique_ptr<Popover> popover;
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
+    void openProfile (const core::UserPublic&);
 
     void rebuildRooms();
     void layoutRooms();

@@ -116,6 +116,10 @@ set(MEON_CORE_SOURCES
     Source/meon/core/auth/AuthController.cpp
     Source/meon/core/home/HomeController.h
     Source/meon/core/home/HomeController.cpp
+    Source/meon/core/room/RoomController.h
+    Source/meon/core/room/RoomController.cpp
+    Source/meon/core/account/AccountController.h
+    Source/meon/core/account/AccountController.cpp
     Source/meon/core/util/Hangul.h
     Source/meon/core/jam/Engine.h
     Source/meon/core/jam/PeerState.h
@@ -162,6 +166,11 @@ set(MEON_UI_SOURCES
     Source/meon/ui/screens/JamScreen.cpp
     Source/meon/ui/overlays/HomeOverlays.h
     Source/meon/ui/overlays/HomeOverlays.cpp
+    Source/meon/ui/overlays/FormText.h
+    Source/meon/ui/overlays/JamOverlays.h
+    Source/meon/ui/overlays/JamOverlays.cpp
+    Source/meon/ui/overlays/SettingsModal.h
+    Source/meon/ui/overlays/SettingsModal.cpp
     Source/meon/ui/AppRoot.h
     Source/meon/ui/AppRoot.cpp
     Source/meon/ui/dev/WidgetGallery.h
@@ -368,10 +377,6 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonTheme.h
         Source/meon/MeonEmoji.cpp
         Source/meon/MeonEmoji.h
-        Source/meon/MeonLookAndFeel.cpp
-        Source/meon/MeonLookAndFeel.h
-        Source/meon/MeonWidgets.cpp
-        Source/meon/MeonWidgets.h
         Source/meon/MeonKeyRepeat.h
         Source/meon/MeonParts.cpp
         Source/meon/MeonParts.h
@@ -379,14 +384,8 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonEarGuard.h
         Source/meon/MeonSettings.cpp
         Source/meon/MeonSettings.h
-        Source/meon/MeonSessionLog.cpp
-        Source/meon/MeonSessionLog.h
-        Source/meon/MeonSession.cpp
-        Source/meon/MeonSession.h
         Source/meon/MeonEditor.cpp
         Source/meon/MeonEditor.h
-        Source/meon/SettingsScreen.cpp
-        Source/meon/SettingsScreen.h
         Source/meon/MeonAudio.cpp
         Source/meon/MeonAudio.h
         Source/meon/MeonUpdater.cpp
@@ -659,6 +658,7 @@ if (MEON_TESTS)
         Source/meon/tests/AuthTests.cpp
         Source/meon/tests/JamTests.cpp
         Source/meon/tests/HomeTests.cpp
+        Source/meon/tests/RoomTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
