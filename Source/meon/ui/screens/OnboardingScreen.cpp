@@ -940,7 +940,7 @@ struct UpdateView : StepView
         auto& u = owner.update;
         canUpdate = ! meonCore().isPlugin() && u.state != nullptr && u.start != nullptr;
         title.desc.setText (meonCore().isPlugin()
-            ? TXT ("이 버전으로는 서버에 연결할 수 없어요. MEON 앱에서 업데이트해 주세요. 앱을 업데이트하면 플러그인도 함께 바뀌어요")
+            ? TXT ("이 버전으로는 서버에 연결할 수 없어요. MEON 앱에서 업데이트해 주세요")
             : TXT ("이 버전으로는 서버에 연결할 수 없어요. 새 버전으로 업데이트하면 로그인한 그대로 이어서 쓸 수 있어요"));
         addAndMakeVisible (title);
         title.addAndMakeVisible (title.desc);
