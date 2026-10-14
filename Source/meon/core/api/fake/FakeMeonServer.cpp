@@ -557,12 +557,23 @@ HttpResponse FakeMeonServer::handle (const HttpRequest& req)
     return r;
 }
 
-FakeMeonServer::Out FakeMeonServer::issueTokens (User& u, int status, bool withMe)
+FakeMeonServer::Out FakeMeonServer::issueTokens (User& u, int status, bool withMe, const String& rotatedFrom)
 {
     const auto at = newId ("at_"), rt = newId ("rt_");
     accessTokens[at] = { u.id, now() + accessLifeMs };
     refreshOwners[rt] = u.id;
     u.refreshTokens.add (rt);
+    if (rotatedFrom.isNotEmpty())
+    {
+        // 유예로 다시 발급할 때는 처음 회전한 시각을 그대로 둔다 (유예는 처음 회전부터 최대 10분)
+        auto& rot = rotatedRefresh[rotatedFrom];
+        if (rot.at == 0) rot.at = now();
+        rot.userId = u.id;
+        rot.issued = rt;
+    }
+    // 오래된 회전 기록은 버린다 (유예가 끝난 뒤에도 하루는 남겨 도용으로 판단한다)
+    for (auto it = rotatedRefresh.begin(); it != rotatedRefresh.end();)
+        it = now() - it->second.at > 24LL * 60 * 60 * 1000 ? rotatedRefresh.erase (it) : std::next (it);
     stateChanged();
     if (withMe)
         return { status, json::obj ({ { "access_token", at }, { "refresh_token", rt }, { "me", json::encode (meOf (u)) } }) };
@@ -641,12 +652,47 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
         {
             const auto rt = body.getProperty ("refresh_token", "").toString();
             auto it = refreshOwners.find (rt);
-            if (it == refreshOwners.end()) return fail (ErrorCode::unauthorized);
+            if (it == refreshOwners.end())
+            {
+                // 이미 회전한 토큰이 다시 왔다. 진짜 서버 반영 대기 (진짜 서버는 지금 10초 유예):
+                // - 그때 준 새 토큰이 한 번도 안 쓰였고 회전한 지 10분 안이면, 앱이 응답을 못 받고 죽었다가
+                //   다시 켠 것으로 본다 → 못 받은 새 토큰은 무효로 하고 새로 발급
+                // - 새 토큰이 이미 쓰였거나 10분이 지났으면 도용으로 본다 → 그 계정의 모든 세션 무효
+                auto rot = rotatedRefresh.find (rt);
+                if (rot == rotatedRefresh.end()) return fail (ErrorCode::unauthorized);
+                const auto userId = rot->second.userId, issued = rot->second.issued;
+                auto* u = findUser (userId);
+                if (u == nullptr || u->deleted) return fail (ErrorCode::unauthorized);
+                const bool issuedUnused = refreshOwners.count (issued) > 0;
+                if (issuedUnused && now() - rot->second.at <= refreshReuseGraceMs)
+                {
+                    refreshOwners.erase (issued);
+                    u->refreshTokens.removeString (issued);
+                    return issueTokens (*u, 200, false, rt);
+                }
+                revokeAllSessions (userId);
+                stateChanged();
+                // 그 계정의 실시간 연결도 끊는다. 다시 붙으려 하면 무효가 된 토큰이라 로그인 화면으로 간다
+                if (userId == wsUser && wsOpen && sink != nullptr)
+                {
+                    std::weak_ptr<bool> weak = alive;
+                    const int gen = connectionGen;
+                    scheduler.post (options.latencyMs, [this, weak, gen]
+                    {
+                        if (weak.expired() || gen != connectionGen || ! wsOpen || sink == nullptr) return;
+                        auto* s = sink;
+                        wsOpen = false;
+                        ++connectionGen;
+                        s->transportClosed();
+                    });
+                }
+                return fail (ErrorCode::unauthorized);
+            }
             auto* u = findUser (it->second);
             if (u == nullptr) return fail (ErrorCode::unauthorized);
             refreshOwners.erase (it);
             u->refreshTokens.removeString (rt);
-            return issueTokens (*u, 200, false);
+            return issueTokens (*u, 200, false, rt);
         }
     }
 
@@ -687,6 +733,10 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
         refreshOwners.erase (rt);
         me.refreshTokens.removeString (rt);
         accessTokens.erase (req.accessToken);
+        // 로그아웃으로 끝난 세션: 그 세션의 옛 토큰은 유예·도용 판단 없이 그냥 무효
+        for (auto it = rotatedRefresh.begin(); it != rotatedRefresh.end();)
+            it = it->second.issued == rt ? rotatedRefresh.erase (it) : std::next (it);
+        stateChanged();
         return noContent();
     }
 
@@ -766,10 +816,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             }
             for (auto& [rid, r] : rooms)
                 if (r.hostId == actor && ! r.members.empty()) { r.hostId = r.members.front().userId; roomChanged (r); }
-            for (auto& rt : me.refreshTokens) refreshOwners.erase (rt);
-            me.refreshTokens.clear();
-            for (auto it = accessTokens.begin(); it != accessTokens.end();)
-                it = it->second.userId == actor ? accessTokens.erase (it) : std::next (it);
+            revokeAllSessions (actor);
             me.deleted = true;
             me.email = "deleted:" + me.email;   // 30일 뒤 재가입 허용 규칙은 가짜에서는 바로 허용
             if (wsUser == actor) close();
@@ -1503,6 +1550,19 @@ void FakeMeonServer::remotePeerLeft (const String& userId)
 //==============================================================================
 // 저장
 
+void FakeMeonServer::revokeAllSessions (const String& userId)
+{
+    if (auto* u = findUser (userId))
+    {
+        for (auto& t : u->refreshTokens) refreshOwners.erase (t);
+        u->refreshTokens.clear();
+    }
+    for (auto it = accessTokens.begin(); it != accessTokens.end();)
+        it = it->second.userId == userId ? accessTokens.erase (it) : std::next (it);
+    for (auto it = rotatedRefresh.begin(); it != rotatedRefresh.end();)
+        it = it->second.userId == userId ? rotatedRefresh.erase (it) : std::next (it);
+}
+
 juce::var FakeMeonServer::saveState() const
 {
     juce::Array<var> accounts;
@@ -1520,7 +1580,11 @@ juce::var FakeMeonServer::saveState() const
             { "verify_code", u.verifyCode }, { "verify_code_at", u.verifyCodeAt }
         }));
     }
-    return json::obj ({ { "version", 1 }, { "accounts", var (accounts) } });
+    // 회전 기록도 남긴다: 응답을 받기 전에 앱이 죽었다가 다시 켜도 유예가 이어지게
+    juce::Array<var> rotations;
+    for (auto& [old, r] : rotatedRefresh)
+        rotations.add (json::obj ({ { "old", old }, { "issued", r.issued }, { "user", r.userId }, { "at", r.at } }));
+    return json::obj ({ { "version", 1 }, { "accounts", var (accounts) }, { "rotated_refresh", var (rotations) } });
 }
 
 void FakeMeonServer::loadState (const var& saved)
@@ -1556,6 +1620,14 @@ void FakeMeonServer::loadState (const var& saved)
             users[u.id] = u;
         }
     }
+    if (auto* arr = saved.getProperty ("rotated_refresh", var()).getArray())
+        for (auto& r : *arr)
+        {
+            const auto old = r.getProperty ("old", "").toString();
+            if (old.isNotEmpty())
+                rotatedRefresh[old] = { r.getProperty ("user", "").toString(), r.getProperty ("issued", "").toString(),
+                                        (juce::int64) r.getProperty ("at", 0) };
+        }
 }
 
 } // namespace meon::core

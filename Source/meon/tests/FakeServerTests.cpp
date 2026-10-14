@@ -162,6 +162,97 @@ public:
             expect (! h.api.hasSession());
         }
 
+        // refresh 재사용 유예 (진짜 서버 반영 대기): 새 토큰이 안 쓰였으면 10분까지 옛 토큰으로 다시 발급,
+        // 새 토큰이 쓰였거나 10분이 지났으면 도용 → 그 계정의 모든 세션 무효
+        auto refreshWith = [] (Harness& h, const juce::String& rt)
+        {
+            h.api.setTokens ({ {}, rt });
+            return h.run<Tokens> ([&] (auto cb) { h.api.refresh (cb); });
+        };
+
+        beginTest ("refresh reuse: new token unused -> old token accepted within 10 min");
+        {
+            Harness h;
+            h.signupReady();
+            const auto x = h.api.getTokens().refreshToken;
+            auto y = refreshWith (h, x);                         // x → y, 앱이 y 를 받기 전에 죽었다고 치고
+            expect (y.ok());
+            h.clock.advance (5 * 60 * 1000);
+            auto z = refreshWith (h, x);                         // 다시 켜서 옛 x 로
+            expect (z.ok(), "old token accepted while the new one is unused");
+            expect (z.ok() && z.get().refreshToken != y.get().refreshToken);
+            auto viaY = refreshWith (h, y.get().refreshToken);   // 받지 못한 y 는 무효
+            expect (viaY.code() == ErrorCode::unauthorized);
+        }
+
+        beginTest ("refresh reuse: grace counts from the first rotation");
+        {
+            Harness h;
+            h.signupReady();
+            const auto x = h.api.getTokens().refreshToken;
+            expect (refreshWith (h, x).ok());
+            h.clock.advance (6 * 60 * 1000);
+            expect (refreshWith (h, x).ok());                    // 6분: 유예 안
+            h.clock.advance (5 * 60 * 1000);
+            expect (refreshWith (h, x).code() == ErrorCode::unauthorized, "11 min after the first rotation");
+        }
+
+        beginTest ("refresh reuse: new token already used -> theft, every session revoked");
+        {
+            Harness h;
+            h.signupReady();
+            const auto x = h.api.getTokens().refreshToken;
+            auto y = refreshWith (h, x);
+            auto w = refreshWith (h, y.get().refreshToken);      // y 를 씀 → w
+            expect (w.ok());
+            auto other = h.run<AuthResult> ([&] (auto cb) { h.api.login ("me@example.com", "abcd123!", cb); });   // 다른 기기 세션
+            expect (other.ok());
+            expect (refreshWith (h, x).code() == ErrorCode::unauthorized);
+            expect (refreshWith (h, w.get().refreshToken).code() == ErrorCode::unauthorized, "this device revoked");
+            expect (refreshWith (h, other.get().tokens.refreshToken).code() == ErrorCode::unauthorized, "other device revoked");
+            h.api.setTokens (other.get().tokens);
+            expect (h.run<Me> ([&] (auto cb) { h.api.getMe (cb); }).code() == ErrorCode::unauthorized, "access tokens revoked");
+        }
+
+        beginTest ("refresh reuse: unused new token but over 10 min -> theft");
+        {
+            Harness h;
+            h.signupReady();
+            const auto x = h.api.getTokens().refreshToken;
+            auto y = refreshWith (h, x);
+            h.clock.advance (11 * 60 * 1000);
+            expect (refreshWith (h, x).code() == ErrorCode::unauthorized);
+            expect (refreshWith (h, y.get().refreshToken).code() == ErrorCode::unauthorized, "revoked");
+        }
+
+        beginTest ("refresh reuse: after logout the old token is just invalid");
+        {
+            Harness h;
+            h.signupReady();
+            const auto x = h.api.getTokens().refreshToken;
+            auto y = refreshWith (h, x);
+            expect (h.run<Done> ([&] (auto cb) { h.api.logout (cb); }).ok());
+            auto other = h.run<AuthResult> ([&] (auto cb) { h.api.login ("me@example.com", "abcd123!", cb); });
+            expect (refreshWith (h, x).code() == ErrorCode::unauthorized);
+            expect (refreshWith (h, other.get().tokens.refreshToken).ok(), "no theft revoke after a normal logout");
+        }
+
+        beginTest ("refresh reuse: grace survives a restart (saved state)");
+        {
+            juce::var saved;
+            juce::String x;
+            {
+                Harness h;
+                h.signupReady();
+                x = h.api.getTokens().refreshToken;
+                expect (refreshWith (h, x).ok());
+                saved = h.server.saveState();
+            }
+            Harness h2;
+            h2.server.loadState (saved);
+            expect (refreshWith (h2, x).ok());
+        }
+
         beginTest ("saved state restores account and refresh token");
         {
             juce::var saved;
