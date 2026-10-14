@@ -1084,6 +1084,10 @@ void JamScreen::timerCallback()
 void JamScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
+    // 상단 바(·연결 끊김 배너) 아래 작업 영역 (패널들을 감싸는 곳)
+    const int canvasTop = headerLineY + 1 + (showBanner() ? bannerH : 0);
+    g.setColour (col::surfaceCanvas);
+    g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
     const float logoW = meon::logoWidth (metric::logoDrawH);
     meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
                     juce::Justification::centredLeft);

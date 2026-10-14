@@ -797,6 +797,10 @@ void HomeScreen::timerCallback()
 void HomeScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
+    // 배너 아래 작업 영역 (패널들을 감싸는 곳)
+    const int canvasTop = headerLineY + 1 + bannersHeight();
+    g.setColour (col::surfaceCanvas);
+    g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
     const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
     meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
     g.setColour (col::line);

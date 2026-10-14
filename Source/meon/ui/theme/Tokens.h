@@ -33,6 +33,9 @@ namespace col
     const juce::Colour overlay      { 0x661A1A1Au };   // rgba(26,26,26,0.4)
     const juce::Colour statusOff    { 0xFFD5D5D5u };   // 친구 상태 점: 오프라인
     const juce::Colour pageBg       { 0xFFFFFFFFu };
+    // 홈·합주 화면의 패널들을 감싸는 작업 영역 바탕 (디자인 파일은 흰색, REMAKE_PLAN 3.6 의 결정이 우선).
+    // 안쪽 카드(흰 면 + #E0E0E0 테두리)는 그대로, 상단 바·배너·모달·설정 화면은 흰색 그대로
+    const juce::Colour surfaceCanvas { 0xFFFCFCFCu };
 
     // 미터 (Logic 스타일)
     const juce::Colour meterGreen   { 0xFF34C759u };
