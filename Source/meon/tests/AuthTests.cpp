@@ -123,6 +123,28 @@ public:
             saved = r.server.saveState();
         }
 
+        // 서버가 토큰을 회전·저장한 뒤, 앱이 새 토큰을 받기 전에 죽었다가 다시 켜도 로그인이 유지된다
+        // (가짜 서버의 재사용 유예. 진짜 서버 반영 대기)
+        beginTest ("app dies between server rotation and client save: still logged in after restart");
+        {
+            const auto before = tokens.value;
+            juce::var onDisk = saved;
+            {
+                Rig r (tokens);
+                r.server.loadState (saved);
+                r.server.onStateChanged = [&] (const juce::var& v) { onDisk = v; };   // MEONFakeServer.json 쓰기
+                r.auth.start();
+                r.clock.advance (11);   // 설정 받음 → refresh 를 보냄: 서버는 회전·저장, 응답은 아직
+                expect (tokens.value == before);
+            }                           // 여기서 앱이 죽는다
+            Rig r2 (tokens);
+            r2.server.loadState (onDisk);
+            r2.auth.start();
+            r2.wait();
+            expect (r2.auth.step() == S::ready);
+            expect (tokens.value.isNotEmpty() && tokens.value != before);
+        }
+
         beginTest ("rejected saved token: login screen, stored token cleared");
         {
             tokens.value = "rt_not_valid";

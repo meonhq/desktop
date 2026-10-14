@@ -85,6 +85,9 @@ public:
     static constexpr int joinRequestLifeMs = 60000;
     static constexpr int requestUntilMs = 5 * 60 * 1000;
     static constexpr int accessLifeMs = 15 * 60 * 1000;
+    // refresh 재사용 유예: 회전한 뒤 새 토큰이 한 번도 쓰이지 않았으면 옛 토큰을 이 시간까지 받아 준다.
+    // 진짜 서버 반영 대기 (지금 진짜 서버 API 1.3 은 10초 유예. 같은 규칙으로 바꾸는 일은 서버 쪽에서 따로 한다)
+    static constexpr int refreshReuseGraceMs = 10 * 60 * 1000;
     static constexpr int codeLifeMs = 10 * 60 * 1000;
     static constexpr int resendGapMs = 30000;
     static constexpr int closedMemoryMs = 24 * 60 * 60 * 1000;
@@ -156,6 +159,9 @@ private:
     std::vector<InviteRec> invites;
     std::map<juce::String, Session> accessTokens;
     std::map<juce::String, juce::String> refreshOwners;  // refresh → 사용자
+    // 회전해서 지운 refresh → 그때 준 새 refresh·회전 시각 (재사용 유예와 도용 판단용, 진짜 서버 반영 대기)
+    struct Rotation { juce::String userId, issued; juce::int64 at = 0; };
+    std::map<juce::String, Rotation> rotatedRefresh;
     std::map<juce::String, juce::String> fixedCodes;     // 시험용 코드 → 오류 키
     juce::String lastMailedCode;
 
@@ -248,7 +254,9 @@ private:
     static Out created (const juce::var& body) { return { 201, body }; }
     static Out noContent() { return { 204, {} }; }
     static Out fail (ErrorCode c, const juce::String& msg = {}, const juce::String& field = {});
-    Out issueTokens (User&, int status, bool withMe);
+    /** rotatedFrom: refresh 회전이면 지운 옛 토큰 (새로 준 토큰을 기록한 뒤 상태를 저장한다) */
+    Out issueTokens (User&, int status, bool withMe, const juce::String& rotatedFrom = {});
+    void revokeAllSessions (const juce::String& userId);
 
     JUCE_DECLARE_NON_COPYABLE (FakeMeonServer)
 };
