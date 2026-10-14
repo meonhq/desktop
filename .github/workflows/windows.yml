@@ -61,13 +61,23 @@ jobs:
       - name: 빌드
         run: cmake --build build --config Release --parallel --target MEON_Standalone MEON_VST3
 
+      # 크래시 덤프(%APPDATA%\MEON\crashes\*.dmp)를 읽을 때 쓰는 디버그 정보. 설치 파일에는 넣지 않는다
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MEON-windows-pdb-${{ github.run_number }}
+          path: build/MEON_artefacts/Release/Standalone/*.pdb
+          if-no-files-found: warn
+
       - name: 화면 확인용 스냅숏
+        # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
+        if: env.RELEASE != 'true'
         continue-on-error: true
         run: |
           mkdir -p snapshots
           EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
-          for s in audio settings home; do
-            timeout 60 "$EXE" --nickname=테스트 --screen=$s --window=0,0,1280,800 --snapshot=snapshots/win_$s.png || true
+          for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast jam jam:host settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+            D=3000; [ "$s" = "home:toast" ] && D=6000; case "$s" in jam*|settings*) D=5000;; esac
+            timeout 60 "$EXE" --nickname=테스트 --screen=$s --window=0,0,1280,800 --snapshot-delay=$D --snapshot=snapshots/win_${s//:/_}.png || true
           done
           ls -la snapshots
 

@@ -111,6 +111,35 @@ inline bool operator<(const AooServerConnectionInfo& lhs, const AooServerConnect
 }
 
 
+namespace meon { namespace core { class MeonCore; } }
+
+namespace meon
+{
+    /** MEON (버그 #17): 엔진 파라미터를 붙여 두는, 호스트에 보이지 않는 프로세서.
+        엔진은 지금처럼 mState 로 값을 읽고 쓰지만 DAW 가 보는 프로세서에는 파라미터가 없다. 오디오는 처리하지 않는다. */
+    class HiddenParameterHolder : public juce::AudioProcessor
+    {
+    public:
+        HiddenParameterHolder() : juce::AudioProcessor (BusesProperties()) {}
+        const juce::String getName() const override { return "MEON parameters"; }
+        void prepareToPlay (double, int) override {}
+        void releaseResources() override {}
+        void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+        double getTailLengthSeconds() const override { return 0.0; }
+        bool acceptsMidi() const override { return false; }
+        bool producesMidi() const override { return false; }
+        juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+        bool hasEditor() const override { return false; }
+        int getNumPrograms() override { return 1; }
+        int getCurrentProgram() override { return 0; }
+        void setCurrentProgram (int) override {}
+        const juce::String getProgramName (int) override { return {}; }
+        void changeProgramName (int, const juce::String&) override {}
+        void getStateInformation (juce::MemoryBlock&) override {}
+        void setStateInformation (const void*, int) override {}
+    };
+}
+
 //==============================================================================
 /**
 */
@@ -302,6 +331,12 @@ public:
 
     void setAutoconnectToGroupPeers(bool flag);
     bool getAutoconnectToGroupPeers() const { return mAutoconnectGroupPeers; }
+
+    // MEON (엔진 수정 E1): 피어 허용 목록. 켜져 있으면 그룹에 들어온 피어 중 목록에 있는 AOO 이름만 자동 연결하고,
+    // 나머지는 연결하지 않고 대기열에 둔다 (서버에 붙어 있는 동안 엔진은 모르는 피어의 초대에 응하지 않는다).
+    // 목록이 바뀌면 새로 허용된 대기 피어를 연결하고, 빠진 피어는 끊는다. enabled=false 면 원래 동작.
+    void setAllowedPeerNames(const StringArray & names, bool enabled);
+    bool isPeerNameAllowed(const String & name) const;
 
     bool joinServerGroup(const String & group, const String & groupsecret = "", bool isPublic=false);
     bool leaveServerGroup(const String & group);
@@ -528,6 +563,8 @@ public:
     float getInputGroupGain(int changroup);
 
     void setInputMonitor(int changroup, float mgain);
+    /** MEON: 셀프 모니터 패닝 (모니터에만, 송출에는 영향 없음) */
+    void setInputMonitorPan(int changroup, float pan);
     float getInputMonitor(int changroup);
 
     void setInputGroupMuted(int changroup, bool muted);
@@ -822,6 +859,13 @@ public:
     void setLastPluginBounds(juce::Rectangle<int> bounds) { mPluginWindowWidth = bounds.getWidth(); mPluginWindowHeight = bounds.getHeight();}
     juce::Rectangle<int> getLastPluginBounds() const { return juce::Rectangle<int>(0,0,mPluginWindowWidth, mPluginWindowHeight); }
 
+    // MEON: 로그인·서버 연결·방 상태. 창(에디터)을 닫아도 살아 있도록 프로세서가 소유한다 (REMAKE_PLAN 엔진 수정 E2).
+    // 처음 부를 때 만든다 (Source/meon/MeonProcessorGlue.cpp)
+    meon::core::MeonCore& getMeonCore();
+private:
+    std::unique_ptr<meon::core::MeonCore> mMeonCore;
+public:
+
     // support dir path
     File getSupportDir() const { return mSupportDir; }
     
@@ -1093,6 +1137,18 @@ private:
     std::unique_ptr<EndpointState> mServerEndpoint;
     
     bool mAutoconnectGroupPeers = true;
+    
+    // MEON E1
+    
+    struct DeferredPeer { MemoryBlock address; String user, group; };
+    
+    mutable CriticalSection mAllowedPeersLock;
+    
+    StringArray mAllowedPeerNames;
+    
+    bool mAllowedPeersEnabled = false;
+    
+    Array<DeferredPeer> mDeferredPeers;
     bool mIsConnectedToServer = false;
     String mCurrentJoinedGroup;
     double mSessionConnectionStamp = 0.0;
@@ -1270,7 +1326,8 @@ private:
     String mLangOverrideCode;
     bool mUseUniversalFont = false;
 
-    // main state
+    // main state (MEON: 파라미터는 숨긴 프로세서에 붙인다, 버그 #17)
+    meon::HiddenParameterHolder  mHiddenParams;
     AudioProcessorValueTreeState mState;
     UndoManager                  mUndoManager;
 

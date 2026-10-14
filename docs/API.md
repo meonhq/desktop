@@ -1,11 +1,11 @@
-> 복사본입니다. 원본은 meonhq/server/docs/API.md (v0.3). 이 파일은 수정하지 마세요.
+> 복사본입니다. 원본은 meonhq/server/docs/API.md (v0.4). 이 파일은 수정하지 마세요.
 
-# MEON API 계약 v0.3
+# MEON API 계약 v0.4
 
 데스크톱 앱(`meonhq/desktop`)과 백엔드(`meonhq/server`)가 주고받는 모든 요청·응답·이벤트의 기준 문서.
 양쪽 에이전트는 이 문서만 보고 구현한다. 문서와 코드가 다르면 문서가 맞다. 바꿀 땐 문서를 먼저 바꾼다.
 
-- 상태: v0.3 (12장 "미정" 참고)
+- 상태: v0.4 (12장 "미정" 참고)
 - 범위: 계정, 프로필, 방, 방 권한, 입장 승인, 친구, 초대, 차단, 알림, 버전 검사, 실시간 이벤트
 - 범위 밖: 합주 오디오 (SonoBus/AOO가 담당. 서버는 접속 정보만 발급)
 - 화면 표기 규칙: 아이디는 어디서든 `@username`으로 보여준다 (`@`는 클라이언트가 붙인다. 서버 값에는 없음). `#숫자` 같은 꼬리표는 없다
@@ -18,7 +18,7 @@
 - REST: `https://api.meon.co.kr/v1`
 - WebSocket: `wss://api.meon.co.kr/v1/ws`
 - 도메인 `meon.co.kr`는 구매 완료, 아직 서버에 연결하지 않음. DNS는 Cloudflare로 옮겨 API를 Cloudflare 뒤에 둔다
-- AOO 서버는 UDP라 Cloudflare를 거치지 못한다. `aoo.meon.co.kr`은 실제 IP를 가리킨다 (DNS only)
+- AOO 서버는 같은 포트에서 **TCP와 UDP를 둘 다** 쓰고, Cloudflare를 거치지 못한다. `aoo.meon.co.kr`은 실제 IP를 가리킨다 (DNS only). 방화벽은 TCP·UDP 모두 연다
 - 로컬 개발: `http://localhost:8080/v1`, `ws://localhost:8080/v1/ws`
 
 ### 1.2 형식
@@ -31,12 +31,16 @@
 - 로그인하면 `access_token`(짧은 수명, 15분)과 `refresh_token`(긴 수명, 30일)을 받는다
 - 인증이 필요한 요청은 헤더에 `Authorization: Bearer {access_token}`
 - `access_token`이 만료되면 `401 token_expired` → 클라이언트는 `POST /auth/refresh`로 재발급 후 원래 요청을 한 번 재시도
-- `refresh_token`은 한 번 쓰면 폐기되고 새 것을 받는다 (회전). 이미 쓴 토큰이 다시 오면 그 계정의 모든 토큰을 무효화한다
-- 로그아웃하면 해당 `refresh_token` 무효화
+- `refresh_token`은 한 번 쓰면 폐기되고 새 것을 받는다 (회전). 30일은 회전할 때마다 다시 센다 (쓰는 동안 계속 연장)
+- **재사용 감지**: 이미 쓴 토큰이 다시 오면 그 계정의 모든 세션을 무효화한다
+  - 예외 — **10초 유예**: 회전한 지 10초 안에 같은 토큰이 다시 오면(응답을 못 받은 재시도) 재사용으로 보지 않고 새 토큰 쌍을 다시 발급한다. 직전 회전에서 발급했던 쌍은 무효가 된다 (서버는 토큰 원문을 저장하지 않으므로 같은 값을 돌려줄 수 없다)
+- "모든 토큰 무효화"(재사용 감지, 비밀번호 변경, 탈퇴)에는 이미 발급된 `access_token`도 포함한다. 서버는 요청마다 세션이 살아 있는지 확인하고, 무효화되면 그 사용자의 WebSocket도 끊는다
+- 로그아웃하면 해당 `refresh_token`의 세션 무효화
 
 ### 1.4 클라이언트 버전 헤더
 - 모든 REST 요청에 `X-Meon-Build: {빌드 번호}` 헤더를 붙인다 (CI `run_number`. 로컬 빌드는 `0`)
 - 서버는 빌드 번호가 최소 버전(`min_build`, 13장)보다 낮으면 `426 client_outdated`를 돌려준다. 예외: `GET /config`
+- 헤더가 없거나 숫자가 아니면 `426 client_outdated`
 - 로컬 빌드(`0`)는 서버 설정 `ALLOW_DEV_BUILD=true`일 때만 통과 (개발 서버 전용)
 
 ### 1.5 오류 응답
@@ -64,15 +68,26 @@
 | 403 | `forbidden` | 권한 없음 |
 | 404 | `not_found` | 대상 없음 |
 | 409 | `conflict` | 상태 충돌 (개별 API에서 더 구체적인 코드 사용) |
-| 426 | `client_outdated` | 앱 버전이 최소 버전보다 낮음 → 클라이언트는 강제 업데이트 화면 |
+| 426 | `client_outdated` | 앱 버전이 최소 버전보다 낮음 → 클라이언트 동작은 13장 |
 | 429 | `rate_limited` | 요청 횟수 초과. `Retry-After` 헤더 포함 |
 | 500 | `internal` | 서버 오류 |
 
 `400 invalid_request`에서 입력 규칙 위반이면 `error.field`(예: `"password"`)를 함께 준다.
 
+개별 오류 코드의 HTTP 상태
+
+| HTTP | code |
+|---|---|
+| 400 | `code_invalid`, `code_expired` |
+| 401 | `invalid_credentials` |
+| 403 | `email_not_verified`, `profile_incomplete`, `not_host`, `kicked`, `not_friend`, `not_accepting` |
+| 404 | `room_not_found`, `invalid_code` |
+| 409 | `email_taken`, `username_taken`, `already_in_room`, `room_full`, `host_absent`, `request_unavailable`, `capacity_below_members`, `target_not_in_room`, `not_in_room`, `target_offline`, `target_in_room`, `already_invited`, `already_delivered`, `blocked_by_me`, `is_friend` |
+| 410 | `room_closed` |
+
 ### 1.6 페이지 나누기
 목록 API는 커서 방식. 응답에 `next_cursor`가 있으면 `?cursor={next_cursor}`로 다음 페이지. 없으면 끝.
-예외: `GET /rooms`는 v0.3에서 페이지를 나누지 않는다 (5.1).
+예외: `GET /rooms`는 페이지를 나누지 않는다 (5.1).
 
 ---
 
@@ -107,8 +122,7 @@
     "friend_requests": "everyone",
     "room_invites": "friends"
   },
-  "created_at": "2026-10-13T07:33:00Z",
-  "deletion_scheduled_at": null
+  "created_at": "2026-10-13T07:33:00Z"
 }
 ```
 - `pending_email`: 이메일 변경 중이면 새 주소 (4.4). 아니면 `null`
@@ -131,7 +145,7 @@
 - `status`, `last_seen_at`, `room`: 친구일 때만 채운다. 친구가 아니면 전부 `null` (2.10과 같은 규칙)
 - `can_send_friend_request`: 상대가 `friend_requests: "none"`이면 `false` → 클라이언트는 친구 요청 버튼을 **숨긴다**
   - 상대가 나를 차단한 경우에는 `true`로 준다 (차단 사실을 드러내지 않기 위해. 요청은 7.2 규칙대로 조용히 버려진다)
-- `can_invite`: 친구이고, 상대가 `room_invites: "friends"`이고, 내가 방에 있고, 상대가 온라인일 때 `true`. 아니면 초대 버튼을 **숨긴다**
+- `can_invite`: 친구이고, 상대가 `room_invites: "friends"`이고, 내가 방에 있고, 상대가 `status == "online"`(접속 중이면서 **방에 없음**)일 때 `true`. 아니면 초대 버튼을 **숨긴다**. 방에 있는 친구는 초대할 수 없다
 
 ### 2.5 Room
 ```json
@@ -156,7 +170,7 @@
 - `entry_mode`: 공개 방만. `"instant"`(바로 입장) | `"approval"`(방장 승인). 비공개 방은 항상 `null` (승인 없음)
 - `capacity`: 2~7
 - `host_present`: 방장이 지금 방에 있는지. `false`면 방장 자리가 예약된 상태
-- `host_rtt_ms`: 방장 ↔ AOO 서버 왕복 시간. 방장 클라이언트가 보고한 값 (10.6). 모르면 `null`. 예상 지연 계산에 쓴다 (2.11)
+- `host_rtt_ms`: 방장 ↔ AOO 서버 왕복 시간. 방장 클라이언트가 보고한 값 (5.9). 모르면 `null`. 예상 지연 계산에 쓴다 (2.11)
 - `my_join_request_until`: 내가 이 방에 승인 요청을 보냈으면, 버튼을 "요청 보냄"으로 유지할 시각 (요청 시각 + 5분). 없으면 `null` (5.7)
 - 비공개 방의 초대 코드는 Room에 포함하지 않는다. 방 안 멤버에게만 내려준다 (2.7)
 
@@ -187,10 +201,19 @@ Room 전체 필드 +
   "aoo_host": "aoo.meon.co.kr",
   "aoo_port": 10999,
   "group_name": "meon-r_...",
-  "group_password": "server-issued-random-secret"
+  "group_password": "server-issued-random-secret",
+  "aoo_username": "u_...",
+  "aoo_user_password": "server-issued-random-secret",
+  "members": ["u_...", "u_..."]
 }
 ```
-- 서버가 방 생성 시 무작위로 만든다. 클라이언트는 그대로 SonoBus 엔진에 넘긴다
+- `group_name`, `group_password`: 서버가 방 생성 시 무작위로 만든다
+- `aoo_username`, `aoo_user_password`: 서버가 **사용자마다** 발급하는 AOO 접속 이름과 비밀번호. 이름은 계정 ID라 겹치지 않는다. 비밀번호는 사용자마다 고정이다 (aooserver가 이름과 비밀번호를 서버 전체에서 기억하기 때문)
+  - 클라이언트는 닉네임 같은 다른 값을 AOO 이름으로 쓰지 않는다. 화면 이름은 `RoomDetail.members`에서 계정 ID로 찾는다
+- `members`: 지금 이 방의 멤버 계정 ID 목록. `room.updated`를 받을 때마다 갱신된다
+  - **클라이언트는 이 목록에 있는 AOO 이름의 상대와만 소리를 주고받는다.** 목록에 없는 상대(추방된 사람, 비밀번호를 알고 몰래 들어온 사람)의 소리는 받지 않고, 그 상대에게 보내지도 않는다
+  - 그래서 추방해도 그룹 비밀번호는 바꾸지 않는다 (바꾸면 남은 멤버 전원이 다시 접속해야 해서 소리가 끊긴다)
+- 클라이언트는 이 값들을 그대로 SonoBus 엔진에 넘긴다
 - `aoo_host`는 **MEON이 직접 운영하는 aooserver**다. SonoBus 공개 서버(`aoo.sonobus.net`)를 쓰지 않는다
 - 초대 코드와 AOO 그룹 이름은 다르고 비밀번호가 있다. 초대 코드를 알아도 서버를 거치지 않으면 그룹에 들어갈 수 없다
 - 입장에 성공한 사람에게만 준다
@@ -218,7 +241,8 @@ Room 전체 필드 +
 - `last_seen_at`: `offline`일 때만. 마지막으로 WebSocket이 끊긴 시각. 화면 표기 예: "3시간 전 접속"
 - `room`: `status == "in_room"`이고 그 방이 공개 방일 때만 `{ id, title, joinable }`. 비공개 방이면 `null` (위치 비공개)
 - `joinable`: 정원이 남아 있고, 나와 방장 사이에 차단이 없을 때 `true`
-- `can_invite`: 2.4와 같은 규칙. `false`면 친구 패널에서 초대 버튼을 숨긴다
+- `can_invite`: 2.4와 같은 규칙(상대가 `online`이고 방에 없을 때만). `false`면 친구 패널에서 초대 버튼을 숨긴다
+- 끊김 유예 30초 동안(5.6) 그 친구는 `offline`으로 보인다
 - 접속 상태를 숨기는 설정은 없다. 친구에게는 항상 실제 상태가 보인다
 
 ### 2.11 예상 지연 (방 카드, 필터)
@@ -227,11 +251,11 @@ Room 전체 필드 +
 ```
 예상 지연(ms) = round( latency_coefficient × (my_rtt_ms + host_rtt_ms) )
 ```
-- `my_rtt_ms`: 내 클라이언트가 AOO 서버까지 잰 왕복 시간 (10.6과 같은 측정)
+- `my_rtt_ms`: 내 클라이언트가 AOO 서버까지 잰 왕복 시간 (5.9와 같은 측정)
 - `host_rtt_ms`: Room에 들어 있는 값
 - `latency_coefficient`: `GET /config`에서 받는다 (13장). 시작값 `0.7`
 - 둘 중 하나라도 없으면 표시하지 않는다 (`—`)
-- 화면에는 근사값임을 드러낸다: "약 12ms"
+- 화면 표기는 `14ms` ("약"을 붙이지 않는다)
 - 방 안의 멤버별 핑과 같은 단위(왕복)다
 - 보정: 방에 들어간 뒤 방장과의 실제 P2P 왕복 시간을 재서 `POST /telemetry/latency` (5.10)로 보낸다. 서버는 쌓인 값으로 `latency_coefficient`를 다시 맞춘다
 
@@ -256,7 +280,7 @@ Room 전체 필드 +
   "expires_at": "2026-10-13T07:34:00Z"
 }
 ```
-- `via_invite`: 다른 멤버의 초대를 수락해서 생긴 요청이면 `true` (7.8)
+- `via_invite`: 다른 멤버의 초대를 수락해서 생긴 요청이면 `true` (7.9)
 
 ---
 
@@ -271,6 +295,11 @@ Room 전체 필드 +
 | `password` | **8자 이상, 영문·숫자·특수문자를 각각 1자 이상 포함**, 최대 128자. 서버는 argon2id로 해싱. 평문·단순 해시 저장 금지 |
 | 방 `title` | **1~30자** |
 | 방 `description` | **0~80자** |
+
+- 글자 수는 **NFC 정규화 후 코드포인트**로 센다. 닉네임·방 이름·소개는 NFC로 저장한다
+- 닉네임의 "이모지": 유니코드 `So` 범주, U+1F000 이상, U+2600~U+27BF, 변형 선택자, ZWJ
+- 비밀번호: **출력 가능한 ASCII만**(공백 제외). "특수문자"는 ASCII 구두점 `!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~`
+- 이메일은 영구 삭제(30일) 뒤 같은 주소로 다시 가입할 수 있다. 아이디는 영구 예약
 
 클라이언트도 같은 규칙으로 미리 검사하되, 최종 판정은 서버가 한다.
 
@@ -304,7 +333,7 @@ Room 전체 필드 +
 - 인증을 마치기 전에는 아래 API만 허용하고, 나머지 인증 필요 API는 전부 `403 email_not_verified`
   - 허용: `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `POST /me/email`(가입 때 이메일을 잘못 넣은 경우), `DELETE /me`
   - WebSocket도 인증 후에만 허용 (`auth` 단계에서 `email_not_verified`로 거부)
-- 인증 후 닉네임이나 파트가 `null`이면 방·친구·초대 API는 `403 profile_incomplete`. 허용되는 건 `PATCH /me`와 위 목록
+- 인증 후 닉네임이나 파트가 `null`이면 **`PATCH /me`와 위 허용 목록을 뺀 모든 인증 API**가 `403 profile_incomplete` (차단·알림·프로필·`/me/password`·RTT·텔레메트리 포함). WebSocket 연결은 허용
 - 클라이언트는 앱을 켤 때 `me`를 보고 빠진 단계부터 다시 보여준다
 
 ### 3.5 `POST /auth/verify-email` (인증 필요)
@@ -314,7 +343,7 @@ Room 전체 필드 +
 - 앱 안에서 입력하는 6자리 숫자 코드
 - 성공 `200`: `Me` (`email_verified: true`)
 - 오류: `code_invalid`, `code_expired` (유효 10분)
-- 같은 코드로 5회 틀리면 그 코드 폐기, 재발송 필요
+- 같은 코드로 5회 틀리면 그 코드 폐기, 재발송 필요. 폐기된 뒤의 입력은 `code_expired`
 
 ### 3.6 `POST /auth/resend-verification` (인증 필요)
 - 성공 `204`. 새 코드 발송, 이전 코드 폐기
@@ -330,14 +359,15 @@ Room 전체 필드 +
 { "access_token": "...", "refresh_token": "...", "me": { /* Me */ } }
 ```
 - 오류: `invalid_credentials` — 이메일이 없든 비밀번호가 틀리든 **같은 코드, 같은 문구** ("이메일 또는 비밀번호가 맞지 않아요")
-- 탈퇴 유예 중인 계정이 로그인하면 **탈퇴가 취소**되고 정상 로그인. `me.deletion_scheduled_at`은 `null`
-- 로그인 실패 제한: 같은 이메일 기준 15분에 10회, 같은 IP 기준 15분에 30회. 초과 시 `429`
+- 탈퇴 유예 중인 계정이 로그인하면 **탈퇴가 취소**되고 정상 로그인
+- 로그인 실패 제한: 같은 이메일 기준 15분에 10회, 같은 IP 기준 15분에 30회. **실패만 세고**, 성공해도 초기화하지 않는다. 초과 시 `429`
 
 ### 3.8 `POST /auth/refresh`
 ```json
 { "refresh_token": "..." }
 ```
 - 성공 `200`: `{ "access_token": "...", "refresh_token": "..." }`
+- 재사용 감지와 10초 유예는 1.3
 - 오류: `unauthorized`
 
 ### 3.9 `POST /auth/logout` (인증 필요)
@@ -363,6 +393,7 @@ Room 전체 필드 +
 ```
 - 보낸 필드만 변경. `settings`도 보낸 키만 바꾼다
 - `username`, `email`은 여기서 못 바꾼다
+- 닉네임·파트가 바뀌면 친구들에게 `friend.updated`, 같은 방 멤버에게 `room.updated`
 - `200`: `Me`
 
 ### 4.3 `POST /me/password`
@@ -379,7 +410,7 @@ Room 전체 필드 +
 ```
 - `204`. 새 주소로 6자리 코드 발송. `me.pending_email`에 새 주소가 들어간다. 인증 완료 전까지 기존 이메일로 로그인
 - 오류: `email_taken`, `invalid_credentials`
-- 아직 이메일 인증을 안 한 계정(가입 직후 주소를 잘못 넣은 경우)은 `password` 없이 바로 바뀌고, 인증 코드가 새 주소로 간다
+- 아직 이메일 인증을 안 한 계정(가입 직후 주소를 잘못 넣은 경우)은 `password` 없이 **주소가 바로 바뀌고**(`pending_email`을 쓰지 않음), 가입 인증 코드가 새 주소로 간다. 인증은 `POST /auth/verify-email`로 한다
 
 2. `POST /me/email/verify`
 ```json
@@ -399,7 +430,7 @@ Room 전체 필드 +
   - 참여 중인 방에서 퇴장. 마지막 사람이었으면 방 삭제
   - **방장이었으면 예외로 자동 위임**: 그 방에 가장 오래 있던 멤버가 방장이 된다(`room.updated`). 탈퇴한 사람은 돌아오지 않으므로 방장 자리를 예약하지 않는다
   - 지금 방에 없는데 방장 권한이 남아 있던 방(방장 부재 중)도 같은 규칙으로 위임
-  - 친구 목록, 방 목록, 방 멤버, 아이디 검색에서 **바로 보이지 않음**
+  - 친구 목록, 방 목록, 방 멤버, 친구 요청 대상(`not_found`)에서 **바로 보이지 않음**
 - 30일 뒤 계정·친구 관계·차단 목록·받은/보낸 요청 영구 삭제. 아이디는 영구 예약 (재사용 불가)
 - **30일 안에 로그인하면 탈퇴 취소** (3.7). 탈퇴 화면 문구는 이 규칙을 그대로 안내한다
 
@@ -416,7 +447,7 @@ Room 전체 필드 +
 - 공개 방만. 비공개 방은 절대 포함하지 않는다
 - 차단 필터 (8장): 내가 차단한 사람이 **방장**인 방, 나를 차단한 사람이 **방장**인 방 제외
 - 정렬: 미정 (12장). 임시로 생성 시각 내림차순
-- v0.3은 페이지를 나누지 않고 전부 준다 (최대 200개). 필터를 클라이언트에서 하기 때문 (5.2)
+- 페이지를 나누지 않고 전부 준다 (최대 200개). 필터를 클라이언트에서 하기 때문 (5.2). 200개를 넘는 규모가 되면 서버 필터로 바꾼다
 - `200`:
 ```json
 { "rooms": [ /* Room[] */ ] }
@@ -449,8 +480,10 @@ Room 전체 필드 +
 - 그 외: 공개 방이면 `200 Room`, 비공개 방이면 `404`
 
 ### 5.5 입장
-- `POST /rooms/{id}/join` — 공개 방
+- `POST /rooms/{id}/join` — 공개 방. 비공개 방 ID로 부르면 `404 room_not_found`
 - `POST /rooms/join-by-code` — 비공개 방
+- 이미 들어 있는 바로 그 방에 다시 입장하면 `200 RoomDetail` (재연결 등. 멱등)
+- 한 사람이 여러 방의 방장 권한을 가질 수 있다 (방장이 방을 비운 채 다른 방에 들어가거나 새 방을 만드는 경우)
 ```json
 { "code": "A7K2QX" }
 ```
@@ -484,6 +517,7 @@ Room 전체 필드 +
 - 방장이 나가면 방장 권한은 그대로 그 사람에게 남고 `host_present: false`. 자동 위임 없음 (예외: 방장 탈퇴, 4.5)
 - **마지막 사람이 나가면 방 삭제** (방장 부재 여부 무관). 삭제 시 그 방의 초대·승인 요청은 전부 무효
 - 연결이 끊긴 경우: WebSocket이 끊기고 30초 안에 재연결하지 않으면 서버가 퇴장 처리
+  - 유예 30초 동안 방 멤버 자격과 `host_present`는 유지된다. 친구에게는 `offline`으로 보인다
 
 ### 5.7 승인 요청 — 공개 방 + 방장 승인
 대상: 공개 방 중 `entry_mode == "approval"`. 비공개 방에는 승인이 없다.
@@ -505,6 +539,7 @@ Room 전체 필드 +
 
 방장이 없을 때
 - 방장 부재 중인 승인 방에는 요청을 받지 않는다 → **미정 (12장)**. 임시 규칙: `409 host_absent`
+- 방장이 방을 나가거나, 입장 방식을 `approval` → `instant`로 바꾸면 대기 중인 요청은 **즉시 삭제** (방장에게 `join_request.removed`, 신청자에게는 없음)
 
 방장 API (6장 권한 규칙 적용)
 - `GET /rooms/{id}/join-requests` → `200 { "requests": [ /* JoinRequest[] */ ] }`
@@ -524,7 +559,7 @@ Room 전체 필드 +
 ```json
 { "aoo_rtt_ms": 7 }
 ```
-- 클라이언트는 앱을 켤 때, 그리고 홈 화면에 있는 동안 1분마다 AOO 서버까지 왕복 시간을 재서 보고한다
+- 클라이언트는 앱을 켤 때, 그리고 **홈에 있든 방에 있든** 1분마다 AOO 서버까지 왕복 시간을 재서 보고한다 (방장이 방에 있는 동안에도 `host_rtt_ms`가 갱신되도록)
 - 서버는 이 값을 그 사람이 방장인 방의 `host_rtt_ms`로 쓴다. 바뀌면 `rooms.updated`
 - `204`. 사용자당 1분 2회
 
@@ -549,6 +584,7 @@ Room 전체 필드 +
 { "title": "...", "description": "...", "capacity": 5, "type": "private", "entry_mode": null }
 ```
 - 보낸 필드만 변경. 입력 규칙은 3.1, 5.3과 같다
+- `entry_mode`: 결과가 공개 방이면 `"instant"`/`"approval"`로 바꿀 수 있다. 결과가 비공개 방이면 생략하거나 `null`만 허용, 값이 있으면 `400`
 - `capacity` 하한: `member_count + (host_present ? 0 : 1)`. 그보다 작으면 `409 capacity_below_members`
 - **공개 → 비공개** (`type: "private"`)
   - 초대 코드를 새로 발급한다
@@ -559,7 +595,7 @@ Room 전체 필드 +
   - 기존 초대 코드는 **즉시 무효**. 옛 코드로 입장하면 `invalid_code`
   - `entry_mode`를 안 보내면 `"approval"`로 정한다
   - 공개 방 목록에 바로 나타난다 (`rooms.added`)
-- 이미 보낸 초대(7장)는 방 공개 여부가 바뀌어도 유효하다. 수락할 때의 규칙은 그 시점의 방 상태를 따른다 (7.8)
+- 이미 보낸 초대(7장)는 방 공개 여부가 바뀌어도 유효하다. 수락할 때의 규칙은 그 시점의 방 상태를 따른다 (7.9)
 - `200`: `RoomDetail`
 
 ### 6.2 `POST /rooms/{id}/transfer-host`
@@ -611,9 +647,12 @@ Room 전체 필드 +
 | `accepted` | 상대가 이미 나에게 요청해둔 상태 → 바로 친구가 됨 |
 | `self` | 자기 자신 |
 
-- 아래 두 경우는 **`sent`로 응답하고 실제로는 아무것도 만들지 않는다** (상대의 차단·설정을 드러내지 않기 위해)
+- 아래 두 경우는 **`sent`로 응답하고 상대에게는 아무것도 보이지 않는다** (상대의 차단·설정을 드러내지 않기 위해)
   - 상대가 나를 차단함
   - 상대가 `friend_requests: "none"`
+  - 서버는 상대에게 보이지 않는 **숨은 요청 기록**을 남긴다. 그래서 같은 요청을 다시 보내면 정상 상대와 똑같이 `already_requested`가 나온다
+  - 숨은 기록은 상대가 차단을 풀거나 `everyone`으로 바꾸면 **지운다** (진짜 요청으로 바뀌지 않는다. 보낸 사람이 다시 요청해야 한다)
+- 판정 순서: `self` → `not_found` → `blocked_by_me` → `already_friends` → `accepted`(상대가 나에게 요청해 둠) → `already_requested`(진짜 또는 숨은 기록) → 위장 대상이면 숨은 기록 만들고 `sent` → `sent`
 - 내가 상대를 차단했으면 `409 blocked_by_me` (내가 한 차단이라 숨길 필요 없음)
 - 탈퇴 유예 중인 상대는 `not_found`
 - 같은 사람에게 거절된 뒤 재요청은 허용
@@ -640,13 +679,15 @@ Room 전체 필드 +
   2. 친구가 아님 → `403 not_friend`
   3. 상대가 `room_invites: "none"` → `403 not_accepting` (정상이라면 버튼이 숨겨져 있어 오지 않는다)
   4. 상대가 오프라인 → `409 target_offline`
-  5. 정원이 남지 않음 → `409 room_full`
-  6. 같은 방에서 같은 사람에게 **이미 전달된** 초대가 있음 → `409 already_invited` (한 방에 한 번만)
+  5. 상대가 어느 방에든 있음 → `409 target_in_room` (**방에 있는 친구는 초대할 수 없다**)
+  6. 정원이 남지 않음 → `409 room_full`
+  7. 같은 방에서 같은 사람에게 보낸 초대가 이미 있음(3초 대기 중 포함) → `409 already_invited` (한 방에 한 번만. 3초 안에 취소했으면 다시 보낼 수 있다)
 - `201`:
 ```json
 { "id": "inv_...", "deliver_at": "2026-10-13T07:33:03Z" }
 ```
 - **서버는 3초 뒤(`deliver_at`)에 상대에게 `invite.received`를 보낸다.** 그 전까지는 상대에게 아무것도 가지 않는다
+- `deliver_at`에 상대가 오프라인이거나 그사이 방에 들어갔으면 **조용히 버린다** (보낸 사람에게는 "초대됨" 그대로)
 - 화면: 버튼 "초대" → 누르면 3초 동안 "취소" → 3초가 지나면 "초대됨"
 - 보낸 사람은 수락·거절 결과를 받지 않는다. 상대가 들어오면 멤버 목록에 나타나는 것으로 안다
 
@@ -659,8 +700,9 @@ Room 전체 필드 +
   - **비공개 방**: 코드 없이 바로 입장. 응답·오류는 5.5와 같다
   - **공개 방 + 바로 입장**: 바로 입장
   - **공개 방 + 방장 승인**:
-    - 초대한 사람이 **방장**이면 승인 없이 바로 입장
+    - **수락하는 시점에** 초대한 사람이 방장이면 승인 없이 바로 입장
     - 그 외에는 **승인 요청**이 된다 (`202`, 5.7 규칙. `JoinRequest.via_invite: true`)
+- 초대한 사람이 방을 나간 뒤에도 초대는 유효하다
 - 방이 없어졌으면 `410 room_closed`
 
 ### 7.10 `POST /invites/{id}/dismiss`
@@ -668,7 +710,8 @@ Room 전체 필드 +
 
 ### 7.11 초대 소멸
 - 방이 삭제되거나 닫히면 그 방 초대 전부 소멸, 받은 사람에게 `invite.expired`
-- 초대받은 사람이 다른 방에 입장해도 소멸하지 않는다 (토스트를 끌 때까지 유지)
+- **초대받은 사람이 어느 방에든 입장하면** 받아 둔 초대가 전부 소멸, `invite.expired`
+- 초대받은 사람의 연결이 끊기면(30초 유예 뒤) 받아 둔 초대가 전부 소멸. 앱을 다시 켜도 이전 초대는 없다
 
 ---
 
@@ -696,7 +739,7 @@ Room 전체 필드 +
 - `204`
 
 ### 8.4 `DELETE /blocks/{user_id}`
-- `204`
+- `204`. 차단당했던 사람이 남긴 숨은 친구 요청 기록(7.2)도 지운다
 
 ---
 
@@ -727,6 +770,8 @@ Room 전체 필드 +
 ```
 - 성공 시 서버가 `hello` 전송 (10.4)
 - 실패 시 `{ "type": "error", "code": "unauthorized" | "email_not_verified" | "client_outdated" }` 후 종료
+- 닉네임·파트를 아직 안 넣은 사용자(`profile_incomplete`)도 연결할 수 있다
+- 연결 중에 `access_token`이 만료돼도 연결은 유지한다. 세션이 무효화되면(1.3) 서버가 끊는다
 
 ### 10.2 메시지 형식
 ```json
@@ -736,7 +781,8 @@ Room 전체 필드 +
 
 ### 10.3 하트비트
 - 클라이언트가 20초마다 `{ "type": "ping" }`, 서버가 `{ "type": "pong" }`
-- 서버는 45초 동안 아무것도 못 받으면 연결 종료 → 그 사용자 온라인 상태 해제, `last_seen_at` 기록, 방에 있었다면 30초 유예 후 퇴장 (5.6)
+- 서버는 45초 동안 아무것도 못 받으면 연결 종료 → 친구에게 `offline`, `last_seen_at` 기록, 방에 있었다면 30초 유예 후 퇴장 (5.6)
+- "온라인"은 WebSocket 연결이 있다는 뜻이다. `status`로는 방에 있으면 `in_room`, 아니면 `online`
 
 ### 10.4 재연결과 동기화
 - 끊기면 1초, 2초, 4초 … 최대 30초 간격으로 재연결
@@ -756,7 +802,7 @@ Room 전체 필드 +
   }
 }
 ```
-- 클라이언트가 `{ "type": "resync" }`를 보내도 같은 `hello`를 받는다
+- 클라이언트가 `{ "type": "resync" }`를 보내도 같은 `hello`를 받는다. 이때 `seq`는 1로 돌아가지 않고 그 연결의 번호를 이어서 매긴다
 - 공개 방 목록은 `hello`에 넣지 않는다. 홈 화면이 보일 때 `GET /rooms` 후 `rooms.*` 이벤트로 갱신
 
 ### 10.5 구독
@@ -778,7 +824,7 @@ Room 전체 필드 +
 내가 있는 방
 | type | data | 언제 |
 |---|---|---|
-| `room.updated` | `RoomDetail` | 멤버 입장·퇴장, 설정 변경, 방장 위임, 방장 복귀·이탈 |
+| `room.updated` | `RoomDetail` | 멤버 입장·퇴장·추방, 설정 변경, 방장 위임, 방장 복귀·이탈, 멤버의 닉네임·파트 변경 (`connection.members`도 갱신) |
 | `room.kicked` | `{ "room_id" }` | 내가 추방됨 |
 | `room.closed` | `{ "room_id", "reason": "host_closed" }` | 방장이 방을 닫음 → 홈 + 토스트 |
 
@@ -794,7 +840,7 @@ Room 전체 필드 +
 친구
 | type | data | 언제 |
 |---|---|---|
-| `friend.updated` | `Friend` | 친구의 상태·방·`last_seen_at` 변경 |
+| `friend.updated` | `Friend` | 친구의 상태·방·`last_seen_at`·닉네임·파트 변경 |
 | `friend.added` | `Friend` | 친구 요청 수락됨 (양쪽) |
 | `friend.removed` | `{ "user_id" }` | 친구 삭제됨 (양쪽, 조용히) |
 | `friend_request.received` | `FriendRequest` | 친구 요청 받음 → 알림 점 켜기 |
@@ -803,7 +849,7 @@ Room 전체 필드 +
 | type | data | 언제 |
 |---|---|---|
 | `invite.received` | `Invite` | 초대가 전달됨 (보낸 지 3초 뒤) → 토스트 |
-| `invite.expired` | `{ "invite_id" }` | 방 삭제·닫힘으로 초대 소멸 → 토스트 제거 |
+| `invite.expired` | `{ "invite_id" }` | 방 삭제·닫힘, 또는 내가 어느 방에든 입장해서 초대 소멸 → 토스트 제거 |
 
 설정
 | type | data | 언제 |
@@ -831,6 +877,7 @@ Room 전체 필드 +
 | RTT 보고 | 사용자당 1분 2회 |
 | WebSocket 연결 | 사용자당 동시 1개. 새로 연결하면 기존 연결 종료 |
 | 그 외 인증 API | 사용자당 1분 120회 |
+| 인증 없는 그 밖의 API (`/auth/refresh`, `/config`, WebSocket 연결) | IP당 1분 60회 |
 
 ---
 
@@ -865,14 +912,14 @@ Room 전체 필드 +
 
 | 내 빌드 | 동작 |
 |---|---|
-| `< min_build` | **강제 업데이트.** 방 입장 불가, 서버 API는 `426`. 화면은 업데이트 버튼만 |
+| `< min_build` | **강제 업데이트.** 서버 API는 `426`. 별도 화면은 없다: 홈의 새 버전 배너에서 "나중에"를 숨기고, 방에 입장하려 하면 "앱 버전이 달라요" 입장 실패 모달 |
 | `min_build` 이상, `< latest_build` | 홈 상단 새 버전 배너. "나중에" / "업데이트" |
 | `>= latest_build` | 아무것도 표시하지 않음 |
 
 - 업데이트 파일 다운로드와 설치는 지금처럼 앱의 업데이터가 GitHub 릴리스에서 한다. 서버는 버전 번호만 알려준다
 - "업데이트"를 누르기 전에는 내려받거나 설치하지 않는다
-- 운영자는 서버 환경변수(또는 관리 테이블)로 `min_build`, `latest_build`, `latency_coefficient`를 바꾼다. 바꾸면 접속 중인 모든 클라이언트에 `config.updated`
-- 접속 중에 `min_build`가 올라 내 빌드가 낮아지면: 합주 중이면 방을 나갈 때까지 기다렸다가 강제 업데이트 화면, 홈이면 바로
+- 값은 서버 DB(`app_config`)에 두고, 운영자는 관리 도구(`meonctl`)로 재시작 없이 바꾼다. 바꾸면 접속 중인 모든 클라이언트에 `config.updated`
+- 접속 중에 `min_build`가 올라 내 빌드가 낮아지면: 서버는 연결을 끊지 않는다. 합주 중이면 방을 나갈 때까지 기다렸다가 위 강제 업데이트 동작, 홈이면 바로
 
 ---
 
@@ -896,3 +943,18 @@ Room 전체 필드 +
   - 자체 aooserver 명시, 초대 코드 문자 집합
   - 방장이 탈퇴하면 가장 오래 있던 멤버에게 자동 위임 (유일한 자동 위임)
   - 도메인 `meon.co.kr` 확정 (API `api.meon.co.kr`, AOO `aoo.meon.co.kr`)
+- v0.4 (2026-10-13) 서버 계획서(meonhq/server#2) 질문 36개 반영
+  - 개별 오류 코드의 HTTP 상태 표, `target_in_room` 추가
+  - `Me.deletion_scheduled_at` 삭제
+  - refresh 회전 10초 유예, 30일 연장, 무효화 범위(access 포함)
+  - 버전 헤더 없음 → `426`. 강제 업데이트는 별도 화면 없음 (13장)
+  - 글자 수·이모지·비밀번호 문자 규칙, 영구 삭제 후 이메일 재가입 허용
+  - `profile_incomplete` 범위, 인증 전 이메일 변경 방식
+  - 같은 방 재입장 멱등, 비공개 방에 `/join`은 404, 여러 방 방장 허용
+  - 방장 퇴장·`instant` 전환 시 대기 요청 즉시 삭제, 끊김 유예 중 상태
+  - RTT는 방 안에서도 1분마다 보고
+  - 친구 요청 숨은 기록과 판정 순서
+  - 초대: 방에 있는 친구는 초대 불가, 3초 뒤 오프라인·입장 상태면 버림, 입장·연결 종료 시 받은 초대 소멸, 방장 여부는 수락 시점
+  - `Connection`에 사용자별 AOO 이름·비밀번호와 멤버 목록 추가, 클라이언트는 멤버 목록 밖의 소리를 주고받지 않음
+  - AOO 포트 TCP·UDP, 인증 없는 API 요청 제한, WS 토큰 만료 시 유지, `resync`의 `seq` 이어 매김, 닉네임·파트 변경 이벤트
+  - 예상 지연 표기에서 "약" 제거, 문서 안 참조 번호 수정

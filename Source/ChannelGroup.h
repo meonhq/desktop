@@ -51,6 +51,8 @@ struct ChannelGroupParams
     // used when numChannels == 2
     float panStereo[2] = {-1.0f, 1.0f }; // only use 2
     float centerPanLaw = 0.596f; // center pan attenuation (default -4.5dB)
+    // MEON: 셀프 모니터 패닝 (-1 왼쪽 ~ 1 오른쪽). 모니터(processMonitor)의 패닝에만 더하고, 송출(processPan)에는 쓰지 않는다
+    float monitorPan = 0.0f;
 
     int panDestStartIndex = 0; // destination channel index
     int panDestChannels = 2; // destination number of channels

@@ -1,0 +1,327 @@
+// HomeController: 공개 방 목록·구독, 바로 입장 / 승인 요청 / 코드 입장 / 방 만들기, 입장 실패 분류,
+// 친구 요청 결과, 받은 요청 수락, 초대 입장, 알림 읽음
+#include "../core/home/HomeController.h"
+#include "../core/model/RoomFilter.h"
+#include "../core/auth/AuthController.h"
+#include "../core/api/fake/FakeMeonServer.h"
+#include "MeonFixtures.h"
+
+namespace meon::core
+{
+
+class HomeTests : public juce::UnitTest
+{
+public:
+    HomeTests() : juce::UnitTest ("HomeController", "Home") {}
+
+    struct Rig
+    {
+        MemoryTokenStore tokens;
+        ManualScheduler clock;
+        FakeMeonServer server { clock, [] { FakeMeonServer::Options o; o.latencyMs = 10; o.scripts = false; o.fakeHostsAccept = false; return o; }() };
+        MeonApi api { server, 0 };
+        Realtime rt { server, clock, 0 };
+        AppStore store;
+        AuthController auth { api, rt, store, tokens, clock };
+        HomeController home { api, rt, store, clock };
+
+        Rig()
+        {
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            rt.addListener (&store);
+            auth.start();
+            wait();
+            auth.showSignup();
+            auth.signup ("home@example.com", "home_tester", "abcd123!", true, [] (Result<Done>) {});
+            wait();
+            auth.verify (server.getLastMailedCode(), [] (Result<Done>) {});
+            wait();
+            auth.setNickname ("tester", [] (Result<Done>) {});
+            wait();
+            auth.setPart ("guitar", [] (Result<Done>) {});
+            wait();
+            auth.finishDiscord();
+            auth.finishDone();
+        }
+        ~Rig() { rt.removeListener (&store); }
+        void wait (int ms = 200) { clock.advance (ms); }
+
+        const Room* findRoom (std::function<bool (const Room&)> pred) const
+        {
+            for (auto& r : store.state().publicRooms)
+                if (pred (r)) return &r;
+            return nullptr;
+        }
+    };
+
+    void runTest() override
+    {
+        using F = HomeController::JoinFailure;
+
+        beginTest ("home visible loads rooms, subscribes, loads friend requests");
+        {
+            Rig r;
+            expect (r.auth.step() == AuthController::Step::ready);
+            r.home.setHomeVisible (true);
+            r.wait();
+            expect (! r.store.state().publicRooms.empty());
+            expectEquals ((int) r.store.state().friendRequests.size(), 2);
+            r.home.setHomeVisible (false);
+        }
+
+        beginTest ("instant join sets current room; leave clears it");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            const auto myId = r.store.state().me->id;
+            auto* room = r.findRoom ([&] (const Room& x) { return ! x.isApproval() && rooms::hasRoomFor (x, myId); });
+            expect (room != nullptr);
+            const auto id = room->id;
+            bool ok = false;
+            r.home.joinRoom (id, [&] (Result<JoinResult> x) { ok = x.ok() && x.get().room.has_value(); });
+            r.wait();
+            expect (ok);
+            expect (r.store.state().currentRoom && r.store.state().currentRoom->id == id);
+            r.home.leaveRoom();
+            expect (! r.store.state().currentRoom);
+            r.wait();
+        }
+
+        beginTest ("approval room: request pending until request_until");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            const auto myId = r.store.state().me->id;
+            auto* room = r.findRoom ([&] (const Room& x) { return x.isApproval() && x.hostPresent && rooms::hasRoomFor (x, myId); });
+            expect (room != nullptr);
+            const auto id = room->id;
+            bool requested = false;
+            r.home.joinRoom (id, [&] (Result<JoinResult> x) { requested = x.ok() && x.get().requested(); });
+            r.wait();
+            expect (requested);
+            expect (! r.store.state().currentRoom);
+            auto* after = r.findRoom ([&] (const Room& x) { return x.id == id; });
+            expect (after != nullptr && r.home.isRequestPending (*after));
+            r.wait (5 * 60 * 1000 + 1000);
+            after = r.findRoom ([&] (const Room& x) { return x.id == id; });
+            expect (after != nullptr && ! r.home.isRequestPending (*after));
+        }
+
+        beginTest ("friend button: join / request / requested shared with the room card, follows entry mode (bug 25)");
+        {
+            using J = HomeController::FriendJoin;
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            // 유나(u_f_yuna)는 승인 방 r_f_2 에 있다
+            const Friend* yuna = r.store.state().findFriend ("u_f_yuna");
+            expect (yuna != nullptr && yuna->room && yuna->room->id == "r_f_2");
+            if (yuna == nullptr) return;
+            const auto fr = *yuna;
+            expect (r.home.friendJoinState (fr) == J::request);
+
+            // 친구 목록에서 요청 → "요청 보냄", 같은 방 카드도 요청 보냄
+            bool requested = false;
+            r.home.joinFriend (fr, [&] (Result<JoinResult> x) { requested = x.ok() && x.get().requested(); });
+            r.wait();
+            expect (requested);
+            expect (r.home.friendJoinState (fr) == J::requested);
+            const auto* card = r.store.state().findPublicRoom ("r_f_2");
+            expect (card != nullptr && r.home.isRequestPending (*card));
+            // "요청 보냄" 동안은 다시 보내지 않는다
+            bool called = false;
+            r.home.joinFriend (fr, [&] (Result<JoinResult>) { called = true; });
+            r.wait();
+            expect (! called);
+
+            // 방의 입장 방식이 바로 입장으로 바뀌면 바로 "참여"
+            auto changed = *card;
+            changed.entryMode = juce::String ("instant");
+            r.store.upsertPublicRoom (changed);
+            expect (r.home.friendJoinState (fr) == J::join);
+            changed.entryMode = juce::String ("approval");
+            r.store.upsertPublicRoom (changed);
+            expect (r.home.friendJoinState (fr) == J::requested);
+
+            // 5분이 지나면 다시 "요청" (거절·만료를 구분하지 않는다)
+            r.wait (5 * 60 * 1000 + 1000);
+            expect (r.home.friendJoinState (fr) == J::request);
+
+            // 카드에서 요청해도 친구 쪽이 "요청 보냄"
+            r.home.joinRoom ("r_f_2", [] (Result<JoinResult>) {});
+            r.wait();
+            expect (r.home.friendJoinState (fr) == J::requested);
+
+            // 프로필 창(버그 27)도 같은 상태: RoomRef 로 묻고, "요청 보냄" 동안은 콜백도 없이 아무것도 안 한다
+            expect (r.home.roomJoinState (*fr.room) == J::requested);
+            bool profileCalled = false;
+            r.home.joinFriendRoom (*fr.room, [&] (Result<JoinResult>) { profileCalled = true; });
+            r.wait();
+            expect (! profileCalled);
+
+            // 비공개 방이나 정원이 찬 방(room 이 없거나 joinable false)은 버튼 없음
+            auto hidden = fr;
+            hidden.room.reset();
+            expect (r.home.friendJoinState (hidden) == J::none);
+            auto fullRoom = fr;
+            fullRoom.room->joinable = false;
+            expect (r.home.friendJoinState (fullRoom) == J::none);
+            expect (r.home.roomJoinState (*fullRoom.room) == J::none);
+        }
+
+        beginTest ("full room and codes map to failure kinds");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            const auto myId = r.store.state().me->id;
+            auto* full = r.findRoom ([&] (const Room& x) { return ! rooms::hasRoomFor (x, myId); });
+            expect (full != nullptr);
+            std::optional<ApiError> err;
+            r.home.joinRoom (full->id, [&] (Result<JoinResult> x) { if (! x.ok()) err = x.err(); });
+            r.wait();
+            expect (err && HomeController::classify (*err) == F::full);
+
+            err.reset();
+            r.home.joinByCode ("full77", [&] (Result<JoinResult> x) { if (! x.ok()) err = x.err(); });
+            r.wait();
+            expect (err && HomeController::classify (*err) == F::full);
+
+            err.reset();
+            r.home.joinByCode ("CLSD99", [&] (Result<JoinResult> x) { if (! x.ok()) err = x.err(); });
+            r.wait();
+            expect (err && HomeController::classify (*err) == F::closed);
+
+            err.reset();
+            r.home.joinByCode ("ABCDE0", [&] (Result<JoinResult> x) { if (! x.ok()) err = x.err(); });
+            r.wait();
+            expect (err && err->code == ErrorCode::invalidCode && HomeController::classify (*err) == F::closed);
+
+            expect (HomeController::classify (ApiError::of (ErrorCode::network)) == F::server);
+            expect (HomeController::classify (ApiError::of (ErrorCode::clientOutdated)) == F::version);
+            expect (HomeController::classify (ApiError::of (ErrorCode::hostAbsent)) == F::hostAbsent);
+            expect (HomeController::classify (ApiError::of (ErrorCode::kicked)) == F::kicked);
+        }
+
+        beginTest ("create private room enters it with a code; second create is already_in_room");
+        {
+            Rig r;
+            CreateRoom c;
+            c.type = "private";
+            c.title = "test room";
+            c.capacity = 4;
+            bool ok = false;
+            r.home.createRoom (c, [&] (Result<RoomDetail> x) { ok = x.ok(); });
+            r.wait();
+            expect (ok);
+            expect (r.store.state().currentRoom && r.store.state().currentRoom->inviteCode.has_value());
+            expect (r.store.state().amHost());
+
+            std::optional<ErrorCode> code;
+            r.home.createRoom (c, [&] (Result<RoomDetail> x) { if (! x.ok()) code = x.code(); });
+            r.wait();
+            expect (code == ErrorCode::alreadyInRoom);
+        }
+
+        beginTest ("friend request results");
+        {
+            Rig r;
+            auto send = [&] (const juce::String& name)
+            {
+                juce::String result;
+                r.home.sendFriendRequest (name, [&] (Result<juce::String> x) { result = x.ok() ? x.get() : "error:" + errorKey (x.code()); });
+                r.wait();
+                return result;
+            };
+            expectEquals (send ("@TAEO"), juce::String ("already_friends"));
+            expectEquals (send ("nobody_here"), juce::String ("not_found"));
+            expectEquals (send ("home_tester"), juce::String ("self"));
+            expectEquals (send ("minjun"), juce::String ("sent"));
+            expectEquals (send ("minjun"), juce::String ("already_requested"));
+        }
+
+        beginTest ("accept friend request, notifications read");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            const auto friendsBefore = r.store.state().friends.size();
+            const auto reqId = r.store.state().friendRequests.front().id;
+            r.home.acceptFriendRequest (reqId);
+            expectEquals ((int) r.store.state().friendRequests.size(), 1);
+            r.wait();
+            expectEquals ((int) r.store.state().friends.size(), (int) friendsBefore + 1);
+
+            r.server.devFriendRequest();
+            r.wait();
+            expect (r.store.state().hasUnreadNotifications);
+            r.home.markNotificationsRead();
+            expect (! r.store.state().hasUnreadNotifications);
+        }
+
+        beginTest ("invite friend: pending 3s then sent; cancel inside 3s");
+        {
+            using P = HomeController::InviteState::Phase;
+            Rig r;
+            CreateRoom c;
+            c.type = "private";
+            c.title = "invite room";
+            r.home.createRoom (c, [] (Result<RoomDetail>) {});
+            r.wait();
+            expect (r.store.state().inRoom());
+            juce::String target, second;
+            for (auto& f : r.store.state().friends)
+                if (f.status == "online" && f.canInvite) { if (target.isEmpty()) target = f.user.id; else if (second.isEmpty()) second = f.user.id; }
+            expect (target.isNotEmpty() && second.isNotEmpty());
+
+            r.home.invite (target);
+            expect (r.home.inviteState (target).phase == P::pending);
+            r.wait (500);
+            expect (r.home.inviteState (target).phase == P::pending);
+            r.wait (3000);
+            expect (r.home.inviteState (target).phase == P::sent);
+
+            r.home.invite (second);
+            r.wait (500);
+            r.home.cancelInvite (second);
+            expect (r.home.inviteState (second).phase == P::none);
+            r.wait (4000);
+            expect (r.home.inviteState (second).phase == P::none);
+
+            r.home.leaveRoom();
+            r.wait();
+            expect (r.home.inviteState (target).phase == P::none);   // 방이 바뀌면 지운다
+        }
+
+        beginTest ("accept invite joins the room; dismiss removes it");
+        {
+            Rig r;
+            r.server.devInviteMe();
+            r.wait (4000);
+            expectEquals ((int) r.store.state().invites.size(), 1);
+            const auto inv = r.store.state().invites.front();
+            bool done = false;
+            r.home.acceptInvite (inv.id, [&] (Result<JoinResult> x) { done = x.ok(); });
+            expect (r.store.state().invites.empty());
+            r.wait();
+            expect (done);
+            expect (r.store.state().currentRoom.has_value());
+
+            r.home.leaveRoom();
+            r.wait();
+            r.server.devInviteMe();
+            r.wait (4000);
+            if (! r.store.state().invites.empty())
+            {
+                r.home.dismissInvite (r.store.state().invites.front().id);
+                expect (r.store.state().invites.empty());
+            }
+        }
+    }
+};
+
+static HomeTests homeTests;
+
+} // namespace meon::core

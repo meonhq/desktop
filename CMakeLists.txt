@@ -46,6 +46,19 @@ project(MEON VERSION 1.0.0)
 set(BUILDVERSION 1)
 # CI 빌드 번호 (GitHub Actions run_number). 0 이면 로컬 빌드: 자동 업데이트를 끈다.
 set(MEON_BUILD_ID 0 CACHE STRING "MEON CI build number (0 = local build)")
+# 개발용 실행 옵션(--screen=, --dev-jam 등)은 로컬·CI 빌드(빌드 번호 0)에서만 켠다. 릴리스 빌드에는 들어가지 않는다.
+if (MEON_BUILD_ID EQUAL 0)
+    set(MEON_DEV_OPTIONS 1)
+else()
+    set(MEON_DEV_OPTIONS 0)
+endif()
+# 진단 로그(app.log)에 적는 커밋. 빌드 번호 0 인 시험 빌드끼리 구분하려고 넣는다 (구성할 때 한 번 읽는다)
+execute_process(COMMAND git rev-parse --short=8 HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE MEON_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if (NOT MEON_GIT_COMMIT)
+    set(MEON_GIT_COMMIT "unknown")
+endif()
 
 
 # If you've installed JUCE somehow (via a package manager, or directly using the CMake install
@@ -86,6 +99,99 @@ add_subdirectory(deps/juce EXCLUDE_FROM_ALL )
 
 
 juce_add_modules(deps/ff_meters)
+
+# MEON core: 화면 없는 로직 (서버 API, 가짜 서버, 상태, 모델). 앱·플러그인과 단위 테스트가 같이 쓴다.
+set(MEON_CORE_SOURCES
+    Source/meon/core/util/Scheduler.h
+    Source/meon/core/api/ApiTypes.h
+    Source/meon/core/api/ApiError.h
+    Source/meon/core/api/ApiJson.h
+    Source/meon/core/api/ApiJson.cpp
+    Source/meon/core/api/Transport.h
+    Source/meon/core/api/MeonApi.h
+    Source/meon/core/api/MeonApi.cpp
+    Source/meon/core/api/Realtime.h
+    Source/meon/core/api/Realtime.cpp
+    Source/meon/core/api/fake/FakeMeonServer.h
+    Source/meon/core/api/fake/FakeMeonServer.cpp
+    Source/meon/core/api/fake/FakeWorld.cpp
+    Source/meon/core/state/AppStore.h
+    Source/meon/core/state/AppStore.cpp
+    Source/meon/core/auth/TokenStore.h
+    Source/meon/core/auth/TokenStore.cpp
+    Source/meon/core/auth/AuthController.h
+    Source/meon/core/auth/AuthController.cpp
+    Source/meon/core/home/HomeController.h
+    Source/meon/core/home/HomeController.cpp
+    Source/meon/core/room/RoomController.h
+    Source/meon/core/room/RoomController.cpp
+    Source/meon/core/account/AccountController.h
+    Source/meon/core/account/AccountController.cpp
+    Source/meon/core/util/Hangul.h
+    Source/meon/core/jam/Engine.h
+    Source/meon/core/jam/PeerState.h
+    Source/meon/core/jam/SilenceDetector.h
+    Source/meon/core/jam/ChatChannel.h
+    Source/meon/core/jam/JamSession.h
+    Source/meon/core/jam/JamSession.cpp
+    Source/meon/core/log/SessionLog.h
+    Source/meon/core/log/SessionLog.cpp
+    Source/meon/core/log/AppLog.h
+    Source/meon/core/log/AppLog.cpp
+    Source/meon/core/jam/RttReporter.h
+    Source/meon/core/MeonCore.h
+    Source/meon/core/MeonCore.cpp
+    Source/meon/core/model/Parts.h
+    Source/meon/core/model/Validation.h
+    Source/meon/core/model/Validation.cpp
+    Source/meon/core/model/RoomFilter.h
+)
+
+# MEON ui: 새 화면·위젯 (리메이크). 앱·플러그인 타깃만 쓴다 (GUI)
+set(MEON_UI_SOURCES
+    Source/meon/ui/theme/Tokens.h
+    Source/meon/ui/theme/Icons.h
+    Source/meon/ui/theme/Icons.cpp
+    Source/meon/ui/theme/LookAndFeel.h
+    Source/meon/ui/theme/LookAndFeel.cpp
+    Source/meon/ui/widgets/Button.h
+    Source/meon/ui/widgets/Button.cpp
+    Source/meon/ui/widgets/Inputs.h
+    Source/meon/ui/widgets/Inputs.cpp
+    Source/meon/ui/widgets/Controls.h
+    Source/meon/ui/widgets/Controls.cpp
+    Source/meon/ui/widgets/Meter.h
+    Source/meon/ui/widgets/Meter.cpp
+    Source/meon/ui/widgets/Display.h
+    Source/meon/ui/widgets/Display.cpp
+    Source/meon/ui/widgets/Masonry.h
+    Source/meon/ui/Messages.h
+    Source/meon/ui/Links.h
+    Source/meon/ui/screens/OnboardingScreen.h
+    Source/meon/ui/screens/OnboardingScreen.cpp
+    Source/meon/ui/screens/HomeScreen.h
+    Source/meon/ui/screens/HomeScreen.cpp
+    Source/meon/ui/screens/JamScreen.h
+    Source/meon/ui/screens/JamScreen.cpp
+    Source/meon/ui/overlays/HomeOverlays.h
+    Source/meon/ui/overlays/HomeOverlays.cpp
+    Source/meon/ui/overlays/FormText.h
+    Source/meon/ui/overlays/JamOverlays.h
+    Source/meon/ui/overlays/JamOverlays.cpp
+    Source/meon/ui/overlays/SettingsModal.h
+    Source/meon/ui/overlays/SettingsModal.cpp
+    Source/meon/ui/AppRoot.h
+    Source/meon/ui/AppRoot.cpp
+    Source/meon/ui/dev/WidgetGallery.h
+    Source/meon/ui/dev/WidgetGallery.cpp
+    Source/meon/ui/dev/DevJamScreen.h
+    Source/meon/ui/dev/DevJamScreen.cpp
+)
+
+# 가짜 서버 초기 데이터 (MeonFixtures::world_json)
+juce_add_binary_data(MEON_Fixtures HEADER_NAME MeonFixtures.h NAMESPACE MeonFixtures SOURCES
+    Source/meon/core/api/fake/fixtures/world.json)
+set_target_properties(MEON_Fixtures PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 
 
@@ -280,10 +386,6 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonTheme.h
         Source/meon/MeonEmoji.cpp
         Source/meon/MeonEmoji.h
-        Source/meon/MeonLookAndFeel.cpp
-        Source/meon/MeonLookAndFeel.h
-        Source/meon/MeonWidgets.cpp
-        Source/meon/MeonWidgets.h
         Source/meon/MeonKeyRepeat.h
         Source/meon/MeonParts.cpp
         Source/meon/MeonParts.h
@@ -291,24 +393,20 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonEarGuard.h
         Source/meon/MeonSettings.cpp
         Source/meon/MeonSettings.h
-        Source/meon/MeonSessionLog.cpp
-        Source/meon/MeonSessionLog.h
-        Source/meon/MeonSession.cpp
-        Source/meon/MeonSession.h
         Source/meon/MeonEditor.cpp
         Source/meon/MeonEditor.h
-        Source/meon/OnboardingScreens.cpp
-        Source/meon/OnboardingScreens.h
-        Source/meon/LobbyScreens.cpp
-        Source/meon/LobbyScreens.h
-        Source/meon/JamScreen.cpp
-        Source/meon/JamScreen.h
-        Source/meon/SettingsScreen.cpp
-        Source/meon/SettingsScreen.h
         Source/meon/MeonAudio.cpp
         Source/meon/MeonAudio.h
         Source/meon/MeonUpdater.cpp
         Source/meon/MeonUpdater.h
+        Source/meon/MeonCrashDump.cpp
+        Source/meon/MeonCrashDump.h
+        Source/meon/shell/ShellHooks.h
+        Source/meon/MeonProcessorGlue.cpp
+        Source/meon/core/jam/EngineLink.h
+        Source/meon/core/jam/EngineLink.cpp
+        ${MEON_CORE_SOURCES}
+        ${MEON_UI_SOURCES}
     )
     set(AOOSourceFiles        
         deps/aoo/lib/src/SLIP.hpp
@@ -390,6 +488,15 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
 
     # 소스의 한국어 리터럴은 UTF-8 (MSVC 는 기본이 시스템 코드 페이지)
     target_compile_options("${target_name}" PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+    # Windows: 크래시 덤프(%APPDATA%\MEON\crashes)를 읽으려면 같은 빌드의 PDB 가 있어야 한다.
+    # Release 에서도 디버그 정보와 PDB 를 만든다. 최적화·실행 파일은 그대로 (/OPT:REF /OPT:ICF), PDB 는 설치 파일에 넣지 않는다
+    if (MSVC)
+        target_compile_options("${target_name}" PRIVATE $<$<CONFIG:Release>:/Zi>)
+        if (TARGET ${target_name}_Standalone)
+            target_link_options(${target_name}_Standalone PRIVATE "$<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF>")
+        endif()
+    endif()
         
 
     # This cleans up the folder organization, especially on Xcode.
@@ -436,11 +543,13 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         MEON_BUILD_VERSION="${PROJECT_VERSION}"
         MEON_BUILD_NUMBER=${BUILDVERSION}
         MEON_BUILD_ID=${MEON_BUILD_ID}
+        MEON_GIT_COMMIT="${MEON_GIT_COMMIT}"
+        MEON_DEV_OPTIONS=${MEON_DEV_OPTIONS}
         ${PLAT_COMPILE_DEFS} )
 
-    # 아이콘: JUCE 는 ICON_BIG 하나를 축소해 모든 크기를 만든다. MEON 은 작은 크기에서 M 만 쓰는
-    # 크기별 아이콘(scripts/make_icons.py 로 생성)을 쓰므로, JUCE 가 만든 파일을 미리 만든 것으로 덮어쓴다.
-    # 앱·AU·VST3 번들이 모두 이 파일을 쓴다.
+    # 아이콘: JUCE 는 ICON_BIG 하나를 축소해 모든 크기를 만든다. MEON 은 디자인 파일(images/brand/app-icon)을
+    # 크기별로 그린 아이콘(scripts/make_icons.py 로 생성: Mac 은 Apple 템플릿 규격, Windows 는 여백 없는 전용 파일)을
+    # 쓰므로, JUCE 가 만든 파일을 미리 만든 것으로 덮어쓴다. 앱·AU·VST3 번들(Windows 는 exe·dll 리소스)이 모두 이 파일을 쓴다.
     get_target_property(meon_gen_dir "${target_name}" JUCE_GENERATED_SOURCES_DIRECTORY)
     if (APPLE)
         configure_file("${CMAKE_CURRENT_SOURCE_DIR}/images/icons/MEON.icns" "${meon_gen_dir}/Icon.icns" COPYONLY)
@@ -469,7 +578,23 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         images/bar_click.wav
         images/beat_click.wav
         images/lgc_bar.wav
-        images/meon_logo.svg
+        images/brand/logo/meon_logo.svg
+        images/brand/logo/meon_mark.svg
+        images/brand/part-icons/part-bass.svg
+        images/brand/part-icons/part-bass-thin.svg
+        images/brand/part-icons/part-drums.svg
+        images/brand/part-icons/part-drums-thin.svg
+        images/brand/part-icons/part-guitar.svg
+        images/brand/part-icons/part-guitar-thin.svg
+        images/brand/part-icons/part-keys.svg
+        images/brand/part-icons/part-keys-thin.svg
+        images/brand/part-icons/part-other.svg
+        images/brand/part-icons/part-other-thin.svg
+        images/brand/part-icons/part-vocal.svg
+        images/brand/part-icons/part-vocal-thin.svg
+        LICENSE
+        LICENSE_EXCEPTION
+        Source/meon/resources/ThirdPartyNotices.txt
     )
 
     set_target_properties(${target_name}_SBData PROPERTIES FOLDER "Targets")
@@ -519,6 +644,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             ff_meters
             
             ${target_name}_SBData
+            MEON_Fixtures
 
             opus
         PUBLIC
@@ -526,7 +652,11 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             juce::juce_recommended_lto_flags
         #   juce::juce_recommended_warning_flags
         )
-            
+
+    if (APPLE)
+        target_link_libraries("${target_name}" PRIVATE "-framework Security")   # 로그인 토큰 키체인
+    endif()
+
 endfunction()
 
 # MEON: 독립 앱 + AU + VST3 (하나의 타깃)
@@ -546,6 +676,52 @@ if (APPLE AND TARGET MEON_Standalone)
             COMMAND /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "${MEON_DEV_INSTALL_DIR}/Meon.app"
             COMMENT "Meon.app -> ${MEON_DEV_INSTALL_DIR}/Meon.app"
             VERBATIM)
+    endif()
+endif()
+
+# 단위 테스트 (오디오 장치·화면 없이 도는 meon 코어). CI(linux.yml)에서 돌린다. -DMEON_TESTS=OFF 로 끈다.
+option(MEON_TESTS "MEON 단위 테스트 타깃(MEON_Tests)" ON)
+if (MEON_TESTS)
+    juce_add_console_app(MEON_Tests PRODUCT_NAME "MEON_Tests")
+    juce_generate_juce_header(MEON_Tests)
+    target_sources(MEON_Tests PRIVATE
+        Source/meon/tests/TestMain.cpp
+        Source/meon/tests/EarGuardTests.cpp
+        Source/meon/tests/ApiJsonTests.cpp
+        Source/meon/tests/ValidationTests.cpp
+        Source/meon/tests/FakeServerTests.cpp
+        Source/meon/tests/AppStoreTests.cpp
+        Source/meon/tests/MasonryTests.cpp
+        Source/meon/tests/AuthTests.cpp
+        Source/meon/tests/JamTests.cpp
+        Source/meon/tests/HomeTests.cpp
+        Source/meon/tests/RoomTests.cpp
+        Source/meon/tests/ScriptSoakTests.cpp
+        Source/meon/tests/AppLogTests.cpp
+        Source/meon/MeonEarGuard.cpp
+        ${MEON_CORE_SOURCES})
+    target_compile_features(MEON_Tests PRIVATE cxx_std_17)
+    target_compile_options(MEON_Tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    target_compile_definitions(MEON_Tests PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        MEON_BUILD_ID=${MEON_BUILD_ID}
+        MEON_BUILD_VERSION="${PROJECT_VERSION}"
+        MEON_GIT_COMMIT="${MEON_GIT_COMMIT}"
+        MEON_DEV_OPTIONS=${MEON_DEV_OPTIONS})
+    target_link_libraries(MEON_Tests PRIVATE
+        juce::juce_core
+        juce::juce_events
+        juce::juce_data_structures
+        juce::juce_audio_basics
+        juce::juce_dsp
+        juce::juce_cryptography
+        MEON_Fixtures
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+    if (APPLE)
+        target_link_libraries(MEON_Tests PRIVATE "-framework Security")
     endif()
 endif()
 

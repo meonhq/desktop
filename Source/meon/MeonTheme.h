@@ -114,11 +114,24 @@ float lineWidthWithEmoji (const juce::String& text, const juce::Font& font);
 /** 텍스트 폭 */
 float textWidth (const juce::Font& font, const juce::String& text);
 
-/** MEON 필기체 로고 (images/meon_logo.svg). heightPx 는 로고(viewBox) 높이, 폭은 비율대로 정해진다.
-    색: 밝은 바탕 col::ink(#1A1A1A), 어두운 바탕 흰색. 모양은 그대로 두고 크기·색만 바꾼다. */
+/** 브랜드 SVG(images/brand)를 색 없이 도형으로 읽는다 (viewBox 좌표). 선과 면을 따로 모은다.
+    JUCE 의 SVG 파서는 vector-effect="non-scaling-stroke" 를 모르므로(선도 같이 커진다), 선은 그리는 쪽에서
+    화면 px 굵기로 긋는다. 파일에 박힌 색(#1A1A1A)은 쓰지 않고 그리는 쪽이 정한다. */
+struct SvgShape
+{
+    juce::Path stroke, fill;
+    float strokeWidth = 0.0f;           // SVG 의 stroke-width (non-scaling-stroke 이므로 화면 px)
+    juce::Rectangle<float> viewBox;
+};
+/** BinaryData 의 원래 파일 이름(예: "part-bass.svg")으로 읽는다. 없으면 빈 도형 */
+const SvgShape& brandSvg (const char* fileName);
+
+/** 로고. 넓은 자리는 워드마크(images/brand/logo/meon_logo.svg), 좁은 자리는 M 마크(meon_mark.svg).
+    heightPx 는 SVG(viewBox) 높이, 폭은 비율대로 정해진다. 모양은 그대로 두고 크기·색만 바꾼다 (밝은 바탕 col::ink). */
+enum class LogoKind { wordmark, mark };
 void drawLogo (juce::Graphics& g, juce::Rectangle<float> area, float heightPx, juce::Colour colour = col::ink,
-               juce::Justification justification = juce::Justification::centred);
-float logoWidth (float heightPx);
+               juce::Justification justification = juce::Justification::centred, LogoKind kind = LogoKind::wordmark);
+float logoWidth (float heightPx, LogoKind kind = LogoKind::wordmark);
 
 /** 자간(letter-spacing, em 단위)이 있는 한 줄 텍스트 */
 void drawSpacedText (juce::Graphics& g, const juce::String& text, const juce::Font& font, float fontPx, float letterSpacingEm,

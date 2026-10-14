@@ -1,5 +1,4 @@
 #include "MeonParts.h"
-#include <array>
 
 namespace meon
 {
@@ -58,105 +57,23 @@ Part fromCode (juce::juce_wchar c)
 }
 
 //==============================================================================
-namespace
-{
-    /** 24 그리드 기준 도형. stroke 는 선으로, fill 은 면으로만 그린다. */
-    struct Shape { juce::Path stroke, fill; };
-
-    juce::Path svg (const char* d) { return juce::Drawable::parseSVGPath (juce::String (d)); }
-
-    void roundRect (juce::Path& p, float x, float y, float w, float h, float r) { p.addRoundedRectangle (x, y, w, h, r); }
-
-    Shape build (Part part)
-    {
-        Shape s;
-        auto& st = s.stroke;
-        switch (part)
-        {
-            case Part::Vocal:
-                roundRect (st, 9.0f, 2.5f, 6.0f, 11.0f, 3.0f);
-                st.addPath (svg ("M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v4M8.5 21.5h7"));
-                break;
-
-            case Part::Guitar:
-                roundRect (st, 10.6f, 2.0f, 2.8f, 3.6f, 0.9f);
-                st.addPath (svg ("M12 5.6v3.9"));
-                st.addPath (svg ("M12 9.5C14.2 9.5 15.6 10.8 15.6 12.5C15.6 13.7 14.8 14.2 14.8 15.1C14.8 16 17.3 16.6 17.3 19"
-                                 "C17.3 21.2 15 22.5 12 22.5C9 22.5 6.7 21.2 6.7 19C6.7 16.6 9.2 16 9.2 15.1C9.2 14.2 8.4 13.7 8.4 12.5"
-                                 "C8.4 10.8 9.8 9.5 12 9.5Z"));
-                st.addEllipse (12.0f - 1.5f, 16.7f - 1.5f, 3.0f, 3.0f);
-                st.addPath (svg ("M10.6 20.1h2.8"));
-                st.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::pi / 4.0f, 12.0f, 12.25f));
-                break;
-
-            case Part::Bass:
-                roundRect (st, 10.8f, 1.2f, 2.4f, 3.8f, 0.8f);
-                st.addPath (svg ("M12 5v9.2"));
-                st.addPath (svg ("M9.5 13.5c-.8 0-1 1-.7 2.1.2.8-1.3 1.4-1.3 3.4 0 2.3 2 3.5 4.5 3.5s4.5-1.2 4.5-3.5"
-                                 "c0-1.8-1.3-2.4-1.1-3.4.3-1.4.8-2.8-.2-2.8-.9 0-1.2 1.7-3.2 1.7-1.5 0-1.7-1-2.5-1z"));
-                st.addPath (svg ("M10.3 18.6h3.4"));
-                st.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::pi / 4.0f, 12.0f, 12.0f));
-                break;
-
-            case Part::Drums:
-                st.addEllipse (4.0f, 13.0f - 2.6f, 16.0f, 5.2f);
-                st.addPath (svg ("M4 13v5c0 1.44 3.58 2.6 8 2.6s8-1.16 8-2.6v-5"));
-                st.addPath (svg ("M7 3.5l9.6 9M17 3.5l-9.6 9"));
-                break;
-
-            case Part::Keys:
-                roundRect (st, 2.5f, 5.0f, 19.0f, 14.0f, 2.0f);
-                st.addPath (svg ("M7.25 13V19M12 13V19M16.75 13V19"));
-                // 검은 건반은 채우기만 (테두리 없음). 건반 사이 틈 2.25 단위 = 1x 22px 에서 약 2.06px
-                roundRect (s.fill, 6.0f, 5.0f, 2.5f, 8.0f, 0.6f);
-                roundRect (s.fill, 10.75f, 5.0f, 2.5f, 8.0f, 0.6f);
-                roundRect (s.fill, 15.5f, 5.0f, 2.5f, 8.0f, 0.6f);
-                break;
-
-            case Part::Other:
-                st.addPath (svg ("M9 17.5V5.5l11-2v12"));
-                st.addEllipse (6.5f - 2.5f, 17.5f - 2.5f, 5.0f, 5.0f);
-                st.addEllipse (17.5f - 2.5f, 15.5f - 2.5f, 5.0f, 5.0f);
-                break;
-
-            default:
-                break;
-        }
-        return s;
-    }
-
-    const Shape& shapeFor (Part p)
-    {
-        static const std::array<Shape, count> shapes = []
-        {
-            std::array<Shape, count> a;
-            for (int i = 0; i < count; ++i)
-                a[(size_t) i] = build (at (i));
-            return a;
-        }();
-        return shapes[(size_t) juce::jlimit (0, count - 1, (int) p)];
-    }
-}
-
-void drawIcon (juce::Graphics& g, juce::Rectangle<float> area, float size, Part p, juce::Colour colour)
+void drawIcon (juce::Graphics& g, juce::Rectangle<float> area, float size, Part p, juce::Colour colour, IconWeight weight)
 {
     if (p == Part::None)
         return;
-    const auto& shape = shapeFor (p);
-    // 도형만 크기에 맞춰 늘리고, 선 굵기는 화면에서 1.5px 고정 (SVG 의 non-scaling-stroke)
-    const auto t = juce::AffineTransform::scale (size / 24.0f)
+    const auto file = "part-" + key (p) + (weight == IconWeight::thin ? "-thin" : "") + ".svg";
+    const auto& shape = brandSvg (file.toRawUTF8());
+    if (shape.viewBox.isEmpty())
+        return;
+    // 도형만 크기에 맞춰 늘리고, 선 굵기는 SVG 의 stroke-width 를 화면 px 그대로 (non-scaling-stroke)
+    const float s = size / shape.viewBox.getWidth();
+    const auto t = juce::AffineTransform::translation (-shape.viewBox.getX(), -shape.viewBox.getY())
+                       .scaled (s)
                        .translated (area.getCentreX() - size * 0.5f, area.getCentreY() - size * 0.5f);
-    const juce::PathStrokeType stroke (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     g.setColour (colour);
     if (! shape.fill.isEmpty())
-    {
-        auto f = shape.fill;
-        f.applyTransform (t);
-        g.fillPath (f);   // 면에는 선을 덧그리지 않는다: 검은 건반이 1.5px 두꺼워져 1x 화면에서 틈이 뭉개진다
-    }
-    auto s = shape.stroke;
-    s.applyTransform (t);
-    g.strokePath (s, stroke);
+        g.fillPath (shape.fill, t);   // 면(키보드 검은 건반)에는 선을 덧그리지 않는다: 1x 화면에서 건반 틈이 뭉개진다
+    g.strokePath (shape.stroke, juce::PathStrokeType (shape.strokeWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), t);
 }
 
 } // namespace parts
@@ -187,8 +104,9 @@ public:
         const float labelH = font.getHeight();
         const float totalH = st.iconSize + (float) st.iconLabelGap + labelH;
         const float top = r.getCentreY() - totalH * 0.5f;
-        parts::drawIcon (g, { r.getX(), top, r.getWidth(), st.iconSize }, st.iconSize, part, col::ink);
-        g.setColour (col::ink);
+        const auto ink = isEnabled() ? col::ink : col::ink.withAlpha (0.4f);
+        parts::drawIcon (g, { r.getX(), top, r.getWidth(), st.iconSize }, st.iconSize, part, ink);
+        g.setColour (ink);
         g.setFont (font);
         g.drawText (parts::label (part), juce::Rectangle<float> (r.getX(), top + st.iconSize + (float) st.iconLabelGap, r.getWidth(), labelH),
                     juce::Justification::centred, false);
