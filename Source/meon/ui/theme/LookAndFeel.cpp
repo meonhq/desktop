@@ -68,6 +68,14 @@ void LookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool, 
                  enabled ? col::inkSub : col::inkFaint);
 }
 
+juce::MouseCursor LookAndFeel::getMouseCursorFor (juce::Component& c)
+{
+    auto cursor = juce::LookAndFeel_V4::getMouseCursorFor (c);
+    if (cursor == juce::MouseCursor::PointingHandCursor && ! c.isEnabled())
+        return juce::MouseCursor::NormalCursor;
+    return cursor;
+}
+
 juce::Font LookAndFeel::getComboBoxFont (juce::ComboBox&) { return font (400, fieldFontPx); }
 
 void LookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label, juce::Drawable*)

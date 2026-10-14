@@ -558,6 +558,9 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         images/beat_click.wav
         images/lgc_bar.wav
         images/meon_logo.svg
+        LICENSE
+        LICENSE_EXCEPTION
+        Source/meon/resources/ThirdPartyNotices.txt
     )
 
     set_target_properties(${target_name}_SBData PROPERTIES FOLDER "Targets")

@@ -1112,11 +1112,12 @@ namespace
             if (! core.isPlugin() && update.state) verRow.setControl (&updateBtn, 0);
             add (logRow).setControl (&openLogs, openLogs.getIdealWidth());
             add (licRow).setControl (&licToggle, licToggle.getIdealWidth());
-            licRow.setBelow (&licBox, [this] (int w) { return 12 + 17 + 6 + textHeight (licText(), w - 24, 12.0f, 400, 7.2f) + 6 + 17 + 12; });
+            licRow.setBelow (&licBox, [this] (int w) { return licTop (w) + licViewH + 12; });
             add (askRow).setControl (&discord, discord.getIdealWidth());
             openLogs.onPress = [] { MeonSettings::getLogFolder().createDirectory(); MeonSettings::getLogFolder().startAsProcess(); };
             licToggle.onPress = [this]
             {
+                if (licView.isEmpty()) licView.setText (fullLicenseText(), false);   // 처음 펼칠 때 한 번만 (약 60KB)
                 licBox.setVisible (! licBox.isVisible());
                 licToggle.setButtonText (licBox.isVisible() ? TXT ("접기") : TXT ("보기"));
                 licRow.controlW = licToggle.getIdealWidth();
@@ -1137,24 +1138,70 @@ namespace
             for (auto* l : { &licFull, &source, &sono })
                 licBox.addAndMakeVisible (l);
             licFull.onPress = [] { links::open ("https://www.gnu.org/licenses/gpl-3.0.html"); };
-            source.onPress = [] { links::open ("https://github.com/meonhq/desktop"); };
+            source.onPress = [] { links::open (sourceUrl()); };
             sono.onPress = [] { links::open ("https://github.com/sonosaurus/sonobus"); };
+
+            // GPL v3 전문과 사용한 오픈소스 라이선스 (읽기 전용, 스크롤)
+            licBox.addAndMakeVisible (licView);
+            licView.setMultiLine (true, true);
+            licView.setReadOnly (true);
+            licView.setCaretVisible (false);
+            licView.setScrollbarsShown (true);
+            licView.setScrollBarThickness (8);
+            licView.setFont (font (400, 12.0f));
+            licView.setIndents (12, 9);
+            licView.setColour (juce::TextEditor::backgroundColourId, col::white);
+            licView.setColour (juce::TextEditor::textColourId, col::inkSub);
+            licView.setColour (juce::TextEditor::outlineColourId, col::line);
+            licView.setColour (juce::TextEditor::focusedOutlineColourId, col::line);
+            licView.setMouseCursor (juce::MouseCursor::NormalCursor);   // 누르는 곳이 아니다 (글자 선택·복사는 된다)
+
             licBox.layoutFn = [this]
             {
-                const int y = licBox.getHeight() - 12 - 17;
+                const int w = licBox.getWidth();
+                int y = 12 + 17 + 6 + textHeight (licText(), w - 24, 12.0f, 400, 7.2f) + 6;
+                const int lw = (int) std::ceil (textWidth (font (400, 12.0f), sourceLabel())) + 6;
+                source.setBounds (12 + lw, y, source.getIdealWidth(), 17);
+                y += 17 + 6;
                 int x = 12;
-                for (auto* l : { &licFull, &source, &sono }) { const int w = l->getIdealWidth(); l->setBounds (x, y, w, 17); x += w + 12; }
+                for (auto* l : { &licFull, &sono }) { const int lw2 = l->getIdealWidth(); l->setBounds (x, y, lw2, 17); x += lw2 + 12; }
+                licView.setBounds (12, licTop (w), w - 24, licViewH);
             };
             licBox.paintFn = [this] (juce::Graphics& g)
             {
                 g.setColour (col::ink);
                 g.setFont (font (600, 13.0f));
                 g.drawText (TXT ("SonoBus · GNU General Public License v3.0"), 12, 12, licBox.getWidth() - 24, 17, juce::Justification::centredLeft, true);
-                drawWrapped (g, licText(), { 12, 12 + 17 + 6, licBox.getWidth() - 24, textHeight (licText(), licBox.getWidth() - 24, 12.0f, 400, 7.2f) },
-                             col::inkSub, 12.0f, 400, 7.2f);
+                const int th = textHeight (licText(), licBox.getWidth() - 24, 12.0f, 400, 7.2f);
+                drawWrapped (g, licText(), { 12, 12 + 17 + 6, licBox.getWidth() - 24, th }, col::inkSub, 12.0f, 400, 7.2f);
+                g.setColour (col::inkSub);
+                g.setFont (font (400, 12.0f));
+                g.drawText (sourceLabel(), 12, 12 + 17 + 6 + th + 6, 200, 17, juce::Justification::centredLeft, false);
             };
             licBox.framed = true;
             tick();
+        }
+
+        static constexpr int licViewH = 280;
+        static const char* sourceUrl() { return "https://github.com/meonhq/desktop"; }
+        static juce::String sourceLabel() { return TXT ("소스 코드"); }
+
+        /** 라이선스 상자에서 전문 보기 칸이 시작하는 y (제목·설명·소스 코드·링크 아래) */
+        static int licTop (int w) { return 12 + 17 + 6 + textHeight (licText(), w - 24, 12.0f, 400, 7.2f) + 6 + 17 + 6 + 17 + 9; }
+
+        /** 사용한 오픈소스 목록 + GPL v3 전문 + SonoBus 의 GPL 제7조 추가 허가 (앱에 함께 넣은 원문) */
+        static juce::String fullLicenseText()
+        {
+            auto heading = [] (const juce::String& t)
+            {
+                const juce::String line ("========================================");
+                return "\n\n" + line + "\n" + t + "\n" + line + "\n\n";
+            };
+            return juce::String::fromUTF8 (BinaryData::ThirdPartyNotices_txt, BinaryData::ThirdPartyNotices_txtSize).trimEnd()
+                 + heading ("GNU General Public License v3.0")
+                 + juce::String::fromUTF8 (BinaryData::LICENSE, BinaryData::LICENSESize).trimEnd()
+                 + heading ("SonoBus: GPL section 7 exception")
+                 + juce::String::fromUTF8 (BinaryData::LICENSE_EXCEPTION, BinaryData::LICENSE_EXCEPTIONSize).trim();
         }
 
         static juce::String licText()
@@ -1227,13 +1274,14 @@ namespace
         SettingsModal::UpdateHooks& update;
         SettingsModal::Row verRow { TXT ("버전") },
                            logRow { TXT ("로그 폴더"), TXT ("문제가 생겼을 때 문의에 로그 파일을 함께 보내주세요") },
-                           licRow { TXT ("오픈소스 라이선스"), TXT ("MEON은 SonoBus를 기반으로 수정한 프로그램이에요") },
+                           licRow { TXT ("오픈소스 라이선스") },
                            askRow { TXT ("문의"), TXT ("디스코드 #문의하기 채널로 연결돼요") };
         Button updateBtn { Button::Kind::small, TXT ("업데이트 확인") }, openLogs { Button::Kind::small, TXT ("폴더 열기") },
                licToggle { Button::Kind::small, TXT ("보기") }, discord { Button::Kind::small, TXT ("디스코드 열기") };
         Box licBox;
-        Button licFull { Button::Kind::linkSmall, TXT ("라이선스 전문") }, source { Button::Kind::linkSmall, TXT ("MEON 소스 코드") },
+        Button licFull { Button::Kind::linkSmall, TXT ("GPL v3 웹페이지") }, source { Button::Kind::linkUnderline, sourceUrl() },
                sono { Button::Kind::linkSmall, TXT ("SonoBus 원본") };
+        juce::TextEditor licView;
     };
 }
 

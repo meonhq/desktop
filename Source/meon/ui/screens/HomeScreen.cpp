@@ -89,7 +89,6 @@ struct HomeScreen::RoomCard : juce::Component
         join.setButtonText (label);
         join.setEnabled (! full);
         setAlpha (fade.get() * (full ? 0.45f : 1.0f));
-        setMouseCursor (full ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
         resized();
         repaint();
     }
@@ -165,10 +164,7 @@ struct HomeScreen::RoomCard : juce::Component
         join.setBounds (getWidth() - 18 - jw, getHeight() - 13 - 19, jw, 19);
     }
 
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        if (! full && e.mouseWasClicked()) owner.enterRoom (room);
-    }
+    // 카드 자체는 누를 수 없다. 입장·참가 요청은 join 버튼으로만 (호버 표시도 없음)
 
     HomeScreen& owner;
     core::Room room;
@@ -220,6 +216,7 @@ struct HomeScreen::FriendList : juce::Component
             avatar.setDimmed (st == S::offline);
             avatar.setInterceptsMouseClicks (false, false);
             addAndMakeVisible (avatar);
+            setMouseCursor (juce::MouseCursor::PointingHandCursor);   // 누르면 프로필
             if (fr.status == "in_room" && fr.room && fr.room->joinable)
             {
                 addAndMakeVisible (join);

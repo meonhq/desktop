@@ -34,6 +34,10 @@ public:
     std::function<void()> onClick;
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    juce::MouseCursor getMouseCursor() override   // onClick 이 있으면 손가락
+    {
+        return onClick ? juce::MouseCursor (juce::MouseCursor::PointingHandCursor) : juce::Component::getMouseCursor();
+    }
 
     static juce::Colour statusColour (Status);
 
@@ -150,6 +154,10 @@ public:
     void paint (juce::Graphics&) override;
     std::function<void()> onClick;
     void mouseUp (const juce::MouseEvent&) override;
+    juce::MouseCursor getMouseCursor() override   // onClick 이 있으면 손가락
+    {
+        return onClick ? juce::MouseCursor (juce::MouseCursor::PointingHandCursor) : juce::Component::getMouseCursor();
+    }
 private:
     juce::String text;
     int weight;
