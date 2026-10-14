@@ -52,32 +52,64 @@ struct JamScreen::SilenceRow : juce::Component
 {
     SilenceRow() { addAndMakeVisible (open); }
     bool missing = false;   // true: 입력 장치가 없음, false: 장치는 있는데 소리가 안 들어옴 (5초 −60 dBFS)
+
+    // 넓으면 한 줄 (제목 · 설명 · 버튼, 높이 37). 설명이 다 안 들어가면 설명을 제목 아래로 내린다 (플러그인 900px 등)
+    static constexpr int oneLineH = 37, padY = 10, titleH = 17, descLineH = 16;
+    juce::String title() const { return missing ? TXT ("입력 장치가 없어요") : TXT ("입력 신호가 없어요"); }
+    juce::String desc() const
+    {
+        return missing ? TXT ("마이크나 오디오 인터페이스를 연결해 주세요") : TXT ("설정에서 입력 채널을 확인해 주세요");
+    }
+    static juce::Font titleFont() { return font (500, 13.0f); }
+    static juce::Font descFont()  { return font (400, 12.0f); }
+    int titleW() const { return (int) std::ceil (textWidth (titleFont(), title())) + 1; }
+    bool fitsOneLine (int w) const
+    {
+        return metric::padX + titleW() + 9 + (int) std::ceil (textWidth (descFont(), desc())) + 1 + 9 + open.getIdealWidth() + metric::padX <= w;
+    }
+    int descHeight (int w) const
+    {
+        return (int) std::ceil (meon::paragraphHeightWithEmoji (desc(), descFont(), (float) (w - metric::padX * 2), (float) descLineH));
+    }
+    int heightFor (int w) const { return fitsOneLine (w) ? oneLineH : 1 + padY + titleH + 3 + descHeight (w) + padY; }
+
     void paint (juce::Graphics& g) override
     {
         g.setColour (col::accentSoft);
         g.fillRect (getLocalBounds());
         g.setColour (col::line);
         g.fillRect (0, 0, getWidth(), 1);
-        const auto f1 = font (500, 13.0f);
-        const auto t1 = missing ? TXT ("입력 장치가 없어요") : TXT ("입력 신호가 없어요");
-        const auto t2 = missing ? TXT ("마이크나 오디오 인터페이스를 연결해 주세요")
-                                : TXT ("설정에서 입력 채널을 확인해 주세요");
-        const int w1 = (int) std::ceil (textWidth (f1, t1)) + 1;
+        const int w1 = titleW();
         g.setColour (col::ink);
-        g.setFont (f1);
-        g.drawText (t1, metric::padX, 1, w1, getHeight() - 1, juce::Justification::centredLeft, false);
-        g.setColour (col::inkSub);
-        g.setFont (font (400, 12.0f));
-        g.drawText (t2, metric::padX + w1 + 9, 1, open.getX() - 9 - (metric::padX + w1 + 9), getHeight() - 1,
-                    juce::Justification::centredLeft, true);
+        g.setFont (titleFont());
+        if (fitsOneLine (getWidth()))
+        {
+            g.drawText (title(), metric::padX, 1, w1, getHeight() - 1, juce::Justification::centredLeft, false);
+            g.setColour (col::inkSub);
+            g.setFont (descFont());
+            g.drawText (desc(), metric::padX + w1 + 9, 1, open.getX() - 9 - (metric::padX + w1 + 9), getHeight() - 1,
+                        juce::Justification::centredLeft, false);
+            return;
+        }
+        g.drawText (title(), metric::padX, 1 + padY, w1, titleH, juce::Justification::centredLeft, false);
+        meon::drawParagraphWithEmoji (g, desc(), descFont(), col::inkSub,
+                                      juce::Rectangle<float> ((float) metric::padX, (float) (1 + padY + titleH + 3),
+                                                              (float) (getWidth() - metric::padX * 2), (float) descHeight (getWidth())),
+                                      (float) descLineH, juce::Justification::topLeft);
     }
     void resized() override
     {
         const int w = open.getIdealWidth();
-        open.setBounds (getWidth() - metric::padX - w, (getHeight() - metric::smallH) / 2 + 1, w, metric::smallH);
+        const int y = fitsOneLine (getWidth()) ? (getHeight() - metric::smallH) / 2 + 1 : 1 + padY + (titleH - metric::smallH) / 2;
+        open.setBounds (getWidth() - metric::padX - w, y, w, metric::smallH);
     }
     Button open { Button::Kind::small, TXT ("설정 열기") };
 };
+
+int JamScreen::silenceRowH (int width) const
+{
+    return jam.hasInputWarning() ? silenceRow->heightFor (width) : 0;
+}
 
 //==============================================================================
 /** 입장 코드 상자 (높이 32, 테두리 #E0E0E0, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
@@ -1135,15 +1167,17 @@ void JamScreen::resized()
 
     // 왼쪽: 멤버 (위) · 내 오디오 + 모니터 (아래)
     {
-        auto bottom = area.removeFromBottom (bottomCardH + silenceRowH());
-        area.removeFromBottom (metric::padX);
         const int closedW = 150;
         int sendW, monW;
-        const int availW = bottom.getWidth() - metric::gap;
+        const int availW = area.getWidth() - metric::gap;
         if (sendOpen && monOpen)  { sendW = availW - availW / 2; monW = availW / 2; }
         else if (sendOpen)        { monW = juce::jmin (availW / 2, 84 + 36 + 120); sendW = availW - monW; }
         else if (monOpen)         { sendW = juce::jmin (availW / 2, 84 + 36 + 120); monW = availW - sendW; }
         else                      { sendW = monW = juce::jmin (availW / 2, 84 + 36 + 120); juce::ignoreUnused (closedW); }
+        silenceRow->missing = jam.isInputMissing();
+        const int warnH = silenceRowH (sendW - 2);   // 카드 테두리 안쪽 폭
+        auto bottom = area.removeFromBottom (bottomCardH + warnH);
+        area.removeFromBottom (metric::padX);
         sendCard.setBounds (bottom.removeFromLeft (sendW));
         bottom.removeFromLeft (metric::gap);
         monCard.setBounds (bottom.removeFromLeft (monW).withHeight (bottomCardH));
@@ -1167,10 +1201,9 @@ void JamScreen::resized()
         auto sc = sendCard.contentBounds();
         layoutRow (sc.removeFromTop (43), sendOpen, sendMute, sendGain, inputMeter, plugin);
         const bool warn = jam.hasInputWarning();
-        silenceRow->missing = jam.isInputMissing();
         silenceRow->setVisible (warn);
         silenceRow->repaint();
-        if (warn) silenceRow->setBounds (sc.withHeight (silenceRowH()));
+        if (warn) silenceRow->setBounds (sc.withHeight (warnH));
         layoutRow (monCard.contentBounds().removeFromTop (43), monOpen, monMute, master, outputMeter, plugin);
 
         const int listH = memberList->rows.size() * rowH;

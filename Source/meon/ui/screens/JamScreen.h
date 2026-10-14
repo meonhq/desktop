@@ -82,7 +82,7 @@ private:
     bool sendOpen = true, monOpen = true;
     struct SilenceRow;
     std::unique_ptr<SilenceRow> silenceRow;   // 입력 신호 없음 경고 (내 오디오 카드 안, 미터 아래)
-    int silenceRowH() const { return jam.hasInputWarning() ? 37 : 0; }
+    int silenceRowH (int width) const;   // 경고가 없으면 0. 좁으면 설명을 두 줄로 내려 높아진다
 
     // 채팅
     Card chatCard;
