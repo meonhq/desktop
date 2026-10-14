@@ -205,7 +205,7 @@ struct HomeScreen::RoomList : juce::Component
 /** 친구 목록 (뷰포트 안). 행: 아바타 32 + 상태 점, 이름 600 13, 상태 400 12, 참여 */
 struct HomeScreen::FriendList : juce::Component
 {
-    struct Row : juce::Component
+    struct Row : juce::Component, juce::SettableTooltipClient   // 상태가 말줄임으로 잘리면 툴팁으로 전체 문구
     {
         Row (HomeScreen& o, const core::Friend& f) : owner (o), fr (f)
         {
@@ -255,7 +255,11 @@ struct HomeScreen::FriendList : juce::Component
             g.drawText (nameOf (fr.user), x, 6, right - x, 16, juce::Justification::centredLeft, true);
             g.setColour (col::inkFaint);
             g.setFont (font (400, 12.0f));
-            g.drawText (statusText(), x, 6 + 16 + 3, right - x, 15, juce::Justification::centredLeft, true);
+            const auto st = statusText();
+            g.drawText (st, x, 6 + 16 + 3, right - x, 15, juce::Justification::centredLeft, true);
+            // 말줄임으로 잘렸을 때만 마우스를 올리면 전체 문구 (방 이름이 길거나 폭이 좁을 때)
+            const auto tip = textWidth (font (400, 12.0f), st) > (float) (right - x) ? st : juce::String();
+            if (getTooltip() != tip) setTooltip (tip);
         }
 
         void resized() override

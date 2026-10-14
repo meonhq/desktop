@@ -554,7 +554,7 @@ struct JamScreen::ChatDecor : juce::Component
 /** 친구 목록 (합주 중): 초대 → 3초 "취소"(N초 뒤 초대가 가요) → "초대됨" */
 struct JamScreen::FriendList : juce::Component
 {
-    struct Row : juce::Component
+    struct Row : juce::Component, juce::SettableTooltipClient   // 상태가 말줄임으로 잘리면 툴팁으로 전체 문구
     {
         Row (JamScreen& o, const core::Friend& f) : owner (o), fr (f)
         {
@@ -629,7 +629,11 @@ struct JamScreen::FriendList : juce::Component
             g.drawText (nameOf (fr.user), x, 6, right - x, 16, juce::Justification::centredLeft, true);
             g.setColour (col::inkFaint);
             g.setFont (font (400, 12.0f));
-            g.drawText (statusText(), x, 6 + 16 + 3, right - x, 15, juce::Justification::centredLeft, true);
+            const auto st = statusText();
+            g.drawText (st, x, 6 + 16 + 3, right - x, 15, juce::Justification::centredLeft, true);
+            // 말줄임으로 잘렸을 때만 마우스를 올리면 전체 문구 (방 이름이 길거나 폭이 좁을 때)
+            const auto tip = textWidth (font (400, 12.0f), st) > (float) (right - x) ? st : juce::String();
+            if (getTooltip() != tip) setTooltip (tip);
         }
 
         void resized() override
@@ -693,7 +697,16 @@ struct JamScreen::FilePlayer : juce::Component
     }
 
     bool loaded() const { return owner.jam.hasFile(); }
-    int preferredHeight() const { return loaded() ? 12 + 19 + 12 + 19 + 12 + 19 + 12 : 12 + 17 + 5 + 17 + 12; }
+    // 파일이 없을 때 설명: 한 줄에 안 들어가면 줄을 바꾼다 (플러그인 폭 등). 높이도 따라 늘어난다
+    static juce::String emptyDesc() { return TXT ("파일을 열면 내 소리와 섞여 모두에게 들려요"); }
+    static constexpr int descLineH = 17;
+    int emptyTextW (int width) const { return width - 18 - openButton.getIdealWidth() - 9 - 18; }
+    int emptyDescH (int width) const
+    {
+        return juce::jmax (descLineH, (int) std::ceil (meon::paragraphHeightWithEmoji (emptyDesc(), font (400, 12.0f),
+                                                                                       (float) emptyTextW (width), (float) descLineH)));
+    }
+    int preferredHeight (int width) const { return loaded() ? 12 + 19 + 12 + 19 + 12 + 19 + 12 : 12 + 17 + 5 + emptyDescH (width) + 12; }
 
     void chooseFile()
     {
@@ -734,12 +747,13 @@ struct JamScreen::FilePlayer : juce::Component
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
         if (! loaded())
         {
-            const int w = openButton.getX() - 9 - 18;
+            const int w = emptyTextW (getWidth());
             g.setColour (col::inkFaint);
             g.setFont (font (600, 14.0f));
             g.drawText (TXT ("재생할 파일 없음"), 18, 12, w, 17, juce::Justification::centredLeft, true);
-            g.setFont (font (400, 12.0f));
-            g.drawText (TXT ("파일을 열면 내 소리와 섞여 모두에게 들려요"), 18, 12 + 17 + 5, w, 17, juce::Justification::centredLeft, true);
+            meon::drawParagraphWithEmoji (g, emptyDesc(), font (400, 12.0f), col::inkFaint,
+                                          juce::Rectangle<float> (18.0f, (float) (12 + 17 + 5), (float) w, (float) emptyDescH (getWidth())),
+                                          (float) descLineH, juce::Justification::topLeft);
             return;
         }
         const auto tf = font (400, 12.0f);
@@ -1126,7 +1140,7 @@ void JamScreen::resized()
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
     {
-        filePlayer->setBounds (side.removeFromBottom (filePlayer->preferredHeight()));
+        filePlayer->setBounds (side.removeFromBottom (filePlayer->preferredHeight (side.getWidth())));
         side.removeFromBottom (metric::gap);
         const int closedH = 48;
         int chatH, frH;
