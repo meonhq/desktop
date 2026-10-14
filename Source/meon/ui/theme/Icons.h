@@ -28,7 +28,7 @@ void draw (juce::Graphics&, Id, juce::Rectangle<float> area, juce::Colour, float
 void drawDiscord (juce::Graphics&, juce::Rectangle<float> area, juce::Colour);
 
 /** 파트 아이콘 (API 의 part 키). size×size 를 area 가운데에. colour 는 주변 글자색을 준다.
-    디자인은 모든 자리에서 얇은 버전(선 1px)을 쓴다. 디자인에 없는 자리(방 카드·필터 칩·설정 선택 상자)는 기본(1.5px) */
+    모든 자리에서 얇은 버전(선 1px)을 쓴다 (디자인과 같음. 디자인에 없던 방 카드·필터 칩도, REMAKE_PLAN 3.6) */
 enum class PartWeight { regular, thin };
 void drawPart (juce::Graphics&, const juce::String& partKey, juce::Rectangle<float> area, float size, juce::Colour,
                PartWeight weight = PartWeight::thin);
