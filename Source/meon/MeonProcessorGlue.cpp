@@ -2,6 +2,7 @@
 #include "../SonobusPluginProcessor.h"
 #include "core/MeonCore.h"
 #include "core/jam/EngineLink.h"
+#include "core/log/AppLog.h"
 #include "MeonSettings.h"
 #include "MeonCrashDump.h"
 #include "shell/ShellHooks.h"
@@ -17,6 +18,20 @@ namespace
     {
         meon::MeonSettings s;
         auto& p = s.properties();
+
+        // 버그 21: 예전 빌드에서 셀프 모니터가 켜진 채 저장된 사람이 있다. 이 버전에서 한 번만 끔으로 되돌린다
+        // (Q30: 기본 끔). 그 뒤로는 사용자가 켠 값을 그대로 쓴다
+        if (! p.getBoolValue ("selfMonitorResetQ30", false))
+        {
+            const bool wasOn = p.getBoolValue ("selfMonitorApp", false) || p.getBoolValue ("selfMonitorPlugin", false);
+            p.setValue ("selfMonitorApp", false);
+            p.setValue ("selfMonitorPlugin", false);
+            p.setValue ("selfMonitorResetQ30", true);
+            s.save();
+            meon::core::AppLog::write ("audio", wasOn ? LOGTXT ("셀프 모니터 설정을 한 번 끔으로 되돌렸습니다 (Q30)")
+                                                      : LOGTXT ("셀프 모니터 설정 확인: 이미 끔 (Q30)"));
+        }
+
         meon::core::JamPrefs j;
         j.sendMuted = p.getBoolValue ("sendMuted", false);
         j.sendGainDb = juce::jlimit (-30.0f, 10.0f, (float) p.getDoubleValue ("sendGainDb", 0.0));
@@ -25,6 +40,7 @@ namespace
         j.selfMonitor = p.getBoolValue (plugin ? "selfMonitorPlugin" : "selfMonitorApp", false);   // 기본 끔 (Q30)
         j.selfMonitorDb = (float) p.getDoubleValue ("selfMonitorDb", 0.0);
         j.selfMonitorPan = juce::jlimit (-100, 100, p.getIntValue ("selfMonitorPan", 0));
+        j.homeMonitor = ! plugin && p.getBoolValue ("homeMonitor", false);   // 앱만, 기본 끔 (버그 28)
         j.keepMasterVolume = p.getBoolValue ("keepMasterVolume", true);
         j.masterDb = juce::jlimit (-30.0f, 6.0f, (float) p.getDoubleValue ("masterVolumeDb", 0.0));
         j.inputChannelStart = s.getInputChannelStart();
@@ -44,6 +60,7 @@ namespace
         p.setValue (plugin ? "selfMonitorPlugin" : "selfMonitorApp", j.selfMonitor);
         p.setValue ("selfMonitorDb", j.selfMonitorDb);
         p.setValue ("selfMonitorPan", j.selfMonitorPan);
+        if (! plugin) p.setValue ("homeMonitor", j.homeMonitor);
         p.setValue ("keepMasterVolume", j.keepMasterVolume);
         p.setValue ("masterVolumeDb", j.masterDb);
         if (! plugin) s.setInputChannels (j.inputChannelStart, j.inputChannelCount);

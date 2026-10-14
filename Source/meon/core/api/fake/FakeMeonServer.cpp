@@ -325,6 +325,7 @@ Hello FakeMeonServer::helloFor (const String& userId) const
 
 void FakeMeonServer::emit (const String& toUser, const String& type, const var& data)
 {
+    if (onEmitForTest) onEmitForTest (toUser, type, data);
     if (! wsOpen || wsUser.isEmpty() || toUser != wsUser || sink == nullptr) return;
     auto msg = RealtimeEvent::encode (type, ++seq, data);
     std::weak_ptr<bool> weak = alive;
@@ -365,6 +366,29 @@ void FakeMeonServer::friendChanged (const String& userId)
 {
     if (wsUser.isNotEmpty() && areFriends (wsUser, userId))
         emit (wsUser, "friend.updated", json::encode (friendView (userId, wsUser)));
+}
+
+// PATCH /me 로 닉네임·파트가 바뀌었을 때 (버그 24). 진짜 서버 반영 대기 (진짜 서버·API 문서는 서버 쪽에서 따로 맞춘다):
+//   1) 내가 있는 방의 멤버에게 room.updated
+//   2) 그 방이 공개 방이면 공개 방 목록 구독자에게 rooms.updated (카드의 멤버 줄·"비어 있는 파트" 필터)
+//   3) 친구에게 friend.updated (방에 있든 없든)
+// 가짜 서버는 실시간 연결이 하나뿐이라 실제로 전달되는 것은 그 사용자 몫뿐이다 (emit 이 나머지를 버린다)
+void FakeMeonServer::profileChanged (const String& userId)
+{
+    if (auto* r = roomOf (userId))
+    {
+        for (auto& m : r->members)
+            emit (m.userId, "room.updated", json::encode (detailView (*r, m.userId)));
+        emitRooms ("rooms.updated", *r);
+    }
+    for (auto& key : friendships)
+    {
+        const auto a = key.upToFirstOccurrenceOf ("|", false, false), b = key.fromFirstOccurrenceOf ("|", false, false);
+        if (a != userId && b != userId) continue;
+        const auto other = a == userId ? b : a;
+        if (findUser (other) != nullptr && ! blockedEitherWay (userId, other))
+            emit (other, "friend.updated", json::encode (friendView (userId, other)));
+    }
 }
 
 void FakeMeonServer::sendHello()
@@ -792,8 +816,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
                                           friendRequests.end());
             }
             if (p.roomInvites) me.settings.roomInvites = *p.roomInvites;
-            if (profile)
-                if (auto* r = roomOf (actor)) roomChanged (*r);
+            if (profile) profileChanged (actor);
             return ok (json::encode (meOf (me)));
         }
 

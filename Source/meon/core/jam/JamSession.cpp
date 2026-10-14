@@ -19,7 +19,12 @@ JamSession::JamSession (Engine& e, AppStore& s, Scheduler& sc, Options o)
     store.addListener (this);
     chatChannel.addListener (this);
 
-    // 엔진 값은 방에 들어갈 때 넣는다 (R6 전까지는 옛 화면도 같은 엔진을 쓰므로 미리 건드리지 않는다)
+    // 방 밖(홈)의 엔진 값도 여기서 맞춘다. 앱·플러그인은 지난 실행의 엔진 상태(셀프 모니터 dry 등)를 다시 읽어 오므로,
+    // 그대로 두면 홈에서도 내 소리가 스피커로 나왔다 (버그 21·22). 방 밖에서는 셀프 모니터를 끈다 (설정값은 그대로)
+    engine.applyDefaults();
+    if (! options.plugin) engine.setSendMuted (prefs.sendMuted);   // 앱: 홈의 송출 정지 버튼도 설정 파일 값으로 (버그 #1 과 같은 규칙)
+    engine.setSendGainDb (prefs.sendGainDb);                        // 홈의 송출 레벨·입력 미터도 설정값대로
+    applyMonitor();
 
     engine.setEarGuardLevel (prefs.earGuard);
     schedulePoll();
@@ -69,6 +74,8 @@ void JamSession::setPhase (Phase p)
 
 void JamSession::stateChanged (StateKey k)
 {
+    // 가짜 기간: 방 안에서 닉네임·파트를 바꾸면 다른 컴퓨터에도 바로 알린다 (버그 24. 예전에는 다시 연결될 때만 보냈다)
+    if (k == StateKey::me && phase == Phase::inRoom) { sendMyProfile(); return; }
     if (k != StateKey::currentRoom) return;
     const auto& room = store.state().currentRoom;
     if (! room)
@@ -166,6 +173,7 @@ void JamSession::exit (const String& reason)
     mix.clear();
     currentRoomId = {};
     connection = {};
+    applyMonitor();   // 방 밖: 셀프 모니터 끔 (다시 들어가면 설정값대로)
     setPhase (Phase::idle);
     listeners.call ([] (Listener& l) { l.jamMembersChanged(); l.jamSilenceChanged (false); });
 }
@@ -429,6 +437,7 @@ void JamSession::writeSample (juce::int64)
     if (! sessionLog.isActive()) return;
     const auto enginePeers = engine.peers();
     juce::Array<var> arr;
+    int sendingTo = 0;
     for (auto& [user, ps] : peerStates)
     {
         std::optional<EnginePeer> ep;
@@ -445,7 +454,11 @@ void JamSession::writeSample (juce::int64)
             { "packetsReceived", ep ? ep->packetsReceived : (juce::int64) 0 },
             { "packetsDropped", ep ? ep->packetsDropped : (juce::int64) 0 },
             { "packetsResent", ep ? ep->packetsResent : (juce::int64) 0 },
+            // 송출 정지 확인용: 엔진이 이 상대에게 보내는 중인지 (정지면 false), 보낸 패킷 수 (참고값)
+            { "sendActive", ep ? ep->sendActive : false },
+            { "packetsSent", ep ? ep->packetsSent : (juce::int64) 0 },
             { "gainDb", m.gainDb }, { "pan", m.pan }, { "mutedByMe", m.muted } }));
+        if (ep && ep->sendActive) ++sendingTo;
     }
     sessionLog.addSample (SessionLog::makeObject ({
         { "t", juce::Time::getCurrentTime().toISO8601 (true) },
@@ -454,12 +467,14 @@ void JamSession::writeSample (juce::int64)
         { "sendPeakDb", sendPeakDb },
         { "inputPeakDb", inputPeakDb },
         { "sendMuted", engine.isSendMuted() },
+        { "sendingTo", sendingTo },   // 지금 보내고 있는 상대 수 (송출 정지면 0 이어야 한다)
         { "sendGainDb", prefs.sendGainDb },
         { "inputChannels", engine.inputChannelText() },
         { "inputSilent", isInputSilent() },
         { "inputMissing", isInputMissing() },
         { "sendChannels", engine.sendChannelCount() },
         { "masterDb", masterDb }, { "monitorMuted", monitorMuted }, { "selfMonitor", prefs.selfMonitor },
+        { "selfMonitorAudible", isSelfMonitorAudible() }, { "selfMonitorDb", prefs.selfMonitorDb },
         { "selfMonitorPan", prefs.selfMonitorPan },
         { "bufferMode", prefs.bufferMode == Engine::BufferMode::latency ? "latency" : "stable" },
         { "memberCount", (int) connection.members.size() },
@@ -585,7 +600,15 @@ void JamSession::setSendMuted (bool b)
     engine.setSendMuted (b);
     prefs.sendMuted = b;
     if (! options.plugin) savePrefs();
-    if (sessionLog.isActive()) sessionLog.addEvent (b ? "sendMuted" : "sendUnmuted", {});
+    applyMonitor();   // 송출 정지 중에는 셀프 모니터도 들리지 않게 (설정값은 그대로, 버그 23)
+    if (sessionLog.isActive())
+    {
+        // 바꾼 순간 엔진이 보내는 상대 수 (정지면 0)
+        int sending = 0, total = 0;
+        for (auto& p : engine.peers())
+            if (p.connected) { ++total; if (p.sendActive) ++sending; }
+        sessionLog.addEvent (b ? "sendMuted" : "sendUnmuted", "sendingTo " + String (sending) + "/" + String (total));
+    }
     // 송출 정지를 켜면 무음 경고는 지우고 판정을 처음부터
     tick();
 }
@@ -615,6 +638,8 @@ void JamSession::setEarGuardLevel (int l)
 
 void JamSession::pollSharedPrefs()
 {
+    // 플러그인: DAW 가 저장된 상태를 나중에 다시 넣으면(프로젝트 불러오기 등) 셀프 모니터 값이 덮인다. 1초마다 맞춰 둔다
+    engine.reapplyMonitor();
     if (! options.pollEarGuard) return;
     const int l = options.pollEarGuard();
     if (l < 0 || l == prefs.earGuard) return;
@@ -651,10 +676,25 @@ void JamSession::setMonitorMuted (bool b)
     if (sessionLog.isActive()) sessionLog.addEvent (b ? "monitorMuted" : "monitorUnmuted", {});
 }
 
+bool JamSession::isSelfMonitorAudible() const
+{
+    if (engine.isSendMuted()) return false;   // 송출 정지 중에는 홈에서도 방에서도 안 들린다 (버그 23)
+    if (inRoomForAudio()) return prefs.selfMonitor;
+    return ! options.plugin && prefs.homeMonitor;   // 홈: 설정을 켠 사람만 (버그 22·28. 플러그인은 설정이 없어 늘 끔)
+}
+
+void JamSession::setHomeMonitor (bool on)
+{
+    prefs.homeMonitor = on;
+    applyMonitor();
+    savePrefs();
+    AppLog::write ("audio", on ? LOGTXT ("입장 전에도 내 소리 듣기: 켬") : LOGTXT ("입장 전에도 내 소리 듣기: 끔"));
+}
+
 void JamSession::applyMonitor()
 {
     engine.setMasterDb (masterDb);
-    engine.setSelfMonitor (prefs.selfMonitor);
+    engine.setSelfMonitor (isSelfMonitorAudible());
     engine.setSelfMonitorDb (prefs.selfMonitorDb);
     engine.setSelfMonitorPan (prefs.selfMonitorPan);
     engine.setMonitorMuted (monitorMuted);

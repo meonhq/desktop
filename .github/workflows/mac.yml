@@ -58,36 +58,37 @@ jobs:
       - name: macOS 26 아이콘 (Icon Composer)
         # images/icons/AppIcon.icon 을 Xcode 26 의 actool 로 Assets.car 로 만들어 앱에 넣고 CFBundleIconName 을 적는다.
         # macOS 26 은 이것을 쓰고(예전 .icns 만 있으면 회색 틀에 가둘 수 있다), 그 아래 버전은 지금처럼 Icon.icns 를 쓴다.
-        # Xcode 26 이 없거나 actool 이 실패하면 .icns 만으로 계속한다 (actool 은 실패해도 0 으로 끝날 수 있어 결과 파일로 확인)
-        continue-on-error: true
+        # 못 만들면 빌드를 실패시킨다 (.icns 만 든 앱이 조용히 나가지 않게). actool 은 실패해도 0 으로 끝날 수 있어 결과 파일로 확인한다
         run: |
           APP=build/MEON_artefacts/Release/Standalone/Meon.app
-          # Xcode 26 의 아이콘 렌더러(AssetCatalogAgent)는 macOS 26 의 시스템 기능을 쓴다. macOS 15 러너에서는
-          # 대부분 죽고 가끔만 됐다(빌드마다 결과가 달라졌다). 그래서 러너가 macOS 26 이상일 때만 만든다
+          # Xcode 26 의 아이콘 렌더러(AssetCatalogAgent)는 macOS 26 의 시스템 기능을 쓴다.
+          # macOS 15 러너에서는 대부분 죽고 가끔만 됐다(빌드마다 결과가 달라졌다). 그래서 macOS 26 러너가 필요하다
           HOST=$(sw_vers -productVersion | cut -d. -f1)
-          if [ "$HOST" -lt 26 ]; then echo "러너 macOS $HOST: macOS 26 아이콘은 건너뛰고 .icns 만 씁니다"; exit 0; fi
+          if [ "$HOST" -lt 26 ]; then echo "::error::러너가 macOS $HOST 입니다. macOS 26 아이콘은 macOS 26 이상 러너에서만 만들 수 있습니다"; exit 1; fi
           XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XC" ]; then echo "::warning::Xcode 26 이 없어 .icns 아이콘만 씁니다"; exit 0; fi
+          if [ -z "$XC" ]; then echo "::error::Xcode 26 이 없어 macOS 26 아이콘을 만들 수 없습니다"; exit 1; fi
           echo "actool: $XC"
           # DEVELOPER_DIR 로 actool 만 빌리면 기본 Xcode 의 프레임워크와 섞여 AssetCatalogAgent 가 죽을 수 있다.
           # 아이콘을 만드는 동안만 Xcode 26 을 통째로 고르고, 끝나면 원래 Xcode 로 되돌린다
           PREV=$(xcode-select -p)
           trap 'sudo xcode-select -s "$PREV"' EXIT
           sudo xcode-select -s "$XC/Contents/Developer"
+          # 일시적인 실패에 대비해 3번까지 시도한다. 결과 파일이 있고, Assets.car 안에 AppIcon 이 들어 있어야 성공
           ok=0
           for try in 1 2 3; do
             rm -rf iconout && mkdir iconout
             if xcrun actool images/icons/AppIcon.icon --compile iconout \
                  --platform macosx --minimum-deployment-target 10.13 --app-icon AppIcon \
                  --output-partial-info-plist iconout/partial.plist --warnings --errors --notices > iconout/actool.log 2>&1 \
-               && [ -s iconout/Assets.car ] && [ -s iconout/AppIcon.icns ]; then
+               && [ -s iconout/Assets.car ] && [ -s iconout/AppIcon.icns ] \
+               && xcrun assetutil --info iconout/Assets.car 2>/dev/null | grep -q '"Name" : "AppIcon"'; then
               ok=1; echo "actool 성공 ($try 번째)"; break
             fi
-            echo "actool 실패 ($try 번째):"; grep -m5 -iE "reason|exception|error" iconout/actool.log || tail -5 iconout/actool.log
+            echo "actool 실패 ($try 번째):"; cat iconout/actool.log
             sleep 5
           done
           ls -la iconout
-          if [ "$ok" != 1 ]; then echo "::warning::macOS 26 아이콘(Assets.car)을 만들지 못해 .icns 아이콘만 씁니다"; exit 0; fi
+          if [ "$ok" != 1 ]; then echo "::error::macOS 26 아이콘(Assets.car)을 만들지 못했습니다"; exit 1; fi
           cp iconout/Assets.car "$APP/Contents/Resources/Assets.car"
           plutil -replace CFBundleIconName -string AppIcon "$APP/Contents/Info.plist"
           plutil -p "$APP/Contents/Info.plist" | grep -i icon

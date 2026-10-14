@@ -367,10 +367,23 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
     };
     joinRoom.onPress = [this]
     {
-        if (! profile || ! profile->room) return;
-        const auto roomId = profile->room->id;
-        if (onClose) onClose();
-        core.home().joinRoom (roomId, {});
+        // 버그 27: 친구 목록·방 목록 카드와 같은 상태·같은 규칙 ("요청 보냄" 동안은 아무것도 하지 않는다)
+        if (! profile || ! profile->room || joinState() == core::HomeController::FriendJoin::requested) return;
+        std::weak_ptr<bool> weak = alive;
+        core.home().joinFriendRoom (*profile->room, [this, weak] (core::Result<core::JoinResult> r)
+        {
+            if (weak.expired()) return;
+            if (! r.ok())
+            {
+                // 다른 입장 버튼과 같이 입장 실패 상자로 (이 창은 닫는다)
+                auto failed = onJoinFailure;
+                const auto err = r.err();
+                if (onClose) onClose();
+                if (failed) failed (err);
+                return;
+            }
+            refresh();   // 승인 방이면 "요청 보냄". 바로 입장이면 합주 화면으로 바뀌며 이 창도 닫힌다
+        });
     };
     accept.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().acceptFriendRequest (rid, reloader()); };
     decline.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().declineFriendRequest (rid, reloader()); };
@@ -379,6 +392,25 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
     setContent (&body, 18 + 48 + 18 + 22 + 18 + ModalFooter::height);
     refresh();
     load();
+    startTimer (1000);
+}
+
+core::HomeController::FriendJoin ProfileModal::joinState() const
+{
+    using J = core::HomeController::FriendJoin;
+    if (! profile || profile->relation != "friend" || profile->status.value_or ("offline") != "in_room" || ! profile->room) return J::none;
+    const auto& cur = core.store().state().currentRoom;
+    if (cur && cur->id == profile->room->id) return J::none;   // 지금 내가 있는 방
+    return core.home().roomJoinState (*profile->room);
+}
+
+void ProfileModal::timerCallback()
+{
+    if (! joinRoom.isVisible()) return;
+    using J = core::HomeController::FriendJoin;
+    const auto st = joinState();
+    const auto label = st == J::request ? TXT ("요청") : st == J::requested ? TXT ("요청 보냄") : TXT ("참여");
+    if (label != joinRoom.getButtonText() || st == J::none) refresh();
 }
 
 ProfileModal::~ProfileModal()
@@ -390,6 +422,7 @@ ProfileModal::~ProfileModal()
 void ProfileModal::stateChanged (core::StateKey k)
 {
     if (k == core::StateKey::friends || k == core::StateKey::friendRequests) load();
+    else if (k == core::StateKey::publicRooms) refresh();   // 입장 방식·요청 상태 (카드·친구 목록에서 요청해도 같이)
 }
 
 core::Callback<core::Done> ProfileModal::reloader()
@@ -465,13 +498,17 @@ void ProfileModal::refresh()
     avatar.setStatus (st == "in_room" ? S::inRoom : (st == "online" ? S::online : (st == "offline" ? S::offline : S::none)));
     avatar.setPart (user.part.value_or ("other"));
 
-    // 아래 버튼 (Q28): 요청 보냄 = 비활성, 요청 받음 = 거절·수락, 친구가 다른 공개 방에 있으면 같은 방 참여
+    // 아래 버튼 (Q28): 요청 보냄 = 비활성, 요청 받음 = 거절·수락, 친구가 다른 공개 방에 있으면 참여·요청 (버그 27)
     const bool canRequest = profile && (rel == "none" || rel == "request_sent");
     request.setButtonText (rel == "request_sent" ? TXT ("요청 보냄") : TXT ("친구 요청"));
     request.setDimmed (rel == "request_sent" || (profile && rel == "none" && ! profile->canSendFriendRequest));
     request.setEnabled (rel == "none" && profile && profile->canSendFriendRequest);
-    const auto& cur = core.store().state().currentRoom;
-    const bool canJoin = isFriend && profile->room && profile->room->joinable && ! (cur && cur->id == profile->room->id);
+    using J = core::HomeController::FriendJoin;
+    const auto js = joinState();
+    const bool canJoin = isFriend && js != J::none;
+    joinRoom.setButtonText (js == J::request ? TXT ("요청") : js == J::requested ? TXT ("요청 보냄") : TXT ("참여"));
+    // "요청 보냄" 은 눌러도 아무 일이 없으므로 화살표 커서 (모양은 그대로)
+    joinRoom.setMouseCursor (js == J::requested ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
     const bool incoming = rel == "request_received" && incomingRequestId().isNotEmpty();
 
     if (incoming)       footer.setButtons ({ &decline, &accept });

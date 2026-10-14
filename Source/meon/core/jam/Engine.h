@@ -20,7 +20,9 @@ struct EnginePeer
     juce::String user;
     bool connected = false;          // 엔진이 보는 연결 (어느 쪽으로든 소리가 흐름)
     bool recvActive = false;         // 상대가 보내고 있고 내가 받는 중 (상대가 송출을 끄거나 내가 음소거하면 false)
+    bool sendActive = false;         // 내가 이 상대에게 보내는 중 (송출 정지면 false: 엔진이 AOO 소스를 멈춘다)
     juce::int64 packetsReceived = 0, packetsDropped = 0, packetsResent = 0;
+    juce::int64 packetsSent = 0;     // 엔진의 보낸 패킷 수 (로그용 참고값: 엔진이 다른 송신과 함께 세어 정확하지 않다)
     float pingMs = 0.0f, roundtripMs = 0.0f, bufferMs = 0.0f;
     int recvChannels = 0;
 };
@@ -81,6 +83,8 @@ public:
     virtual void setEarGuardLevel (int) {}              // 귀 테러 방지 0 끔 / 1 보통 / 2 강하게
     virtual void setMasterDb (float) = 0;
     virtual void setMonitorMuted (bool) = 0;   // 내가 듣는 모든 소리 (Q12)
+    /** 모니터 값(마스터·셀프 모니터)을 마지막으로 넣은 값으로 다시 맞춘다. 저장된 상태를 엔진이 다시 읽어 덮었을 때 (1초마다) */
+    virtual void reapplyMonitor() {}
     virtual void setBufferMode (BufferMode) = 0;
     /** 독립 앱 입력 채널 (0 기반 시작, 1 = 모노 / 2 = 스테레오). 송신 채널 수도 같이 맞춘다. 플러그인은 무시 */
     virtual void setInputChannels (int start, int count) = 0;

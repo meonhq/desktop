@@ -409,6 +409,26 @@ void MeonEditor::applyHomePreview()
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
     else if (p == "notif")  home->toggleNotifications();
+    else if (p == "homemon")   // 설정 › 오디오 "입장 전에도 내 소리 듣기" 를 켠 홈 ("내 소리 듣는 중")
+    {
+        if (auto* jam = core.jam()) jam->setHomeMonitor (true);
+    }
+    else if (p == "sendoff")   // 송출 정지 중인 홈 (미터 회색)
+    {
+        if (auto* jam = core.jam()) jam->setSendMuted (true);
+    }
+    else if (p == "profile")   // 승인 방에 있는 친구의 프로필 ("요청")
+    {
+        if (const auto* f = core.store().state().findFriend ("u_f_yuna")) home->openProfile (f->user);
+    }
+    else if (p == "friendreq" || p == "profilereq")   // 친구 목록에서 승인 방에 요청을 보낸 뒤 ("요청 보냄", 같은 방 카드도)
+    {
+        if (const auto* f = core.store().state().findFriend ("u_f_yuna"))
+        {
+            core.home().joinFriend (*f, [] (core::Result<core::JoinResult>) {});
+            if (p == "profilereq") home->openProfile (f->user);   // 프로필 창도 "요청 보냄"
+        }
+    }
     else if (p == "fail")   appRoot->showJoinFailure (core::HomeController::JoinFailure::full);
     else if (p == "toast")
     {
@@ -424,6 +444,8 @@ void MeonEditor::applyHomePreview()
         juce::Component::SafePointer<MeonEditor> safe (this);
         core.home().createRoom (c, [safe, p] (core::Result<core::RoomDetail>)
         {
+            if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
+                if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
             if (safe == nullptr || p != "jam:host") return;
             if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();   // 입장 요청 하나
         });

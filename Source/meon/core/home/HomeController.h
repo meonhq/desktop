@@ -42,8 +42,17 @@ public:
     void leaveRoom();
     /** 이 방에 보낸 승인 요청이 아직 유효한지 (request_until 전) */
     bool isRequestPending (const Room&) const;
-    /** 친구가 있는 방 (친구 목록의 "참여"). 공개 방이면 입장, 아니면 실패 */
+    bool isRequestPending (const juce::String& roomId) const;   // 공개 방 목록에 없는 방도 (친구 목록에서 보낸 요청)
+
+    /** 친구가 있는 방의 버튼 (친구 목록 버그 25, 프로필 창 버그 27). 방 목록 카드와 같은 상태·같은 규칙:
+        바로 입장 "참여", 승인 방 "요청", 요청 뒤 request_until 까지 "요청 보냄". none = 버튼 없음 */
+    enum class FriendJoin { none, join, request, requested };
+    FriendJoin friendJoinState (const Friend&) const;
+    FriendJoin roomJoinState (const RoomRef&) const;
+    /** 친구가 있는 방 (친구 목록의 "참여"·"요청"). 공개 방이면 입장 또는 승인 요청, 아니면 실패 */
     void joinFriend (const Friend&, Callback<JoinResult>);
+    /** 프로필 창: 친구가 있는 방. "요청 보냄" 동안은 아무것도 하지 않는다 (콜백도 부르지 않음) */
+    void joinFriendRoom (const RoomRef&, Callback<JoinResult>);
 
     //==============================================================================
     // 받은 초대 (토스트)
@@ -84,6 +93,8 @@ private:
     std::map<juce::String, InviteRec> invites;
     std::set<juce::String> cancelOnArrival;   // 응답 전에 취소한 초대
     juce::String invitesRoomId;
+    /** 승인 요청을 보낸 방 → request_until (ms). 공개 방 목록에 있는 방은 그 항목에도 들어간다 (서버 값이 우선) */
+    std::map<juce::String, juce::int64> requestUntilByRoom;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void handleJoin (const juce::String& roomId, Result<JoinResult>, Callback<JoinResult>);

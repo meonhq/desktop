@@ -86,11 +86,14 @@ private:
 
 //==============================================================================
 /** 프로필 (340). 관계별 버튼은 API 2.4 (can_send_friend_request, can_invite, relation), Q28 */
-class ProfileModal : public Modal, private core::AppStore::Listener
+class ProfileModal : public Modal, private core::AppStore::Listener, private juce::Timer
 {
 public:
     ProfileModal (core::MeonCore&, const core::UserPublic&, bool inJam);
     ~ProfileModal() override;
+
+    /** 친구가 있는 방에 들어가거나 요청하다 실패 (입장 실패 상자는 화면이 띄운다. 이 창은 먼저 닫힌다) */
+    std::function<void (const core::ApiError&)> onJoinFailure;
 
 private:
     core::MeonCore& core;
@@ -108,7 +111,7 @@ private:
     Tag friendTag { TXT ("친구") };
     Button remove { Button::Kind::smallDanger, TXT ("친구 삭제") }, block { Button::Kind::smallDanger, TXT ("차단") };
     Button unblock { Button::Kind::small, TXT ("차단 해제") };
-    Button request { Button::Kind::primary, TXT ("친구 요청") }, joinRoom { Button::Kind::primary, TXT ("같은 방 참여") };
+    Button request { Button::Kind::primary, TXT ("친구 요청") }, joinRoom { Button::Kind::primary, TXT ("참여") };
     Button decline { Button::Kind::cancel, TXT ("거절") }, accept { Button::Kind::primary, TXT ("수락") };
     ModalFooter footer;
     juce::String note;
@@ -121,7 +124,9 @@ private:
     juce::String lastSeenText() const;
     juce::String incomingRequestId() const;
     bool hasFooter() const;
+    core::HomeController::FriendJoin joinState() const;
     void stateChanged (core::StateKey) override;
+    void timerCallback() override;   // "요청 보냄" 5분이 지나면 원래대로
 };
 
 //==============================================================================

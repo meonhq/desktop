@@ -77,6 +77,8 @@ public:
     //==============================================================================
     // 테스트가 상태를 들여다볼 때
     juce::String meId() const { return wsUser; }
+    /** 테스트용: 실시간 이벤트를 받는 사람(실시간 연결이 없는 가짜 사용자 포함)과 함께 모두 알려 준다 */
+    std::function<void (const juce::String& toUser, const juce::String& type, const juce::var& data)> onEmitForTest;
     bool isMember (const juce::String& roomId, const juce::String& userId) const;
     int pendingInviteCountFor (const juce::String& userId) const;
 
@@ -228,6 +230,7 @@ private:
     void emitRoomRemoved (const juce::String& roomId, const juce::String& hostId);
     void roomChanged (const RoomRec&, bool publicListChanged = true);
     void friendChanged (const juce::String& userId);
+    void profileChanged (const juce::String& userId);
     void sendHello();
 
     // 규칙
