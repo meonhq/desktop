@@ -743,8 +743,10 @@ struct PartTile : juce::Button
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
         // 아이콘 28 + 간격 9 + 글자 500 13
         const float top = r.getCentreY() - (28.0f + 9.0f + 16.0f) * 0.5f;
-        icons::drawPart (g, key, { r.getCentreX() - 14.0f, top, 28.0f, 28.0f }, 28.0f, col::ink);
-        g.setColour (col::ink);
+        // 아이콘은 라벨과 같은 색 (디자인: 얇은 버전 28px). 비활성(가입 처리 중)이면 둘 다 흐리게
+        const auto ink = isEnabled() ? col::ink : col::inkFaint;
+        icons::drawPart (g, key, { r.getCentreX() - 14.0f, top, 28.0f, 28.0f }, 28.0f, ink, icons::PartWeight::thin);
+        g.setColour (ink);
         g.setFont (font (500, 13.0f));
         g.drawText (icons::partLabel (key), juce::Rectangle<float> (r.getX(), top + 37.0f, r.getWidth(), 16.0f), juce::Justification::centred, false);
     }

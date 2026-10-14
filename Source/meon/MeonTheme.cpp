@@ -1,5 +1,6 @@
 #include "MeonTheme.h"
 #include "MeonEmoji.h"
+#include <map>
 
 namespace meon
 {
@@ -282,32 +283,82 @@ float textWidth (const juce::Font& font, const juce::String& text)
     return font.getStringWidthFloat (text);
 }
 
-// 로고 SVG(images/meon_logo.svg)의 viewBox 크기. 로고 높이는 이 viewBox 높이 기준이다.
-static constexpr float logoViewW = 396.5f;
-static constexpr float logoViewH = 152.5f;
-
-static const juce::Path& logoPath()
+//==============================================================================
+namespace
 {
-    static const juce::Path path = []
+    void collectShapes (const juce::Drawable& d, const juce::AffineTransform& parent, SvgShape& out)
     {
-        juce::Path p;
-        if (auto xml = juce::XmlDocument::parse (juce::String::fromUTF8 (BinaryData::meon_logo_svg, BinaryData::meon_logo_svgSize)))
-            if (auto* e = xml->getChildByName ("path"))
-                p = juce::Drawable::parseSVGPath (e->getStringAttribute ("d"));
-        p.setUsingNonZeroWinding (false); // fill-rule="evenodd"
-        return p;
-    }();
-    return path;
+        const auto t = d.getTransform().followedBy (parent);
+        if (auto* shape = dynamic_cast<const juce::DrawableShape*> (&d))
+        {
+            juce::Path p;
+            if (auto* dp = dynamic_cast<const juce::DrawablePath*> (shape))
+                p = dp->getPath();
+            p.applyTransform (t);
+            if (! shape->getStrokeFill().isInvisible() && shape->getStrokeType().getStrokeThickness() > 0.0f)
+            {
+                out.stroke.addPath (p);
+                out.strokeWidth = shape->getStrokeType().getStrokeThickness();
+            }
+            if (! shape->getFill().isInvisible())
+                out.fill.addPath (p);
+        }
+        for (auto* c : d.getChildren())
+            if (auto* child = dynamic_cast<const juce::Drawable*> (c))
+                collectShapes (*child, t, out);
+    }
+
+    SvgShape parseBrandSvg (const char* fileName)
+    {
+        SvgShape out;
+        for (int i = 0; i < BinaryData::namedResourceListSize; ++i)
+        {
+            const char* name = BinaryData::namedResourceList[i];
+            if (juce::String (BinaryData::getNamedResourceOriginalFilename (name)) != fileName)
+                continue;
+            int size = 0;
+            const char* data = BinaryData::getNamedResource (name, size);
+            auto xml = juce::XmlDocument::parse (juce::String::fromUTF8 (data, size));
+            if (xml == nullptr) break;
+            auto vb = juce::StringArray::fromTokens (xml->getStringAttribute ("viewBox"), " ,", "");
+            vb.removeEmptyStrings();
+            if (vb.size() == 4)
+                out.viewBox = { vb[0].getFloatValue(), vb[1].getFloatValue(), vb[2].getFloatValue(), vb[3].getFloatValue() };
+            // preserveAspectRatio 가 없으면 JUCE 는 도형을 viewBox 좌표 그대로 둔다
+            if (auto d = juce::Drawable::createFromSVG (*xml))
+                collectShapes (*d, {}, out);
+            break;
+        }
+        jassert (! out.viewBox.isEmpty());   // BinaryData 에 없는 파일
+        return out;
+    }
+
+    const SvgShape& logoShape (LogoKind kind)
+    {
+        return brandSvg (kind == LogoKind::mark ? "meon_mark.svg" : "meon_logo.svg");
+    }
 }
 
-float logoWidth (float heightPx)
+const SvgShape& brandSvg (const char* fileName)
 {
-    return heightPx * logoViewW / logoViewH;
+    static std::map<juce::String, SvgShape> cache;   // 메시지 스레드에서만 그린다
+    auto it = cache.find (fileName);
+    if (it == cache.end())
+        it = cache.emplace (fileName, parseBrandSvg (fileName)).first;
+    return it->second;
 }
 
-void drawLogo (juce::Graphics& g, juce::Rectangle<float> area, float heightPx, juce::Colour colour, juce::Justification justification)
+float logoWidth (float heightPx, LogoKind kind)
 {
-    const float w = logoWidth (heightPx);
+    const auto vb = logoShape (kind).viewBox;
+    return vb.getHeight() > 0.0f ? heightPx * vb.getWidth() / vb.getHeight() : 0.0f;
+}
+
+void drawLogo (juce::Graphics& g, juce::Rectangle<float> area, float heightPx, juce::Colour colour, juce::Justification justification, LogoKind kind)
+{
+    const auto& shape = logoShape (kind);
+    if (shape.viewBox.isEmpty()) return;
+    const float w = logoWidth (heightPx, kind);
     float x = area.getX();
     if (justification.testFlags (juce::Justification::horizontallyCentred))
         x = area.getCentreX() - w * 0.5f;
@@ -320,9 +371,9 @@ void drawLogo (juce::Graphics& g, juce::Rectangle<float> area, float heightPx, j
     else if (justification.testFlags (juce::Justification::bottom))
         y = area.getBottom() - heightPx;
 
-    const float s = heightPx / logoViewH;
+    const float s = heightPx / shape.viewBox.getHeight();
     g.setColour (colour);
-    g.fillPath (logoPath(), juce::AffineTransform::scale (s).translated (x, y));
+    g.fillPath (shape.fill, juce::AffineTransform::translation (-shape.viewBox.getX(), -shape.viewBox.getY()).scaled (s).translated (x, y));
 }
 
 float spacedTextWidth (const juce::String& text, const juce::Font& font, float fontPx, float letterSpacingEm)

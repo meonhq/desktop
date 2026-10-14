@@ -122,7 +122,9 @@ struct HomeScreen::RoomCard : juce::Component
             const auto name = nameOf (m.user);
             const auto part = icons::partLabel (m.user.part.value_or ("other"));
             const auto tag = m.isHost ? TXT ("방장") : (m.isFriend ? TXT ("친구") : juce::String());
-            const float partW = textWidth (nameF, part) + 1.0f;
+            // 파트: 아이콘(14px, 기본 굵기, 파트 글자와 같은 색) + 이름. 디자인은 글자만 있고 아이콘 자리는 없다
+            constexpr float iconPx = 14.0f, iconGap = 3.0f;
+            const float partW = iconPx + iconGap + textWidth (nameF, part) + 1.0f;
             const auto tagF = font (500, 11.0f);
             const float tagW = tag.isEmpty() ? 0.0f : textWidth (tagF, tag) + 8.0f + 2.0f + 3.0f;
             const float nameMax = (float) w - 5.0f - 2.0f - 5.0f - partW - tagW - (tag.isEmpty() ? 0.0f : 5.0f);
@@ -135,8 +137,10 @@ struct HomeScreen::RoomCard : juce::Component
             g.setColour (col::inkFaint);
             g.fillEllipse (cx, (float) y + 7.5f, 2.0f, 2.0f);
             cx += 2.0f + 5.0f;
+            icons::drawPart (g, m.user.part.value_or ("other"), { cx, (float) y, iconPx, 17.0f }, iconPx, col::inkSub, icons::PartWeight::regular);
             g.setColour (col::inkSub);
-            g.drawText (part, juce::Rectangle<float> (cx, (float) y, partW, 17.0f), juce::Justification::centredLeft, false);
+            g.drawText (part, juce::Rectangle<float> (cx + iconPx + iconGap, (float) y, partW - iconPx - iconGap, 17.0f),
+                        juce::Justification::centredLeft, false);
             cx += partW + 5.0f;
             if (tag.isNotEmpty())
             {

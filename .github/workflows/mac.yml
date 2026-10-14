@@ -31,7 +31,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macOS 26 아이콘(Icon Composer 형식)을 만드는 Xcode 26 이 macos-15 이미지에 있다 (앱 빌드는 기본 Xcode 로)
+    runs-on: macos-15
     permissions:
       contents: write
     env:
@@ -53,6 +54,26 @@ jobs:
 
       - name: 빌드
         run: cmake --build build --config Release --parallel 4 --target MEON_Standalone MEON_AU MEON_VST3
+
+      - name: macOS 26 아이콘 (Icon Composer)
+        # images/icons/AppIcon.icon 을 Xcode 26 의 actool 로 Assets.car 로 만들어 앱에 넣고 CFBundleIconName 을 적는다.
+        # macOS 26 은 이것을 쓰고(예전 .icns 만 있으면 회색 틀에 가둘 수 있다), 그 아래 버전은 지금처럼 Icon.icns 를 쓴다.
+        # Xcode 26 이 없거나 actool 이 실패하면 .icns 만으로 계속한다 (actool 은 실패해도 0 으로 끝날 수 있어 결과 파일로 확인)
+        continue-on-error: true
+        run: |
+          APP=build/MEON_artefacts/Release/Standalone/Meon.app
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::warning::Xcode 26 이 없어 .icns 아이콘만 씁니다"; exit 0; fi
+          echo "actool: $XC"
+          rm -rf iconout && mkdir iconout
+          DEVELOPER_DIR="$XC/Contents/Developer" xcrun actool images/icons/AppIcon.icon --compile iconout \
+            --platform macosx --minimum-deployment-target 10.13 --app-icon AppIcon \
+            --output-partial-info-plist iconout/partial.plist --warnings --errors --notices
+          ls -la iconout
+          if [ ! -f iconout/Assets.car ]; then echo "::warning::Assets.car 를 만들지 못해 .icns 아이콘만 씁니다"; exit 0; fi
+          cp iconout/Assets.car "$APP/Contents/Resources/Assets.car"
+          plutil -replace CFBundleIconName -string AppIcon "$APP/Contents/Info.plist"
+          plutil -p "$APP/Contents/Info.plist" | grep -i icon
 
       - name: ad-hoc 서명
         # Apple Silicon 은 서명 없는 실행 파일을 아예 실행하지 않는다. 개발자 ID 가 없으니 ad-hoc 으로만 서명한다.
@@ -82,9 +103,17 @@ jobs:
           ln -s /Applications "$STAGE/Applications"
           cp -R "$A/AU/Meon.component" "$A/VST3/Meon.vst3" "$STAGE/플러그인/"
           cp doc/INSTALL.md "$STAGE/설치 안내.md"
+          # 디스크 이미지를 열었을 때 보이는 볼륨 아이콘 (앱 아이콘과 같은 것)
+          cp images/icons/MEON.icns "$STAGE/.VolumeIcon.icns"
           mkdir -p dist
-          hdiutil create -volname "Meon ${{ steps.ver.outputs.version }}" -srcfolder "$STAGE" \
-            -fs HFS+ -format UDZO -ov "dist/meon-${{ steps.ver.outputs.version }}.dmg"
+          VOL="Meon ${{ steps.ver.outputs.version }}"
+          hdiutil create -volname "$VOL" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov dist/rw.dmg
+          MNT=$(hdiutil attach -readwrite -noverify -noautoopen dist/rw.dmg | grep -o '/Volumes/.*' | head -1)
+          # 볼륨에 '사용자 아이콘 있음' 표시를 켜야 Finder 가 .VolumeIcon.icns 를 쓴다
+          xcrun SetFile -a C "$MNT" || echo "::warning::볼륨 아이콘 표시를 켜지 못했습니다"
+          hdiutil detach "$MNT"
+          hdiutil convert dist/rw.dmg -format UDZO -ov -o "dist/meon-${{ steps.ver.outputs.version }}.dmg"
+          rm -f dist/rw.dmg
           # 자동 업데이트용: 앱만 담은 zip (ditto 는 서명과 심볼릭 링크를 그대로 보존한다)
           ditto -c -k --keepParent "$A/Standalone/Meon.app" dist/MEON-mac.zip
           ls -la dist

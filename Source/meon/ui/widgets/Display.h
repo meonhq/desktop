@@ -28,7 +28,8 @@ public:
     enum class Status { none, online, inRoom, offline };
     Avatar (float size, float iconPx);
     void setPart (const juce::String& partKey) { part = partKey; repaint(); }
-    void setDimmed (bool d) { dimmed = d; repaint(); }   // 아이콘 투명도 0.4
+    void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 아이콘을 흐린 글자색(#AAAAAA)으로, 옆 이름과 같게
+    void setInk (juce::Colour c) { ink = c; repaint(); } // 아이콘 색 = 주변 글자색 (기본 #1A1A1A)
     void setStatus (Status s) { status = s; repaint(); }
     void setClickable (bool c) { setMouseCursor (c ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor); }
     std::function<void()> onClick;
@@ -45,6 +46,7 @@ private:
     float size, iconPx;
     juce::String part { "other" };
     bool dimmed = false;
+    juce::Colour ink { col::ink };
     Status status = Status::none;
 };
 

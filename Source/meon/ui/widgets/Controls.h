@@ -50,6 +50,8 @@ public:
     Choice (Style, bool multiSelect = false, int fixedChipWidth = 0);
 
     void setOptions (const juce::StringArray& values, const juce::StringArray& labels);
+    /** values 가 파트 키(guitar …)일 때 칩 글자 앞에 파트 아이콘(14px, 기본 굵기)을 그린다. 색은 칩 글자색 */
+    void setPartIcons (bool on) { partIcons = on; repaint(); }
     void setSelected (const juce::String& value);          // 하나 고르기
     juce::String getSelected() const;
     void setSelectedSet (const juce::StringArray& values);  // 여러 개 고르기
@@ -70,6 +72,8 @@ private:
     int fixedW;
     juce::StringArray values, labels, selected;
     int hover = -1;
+    bool partIcons = false;
+    static constexpr float partIconPx = 14.0f, partIconGap = 4.0f;
     int gapPx() const { return 6; }
     juce::Rectangle<float> itemBounds (int i) const;
     int itemWidth (int i) const;

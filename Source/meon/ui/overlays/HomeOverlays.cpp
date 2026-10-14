@@ -121,6 +121,7 @@ FilterModal::FilterModal (core::MeonCore& c, const core::RoomFilter& applied)
     // 비어 있는 파트: "그 외"는 뺀다 (Q25)
     parts.setOptions ({ "guitar", "bass", "drums", "keys", "vocal" },
                       { TXT ("기타"), TXT ("베이스"), TXT ("드럼"), TXT ("키보드"), TXT ("보컬") });
+    parts.setPartIcons (true);
     ping.setOptions ({ "0", "10", "20" }, { TXT ("전체"), TXT ("10ms 이하"), TXT ("20ms 이하") });
     for (auto* comp : std::initializer_list<juce::Component*> { &parts, &ping, &onlyRoom, &onlyFriends, &footer })
         body.addAndMakeVisible (comp);

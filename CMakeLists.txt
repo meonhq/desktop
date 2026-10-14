@@ -547,9 +547,9 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         MEON_DEV_OPTIONS=${MEON_DEV_OPTIONS}
         ${PLAT_COMPILE_DEFS} )
 
-    # 아이콘: JUCE 는 ICON_BIG 하나를 축소해 모든 크기를 만든다. MEON 은 작은 크기에서 M 만 쓰는
-    # 크기별 아이콘(scripts/make_icons.py 로 생성)을 쓰므로, JUCE 가 만든 파일을 미리 만든 것으로 덮어쓴다.
-    # 앱·AU·VST3 번들이 모두 이 파일을 쓴다.
+    # 아이콘: JUCE 는 ICON_BIG 하나를 축소해 모든 크기를 만든다. MEON 은 디자인 파일(images/brand/app-icon)을
+    # 크기별로 그린 아이콘(scripts/make_icons.py 로 생성: Mac 은 Apple 템플릿 규격, Windows 는 여백 없는 전용 파일)을
+    # 쓰므로, JUCE 가 만든 파일을 미리 만든 것으로 덮어쓴다. 앱·AU·VST3 번들(Windows 는 exe·dll 리소스)이 모두 이 파일을 쓴다.
     get_target_property(meon_gen_dir "${target_name}" JUCE_GENERATED_SOURCES_DIRECTORY)
     if (APPLE)
         configure_file("${CMAKE_CURRENT_SOURCE_DIR}/images/icons/MEON.icns" "${meon_gen_dir}/Icon.icns" COPYONLY)
@@ -578,7 +578,20 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         images/bar_click.wav
         images/beat_click.wav
         images/lgc_bar.wav
-        images/meon_logo.svg
+        images/brand/logo/meon_logo.svg
+        images/brand/logo/meon_mark.svg
+        images/brand/part-icons/part-bass.svg
+        images/brand/part-icons/part-bass-thin.svg
+        images/brand/part-icons/part-drums.svg
+        images/brand/part-icons/part-drums-thin.svg
+        images/brand/part-icons/part-guitar.svg
+        images/brand/part-icons/part-guitar-thin.svg
+        images/brand/part-icons/part-keys.svg
+        images/brand/part-icons/part-keys-thin.svg
+        images/brand/part-icons/part-other.svg
+        images/brand/part-icons/part-other-thin.svg
+        images/brand/part-icons/part-vocal.svg
+        images/brand/part-icons/part-vocal-thin.svg
         LICENSE
         LICENSE_EXCEPTION
         Source/meon/resources/ThirdPartyNotices.txt

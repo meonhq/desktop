@@ -20,6 +20,9 @@ mkdir -p MEON/Plugins/VST3
 cp -v ../doc/README_WINDOWS.txt MEON/README.txt
 cp -v ${BUILDDIR}/Standalone/Meon.exe MEON/
 cp -pRv ${BUILDDIR}/VST3/Meon.vst3 MEON/Plugins/VST3/
+# VST3 폴더 아이콘 (VST3 규격): 번들 폴더에 PlugIn.ico 와 desktop.ini
+cp -v ../images/icons/MEON.ico MEON/Plugins/VST3/Meon.vst3/PlugIn.ico
+printf '[.ShellClassInfo]\r\nIconResource=PlugIn.ico,0\r\n' > MEON/Plugins/VST3/Meon.vst3/desktop.ini
 
 mkdir -p instoutput
 rm -f instoutput/*
