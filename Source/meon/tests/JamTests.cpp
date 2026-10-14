@@ -14,6 +14,7 @@ namespace
     {
         juce::ListenerList<Listener> ls;
         bool connected = false, sendMuted = false, monitorMuted = false, selfMon = false;
+        int selfPan = 0;
         juce::String user, group;
         juce::StringArray allowed;
         bool allowEnabled = false;
@@ -72,6 +73,7 @@ namespace
         void setSendMuted (bool b) override { sendMuted = b; }
         void setSendGainDb (float db) override { sendGain = db; }
         void setSelfMonitor (bool b) override { selfMon = b; }
+        void setSelfMonitorPan (int p) override { selfPan = p; }
         void setMasterDb (float db) override { masterDb = db; }
         void setMonitorMuted (bool b) override { monitorMuted = b; }
         void setBufferMode (BufferMode m) override { mode = m; }
@@ -276,6 +278,13 @@ public:
             expect (engine.mode == Engine::BufferMode::stable && saved.bufferMode == Engine::BufferMode::stable);
             jam.setMasterDb (9.0f);
             expectEquals (engine.masterDb, 6.0f);
+
+            // 셀프 모니터 패닝: 엔진에 넘기고 저장 (-100..100)
+            jam.setSelfMonitorPan (-40);
+            expectEquals (engine.selfPan, -40);
+            expectEquals (saved.selfMonitorPan, -40);
+            jam.setSelfMonitorPan (250);
+            expectEquals (engine.selfPan, 100);
 
             // 파일을 틀어 둔 채
             expect (jam.loadFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("song.wav")));

@@ -411,6 +411,7 @@ void EngineLink::setSendMuted (bool b)               { setParam (SonobusAudioPro
 void EngineLink::setSendGainDb (float db)            { setParam (SonobusAudioProcessor::paramInGain, juce::Decibels::decibelsToGain (db)); }
 void EngineLink::setSelfMonitor (bool on)            { selfMonitor = on; applyMonitorParams(); }
 void EngineLink::setSelfMonitorDb (float db)         { selfMonitorDb = db; applyMonitorParams(); }
+void EngineLink::setSelfMonitorPan (int pan)         { selfMonitorPan = pan; applyMonitorParams(); }
 void EngineLink::setEarGuardLevel (int l)            { processor.getEarGuard().setLevel ((meon::EarGuard::Level) juce::jlimit (0, 2, l)); }
 void EngineLink::setMasterDb (float db)              { masterDb = db; applyMonitorParams(); }
 void EngineLink::setMonitorMuted (bool m)            { monitorMuted = m; applyMonitorParams(); }
@@ -422,6 +423,9 @@ void EngineLink::applyMonitorParams()
     setParam (SonobusAudioProcessor::paramWet, wet);
     setParam (SonobusAudioProcessor::paramDry, (monitorMuted || ! selfMonitor) ? 0.0f
                                                                                : juce::jlimit (0.0f, 2.0f, juce::Decibels::decibelsToGain (selfMonitorDb)));
+    // 셀프 모니터 패닝: 입력 그룹의 모니터 패닝에만 더한다 (송출 패닝은 그대로, 엔진 수정 ChannelGroupParams::monitorPan)
+    for (int g = 0; g < juce::jmax (1, processor.getInputGroupCount()); ++g)
+        processor.setInputMonitorPan (g, (float) juce::jlimit (-100, 100, selfMonitorPan) / 100.0f);
 }
 
 void EngineLink::setBufferMode (BufferMode m)

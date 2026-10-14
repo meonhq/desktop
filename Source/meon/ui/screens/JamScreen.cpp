@@ -136,9 +136,8 @@ struct JamScreen::MemberRow : juce::Component
         {
             mute.onPress = [this] { owner.jam.setSelfMonitor (! owner.jam.isSelfMonitor()); refresh(); };
             volume.onChange = [this] (float db) { owner.jam.setSelfMonitorDb (db); refresh(); };
-            reset.onPress = [this] { owner.jam.setSelfMonitorDb (0.0f); refresh(); };
-            pan.setEnabled (false);
-            pan.setAlpha (0.4f);
+            pan.onChange = [this] (int v) { owner.jam.setSelfMonitorPan (v); refresh(); };
+            reset.onPress = [this] { owner.jam.setSelfMonitorDb (0.0f); owner.jam.setSelfMonitorPan (0); refresh(); };
             mute.setTooltip (TXT ("셀프 모니터 · 내 소리를 내가 듣기"));
             ping.setText (TXT ("나"));
             meter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()), [this] (int ch) { return owner.jam.inputLevel (ch); });
@@ -186,10 +185,16 @@ struct JamScreen::MemberRow : juce::Component
         mute.setOn (muted);
         mute.setButtonText (muted ? TXT ("음소거 해제") : TXT ("음소거"));
         const float vol = member.isMe ? owner.jam.getSelfMonitorDb() : member.gainDb;
-        const int pv = member.isMe ? 0 : member.pan;
+        const int pv = member.isMe ? owner.jam.getSelfMonitorPan() : member.pan;
         if (! volume.isDragging()) volume.setValue (vol);
         volume.setTitle (DbSlider::dbText (vol) + TXT (" · 더블클릭하면 0 dB"));
         pan.setValue (pv);
+        if (member.isMe)
+        {
+            // 내 패닝은 셀프 모니터에만 걸리므로, 셀프 모니터가 꺼져(음소거) 있을 때만 막는다
+            pan.setEnabled (! muted);
+            pan.setAlpha (muted ? 0.4f : 1.0f);
+        }
         reset.setDimmed (vol == 0.0f && pv == 0);
         const bool host = owner.core.store().state().amHost();
         manage.setVisible (host && ! member.isMe);

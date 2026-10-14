@@ -488,7 +488,7 @@ void ChannelGroup::processMonitor (AudioBuffer<float>& frombuffer, int fromStart
         for (int channel = destStartChan; channel < destStartChan + destNumChans && channel < toNumChan; ++channel) {
             int pani = 0;
             for (int i=useFromStartChan; i < useFromStartChan + params.numChannels && i < useFromNumChan; ++i, ++pani) {
-                const float upan = (params.numChannels != 2 ? params.pan[pani] : i==useFromStartChan ? params.panStereo[0] : params.panStereo[1]);
+                const float upan = jlimit(-1.0f, 1.0f, (params.numChannels != 2 ? params.pan[pani] : i==useFromStartChan ? params.panStereo[0] : params.panStereo[1]) + params.monitorPan); // MEON: + monitorPan
                 const float lastpan = (params.numChannels != 2 ? procstate.lastpan[pani] : i==useFromStartChan ? procstate.laststereopan[0] : procstate.laststereopan[1]);
 
                 // -1 is left, 1 is right
@@ -536,10 +536,11 @@ void ChannelGroup::processMonitor (AudioBuffer<float>& frombuffer, int fromStart
         processReverbSend(*usefrombuffer, useFromStartChan, jmin(params.numChannels, useFromNumChan), *reverbbuffer, revStartChan, revNumChans, numSamples, revEnabled, false, targmon * revgainfactor, &revprocstate);
     }
 
-    procstate.laststereopan[0] = params.panStereo[0];
-    procstate.laststereopan[1] = params.panStereo[1];
+    // MEON: 위에서 쓴 값(monitorPan 포함)을 기억해야 다음 블록에서 변화를 램프로 넘긴다
+    procstate.laststereopan[0] = jlimit(-1.0f, 1.0f, params.panStereo[0] + params.monitorPan);
+    procstate.laststereopan[1] = jlimit(-1.0f, 1.0f, params.panStereo[1] + params.monitorPan);
     for (int pani=0; pani < params.numChannels; ++pani) {
-        procstate.lastpan[pani] = params.pan[pani];
+        procstate.lastpan[pani] = jlimit(-1.0f, 1.0f, params.pan[pani] + params.monitorPan);
     }
 
     procstate.lastlevel = targmon;

@@ -563,6 +563,8 @@ public:
     float getInputGroupGain(int changroup);
 
     void setInputMonitor(int changroup, float mgain);
+    /** MEON: 셀프 모니터 패닝 (모니터에만, 송출에는 영향 없음) */
+    void setInputMonitorPan(int changroup, float pan);
     float getInputMonitor(int changroup);
 
     void setInputGroupMuted(int changroup, bool muted);
