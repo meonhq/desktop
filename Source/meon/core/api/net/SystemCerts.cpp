@@ -1,8 +1,9 @@
-#include "SystemCerts.h"
-
-#if JUCE_MAC
+// Apple 헤더는 JUCE 헤더보다 먼저 넣는다 (JuceHeader 의 using namespace juce 때문에 Point 등이 겹친다. TokenStore.cpp 와 같은 방식)
+#if defined (__APPLE__)
  #include <Security/Security.h>
 #endif
+
+#include "SystemCerts.h"
 
 namespace meon::core::certs
 {
