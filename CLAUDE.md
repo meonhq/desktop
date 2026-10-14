@@ -13,7 +13,7 @@ macOS / Windows 독립 앱 + 플러그인(AU / VST3). UI 문구는 한국어 존
 - 독립 앱은 켤 때 `build.txt` 와 내 빌드 번호를 비교해서 자동 업데이트한다 (`Source/meon/MeonUpdater.*`).
   `run_number` 는 빌드마다 오르므로 릴리스 번호는 건너뛰며 오르지만, 커지기만 하면 업데이트는 맞게 동작한다.
 - `docs/**` 만 바뀐 push·PR 은 빌드하지 않는다.
-- 큰 작업(리메이크)은 `remake` 브랜치에서 하고, 그 PR 은 `remake` 로 올린다.
+- 리메이크(R0–R10)는 `main` 에 합쳤다 (R10, 태그 없음). 이후 PR 은 모두 `main` 으로 올린다. 테스터 빌드는 `main` 에서 `workflow_dispatch` 로 만든다 (이미 설치된 앱도 그 빌드로 자동 업데이트된다).
 
 ## 작업 흐름
 
