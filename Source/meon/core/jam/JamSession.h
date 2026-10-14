@@ -128,7 +128,9 @@ public:
     float sendLevel (int ch) const    { return engine.sendLevel (ch); }
     float monitorLevel (int ch) const { return engine.monitorLevel (ch); }
     int sendChannelCount() const      { return engine.sendChannelCount(); }
-    bool isInputSilent() const        { return silence.isWarning(); }
+    bool isInputSilent() const        { return silence.warningKind() == SilenceDetector::Kind::silent; }   // 장치는 있는데 소리가 없음
+    bool isInputMissing() const       { return silence.warningKind() == SilenceDetector::Kind::noInput; }  // 입력 장치(채널)가 없음
+    bool hasInputWarning() const      { return silence.isWarning(); }
 
     // 파일 재생 (내 소리와 섞여 모두에게)
     bool loadFile (const juce::File&);

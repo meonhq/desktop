@@ -456,10 +456,13 @@ int EngineLink::inputChannelCount() const
     int start = 0, count = 0;
     if (processor.getInputGroupCount() < 1 || ! const_cast<SonobusAudioProcessor&> (processor).getInputGroupChannelStartAndCount (0, start, count))
         return 0;
+    // 열린 장치가 없거나, 장치에 켜진 입력 채널이 없으면 입력 없음 (버그 17: 무음 대신 "입력 장치 없음" 안내)
     if (deviceManager)
-        if (auto* dm = deviceManager())
-            if (auto* dev = dm->getCurrentAudioDevice())
-                if (dev->getActiveInputChannels().countNumberOfSetBits() == 0) return 0;
+    {
+        auto* dm = deviceManager();
+        auto* dev = dm != nullptr ? dm->getCurrentAudioDevice() : nullptr;
+        if (dev == nullptr || dev->getActiveInputChannels().countNumberOfSetBits() == 0) return 0;
+    }
     return count;
 }
 
@@ -486,6 +489,41 @@ String EngineLink::audioDescription() const
                 return dev->getTypeName() + " / " + dev->getName() + " / " + String (dev->getCurrentSampleRate(), 0) + " Hz / "
                        + String (dev->getCurrentBufferSizeSamples());
     return "unknown";
+}
+
+Engine::DeviceInfo EngineLink::deviceInfo() const
+{
+    DeviceInfo d;
+    if (plugin)
+    {
+        // 플러그인: 장치는 DAW 가 쥐고 있다
+        d.type = "plugin";
+        d.input = processor.getMainBusNumInputChannels() > 0 ? "DAW" : "";
+        d.output = "DAW";
+        d.sampleRate = processor.getSampleRate();
+        d.bufferSize = processor.getBlockSize();
+        return d;
+    }
+    if (deviceManager)
+        if (auto* dm = deviceManager())
+        {
+            const auto setup = dm->getAudioDeviceSetup();
+            if (auto* dev = dm->getCurrentAudioDevice())
+            {
+                d.type = dev->getTypeName();
+                d.sampleRate = dev->getCurrentSampleRate();
+                d.bufferSize = dev->getCurrentBufferSizeSamples();
+                d.output = setup.outputDeviceName.isNotEmpty() ? setup.outputDeviceName : dev->getName();
+                // 켜진 입력 채널이 없으면 이름이 남아 있어도 입력은 없는 것으로
+                if (dev->getActiveInputChannels().countNumberOfSetBits() > 0)
+                    d.input = setup.inputDeviceName.isNotEmpty() ? setup.inputDeviceName : dev->getName();
+            }
+            else
+            {
+                d.type = dm->getCurrentAudioDeviceType();
+            }
+        }
+    return d;
 }
 
 bool EngineLink::sendChat (const EngineChat& c)

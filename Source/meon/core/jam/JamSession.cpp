@@ -245,7 +245,14 @@ void JamSession::engineGroupJoined (bool ok, const String& group, const String& 
 
     SessionLog::AudioInfo audio;
     audio.host = connection.aooHost + ":" + String (connection.aooPort);
-    audio.deviceType = engine.audioDescription();
+    // 장치 정보는 칸별로 (버그 18: 예전에는 deviceType 한 줄에 몰아 넣음). 없으면 빈칸 대신 "없음"
+    const auto dev = engine.deviceInfo();
+    const String none (juce::CharPointer_UTF8 ("없음"));
+    audio.deviceType = dev.type.isNotEmpty() ? dev.type : String ("unknown");
+    audio.inputDevice = dev.input.isNotEmpty() ? dev.input : none;
+    audio.outputDevice = dev.output.isNotEmpty() ? dev.output : none;
+    audio.sampleRate = dev.sampleRate;
+    audio.bufferSize = dev.bufferSize;
     sessionLog.begin (currentRoomId, myId, options.plugin, audio);
     sessionLog.addEvent ("joined", connection.groupName);
     lastSampleAt = scheduler.nowMs();
@@ -391,13 +398,16 @@ void JamSession::tick()
     if (sChange == SilenceDetector::Change::started)
     {
         if (sessionLog.isActive())
-            sessionLog.addEvent ("inputSilenceStart", "channels " + engine.inputChannelText() + ", " + engine.audioDescription()
-                                                      + ", sendGainDb " + String (prefs.sendGainDb, 1));
+            sessionLog.addEvent (isInputMissing() ? "inputMissingStart" : "inputSilenceStart",
+                                 "channels " + engine.inputChannelText() + ", " + engine.audioDescription()
+                                     + ", sendGainDb " + String (prefs.sendGainDb, 1));
         listeners.call ([] (Listener& l) { l.jamSilenceChanged (true); });
     }
     else if (sChange == SilenceDetector::Change::ended)
     {
-        if (sessionLog.isActive()) sessionLog.addEvent ("inputSilenceEnd", String (silence.lastDurationMs() / 1000.0, 1) + " s");
+        if (sessionLog.isActive())
+            sessionLog.addEvent (silence.lastKind() == SilenceDetector::Kind::noInput ? "inputMissingEnd" : "inputSilenceEnd",
+                                 String (silence.lastDurationMs() / 1000.0, 1) + " s");
         listeners.call ([] (Listener& l) { l.jamSilenceChanged (false); });
     }
 
@@ -443,7 +453,8 @@ void JamSession::writeSample (juce::int64)
         { "sendMuted", engine.isSendMuted() },
         { "sendGainDb", prefs.sendGainDb },
         { "inputChannels", engine.inputChannelText() },
-        { "inputSilent", silence.isWarning() },
+        { "inputSilent", isInputSilent() },
+        { "inputMissing", isInputMissing() },
         { "sendChannels", engine.sendChannelCount() },
         { "masterDb", masterDb }, { "monitorMuted", monitorMuted }, { "selfMonitor", prefs.selfMonitor },
         { "selfMonitorPan", prefs.selfMonitorPan },
