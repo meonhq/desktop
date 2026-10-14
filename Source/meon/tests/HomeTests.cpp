@@ -154,6 +154,13 @@ public:
             r.wait();
             expect (r.home.friendJoinState (fr) == J::requested);
 
+            // 프로필 창(버그 27)도 같은 상태: RoomRef 로 묻고, "요청 보냄" 동안은 콜백도 없이 아무것도 안 한다
+            expect (r.home.roomJoinState (*fr.room) == J::requested);
+            bool profileCalled = false;
+            r.home.joinFriendRoom (*fr.room, [&] (Result<JoinResult>) { profileCalled = true; });
+            r.wait();
+            expect (! profileCalled);
+
             // 비공개 방이나 정원이 찬 방(room 이 없거나 joinable false)은 버튼 없음
             auto hidden = fr;
             hidden.room.reset();
@@ -161,6 +168,7 @@ public:
             auto fullRoom = fr;
             fullRoom.room->joinable = false;
             expect (r.home.friendJoinState (fullRoom) == J::none);
+            expect (r.home.roomJoinState (*fullRoom.room) == J::none);
         }
 
         beginTest ("full room and codes map to failure kinds");

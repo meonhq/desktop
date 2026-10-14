@@ -29,6 +29,8 @@ public:
     ~JamScreen() override;
 
     std::function<void()> onOpenSettings, onOpenAudioSettings;
+    /** 프로필 창에서 다른 방에 들어가거나 요청하다 실패 (입장 실패 상자, AppRoot) */
+    std::function<void (const core::ApiError&)> onJoinFailure;
 
     void paint (juce::Graphics&) override;
     bool keyPressed (const juce::KeyPress&) override;
@@ -64,6 +66,7 @@ private:
     void showModal (std::unique_ptr<Modal>);
     void toggleRequests();
     void openProfile (const juce::String& userId);
+    void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);
     bool showBanner() const;
 

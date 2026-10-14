@@ -413,10 +413,17 @@ void MeonEditor::applyHomePreview()
     {
         if (auto* jam = core.jam()) jam->setSendMuted (true);
     }
-    else if (p == "friendreq")   // 친구 목록에서 승인 방에 요청을 보낸 뒤 ("요청 보냄", 같은 방 카드도)
+    else if (p == "profile")   // 승인 방에 있는 친구의 프로필 ("요청")
+    {
+        if (const auto* f = core.store().state().findFriend ("u_f_yuna")) home->openProfile (f->user);
+    }
+    else if (p == "friendreq" || p == "profilereq")   // 친구 목록에서 승인 방에 요청을 보낸 뒤 ("요청 보냄", 같은 방 카드도)
     {
         if (const auto* f = core.store().state().findFriend ("u_f_yuna"))
+        {
             core.home().joinFriend (*f, [] (core::Result<core::JoinResult>) {});
+            if (p == "profilereq") home->openProfile (f->user);   // 프로필 창도 "요청 보냄"
+        }
     }
     else if (p == "fail")   appRoot->showJoinFailure (core::HomeController::JoinFailure::full);
     else if (p == "toast")

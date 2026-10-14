@@ -42,6 +42,7 @@ public:
     void openCreateRoom();
     void openFilter();
     void toggleNotifications();
+    void openProfile (const core::UserPublic&);
     void closeOverlays();
     bool hasOverlay() const { return modal != nullptr || popover != nullptr; }
 
@@ -112,7 +113,6 @@ private:
     std::unique_ptr<Popover> popover;
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
-    void openProfile (const core::UserPublic&);
 
     void rebuildRooms();
     void layoutRooms();

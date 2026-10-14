@@ -1276,7 +1276,7 @@ void JamScreen::toggleRequests()
     {
         juce::Component::SafePointer<JamScreen> s2 (this);
         auto user = u;
-        juce::MessageManager::callAsync ([s2, user] { if (s2 != nullptr) s2->showModal (std::make_unique<ProfileModal> (s2->core, user, true)); });
+        juce::MessageManager::callAsync ([s2, user] { if (s2 != nullptr) s2->showProfile (user); });
     };
     const auto n = core.store().state().joinRequests.size();
     popover->setCount (n > 0 ? juce::String ((int) n) : juce::String());
@@ -1296,7 +1296,18 @@ void JamScreen::openProfile (const juce::String& userId)
     for (auto& f : core.store().state().friends)
         if (f.user.id == userId) u = f.user;
     if (u.username.isEmpty()) u.nickname = memberName (userId);
-    showModal (std::make_unique<ProfileModal> (core, u, true));
+    showProfile (u);
+}
+
+void JamScreen::showProfile (const core::UserPublic& u)
+{
+    auto m = std::make_unique<ProfileModal> (core, u, true);
+    juce::Component::SafePointer<JamScreen> safe (this);
+    m->onJoinFailure = [safe] (const core::ApiError& e)
+    {
+        juce::MessageManager::callAsync ([safe, e] { if (safe != nullptr && safe->onJoinFailure) safe->onJoinFailure (e); });
+    };
+    showModal (std::move (m));
 }
 
 void JamScreen::openManage (const core::JamSession::Member& m)

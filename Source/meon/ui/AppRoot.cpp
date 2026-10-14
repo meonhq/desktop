@@ -45,6 +45,7 @@ void AppRoot::updateScreen()
             auto screen = std::make_unique<JamScreen> (core);
             screen->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
             screen->onOpenAudioSettings = [this] { if (onOpenSettings) onOpenSettings (core.isPlugin() ? 0 : 2); };
+            screen->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
             jam = std::move (screen);
             addAndMakeVisible (*jam);
         }

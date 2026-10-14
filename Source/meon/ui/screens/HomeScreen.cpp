@@ -88,6 +88,8 @@ struct HomeScreen::RoomCard : juce::Component
         else                                          label = TXT ("바로 입장");
         join.setButtonText (label);
         join.setEnabled (! full);
+        // "요청 보냄" 은 눌러도 아무 일이 없으므로 화살표 커서 (모양은 그대로)
+        join.setMouseCursor (label == TXT ("요청 보냄") ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
         setAlpha (fade.get() * (full ? 0.45f : 1.0f));
         resized();
         repaint();
@@ -246,6 +248,7 @@ struct HomeScreen::FriendList : juce::Component
             // "요청 보냄" 은 방 목록 카드와 같은 모양으로 두고 누르면 아무것도 하지 않는다 (joinFriend 가 막는다)
             if (show == join.isVisible() && label == join.getButtonText()) return;
             join.setButtonText (label);
+            join.setMouseCursor (st == J::requested ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
             join.setVisible (show);
             resized();
             repaint();
@@ -650,7 +653,16 @@ void HomeScreen::openProfile (const core::UserPublic& u)
 {
     juce::Component::SafePointer<HomeScreen> safe (this);
     auto user = u;
-    juce::MessageManager::callAsync ([safe, user] { if (safe != nullptr) safe->showModal (std::make_unique<ProfileModal> (safe->core, user, false)); });
+    juce::MessageManager::callAsync ([safe, user]
+    {
+        if (safe == nullptr) return;
+        auto m = std::make_unique<ProfileModal> (safe->core, user, false);
+        m->onJoinFailure = [safe] (const core::ApiError& e)
+        {
+            juce::MessageManager::callAsync ([safe, e] { if (safe != nullptr && safe->onJoinFailure) safe->onJoinFailure (e); });
+        };
+        safe->showModal (std::move (m));
+    });
 }
 
 void HomeScreen::openJoinCode()
