@@ -1,4 +1,5 @@
 #include "AccountController.h"
+#include "../log/AppLog.h"
 
 namespace meon::core
 {
@@ -105,7 +106,11 @@ void AccountController::deleteAccount (Callback<Done> cb)
     {
         if (weak.expired()) return;
         if (cb) cb (r);
-        if (r.ok()) auth.logout();
+        if (r.ok())
+        {
+            AppLog::write ("auth", LOGTXT ("회원 탈퇴 완료"));
+            auth.logout();
+        }
     });
 }
 

@@ -1,5 +1,6 @@
 #include "MeonApi.h"
 #include "ApiJson.h"
+#include "../log/AppLog.h"
 
 namespace meon::core
 {
@@ -36,10 +37,10 @@ void MeonApi::request (const String& method, const String& path, const var& body
     if (auth && refreshing)
     {
         // 토큰을 새로 받는 중이면 끝난 뒤 보낸다
-        waitingForRefresh.push_back ([this, method, path, body, done] (bool ok)
+        refreshWaiters.push_back ([this, method, path, body, done] (Result<Tokens> t)
         {
-            if (ok) sendNow (method, path, body, true, false, done);
-            else    done (HttpResponse { 401, json::encodeError (ApiError::of (ErrorCode::unauthorized)) });
+            if (t.ok()) sendNow (method, path, body, true, false, done);
+            else        done (HttpResponse { 401, json::encodeError (ApiError::of (ErrorCode::unauthorized)) });
         });
         return;
     }
@@ -56,46 +57,44 @@ void MeonApi::sendNow (const String& method, const String& path, const var& body
     if (auth) req.accessToken = tokens.accessToken;
 
     std::weak_ptr<bool> weak = alive;
-    transport.send (req, [this, weak, method, path, body, auth, mayRetry, done] (HttpResponse r)
+    const auto usedToken = req.accessToken;
+    transport.send (req, [this, weak, method, path, body, auth, mayRetry, done, usedToken] (HttpResponse r)
     {
         if (weak.expired()) return;
 
-        if (r.status == 426 && onClientOutdated)
-            onClientOutdated();
+        if (r.status == 426)
+        {
+            AppLog::write ("api", LOGTXT ("426 (앱 버전이 낮음) ← ") + method + " " + path);
+            if (onClientOutdated) onClientOutdated();
+        }
 
         // 401: access 토큰 만료(token_expired) 또는 무효(unauthorized, 다른 곳에서 세션 무효화 등) → refresh 로 한 번 더.
         // refresh 도 실패하면 onSessionLost
         if (r.status == 401 && auth && mayRetry && tokens.refreshToken.isNotEmpty())
         {
+            // 보내는 사이 다른 쪽이 이미 새 토큰을 받았으면 갱신하지 않고 새 토큰으로 다시 보낸다.
+            // 새 토큰도 401 이면 그때는 토큰이 같으므로 아래 갱신으로 간다
+            if (tokens.accessToken.isNotEmpty() && tokens.accessToken != usedToken && ! refreshing)
+            {
+                sendNow (method, path, body, true, true, done);
+                return;
+            }
+            const auto why = "401 " + errorKey (errorFromResponse (r).code) + LOGTXT (" ← ") + method + " " + path.upToFirstOccurrenceOf ("?", false, false);
             doRefresh ([this, method, path, body, done] (bool ok)
             {
                 if (ok) sendNow (method, path, body, true, false, done);
                 else    done (HttpResponse { 401, json::encodeError (ApiError::of (ErrorCode::unauthorized)) });
-            });
+            }, why);
             return;
         }
         done (r);
     });
 }
 
-void MeonApi::doRefresh (std::function<void (bool)> done)
+void MeonApi::doRefresh (std::function<void (bool)> done, const String& why)
 {
-    waitingForRefresh.push_back (std::move (done));
-    if (refreshing) return;
-    refreshing = true;
-
-    refresh ([this] (Result<Tokens> r)
-    {
-        refreshing = false;
-        auto waiting = std::move (waitingForRefresh);
-        waitingForRefresh.clear();
-        if (! r.ok() && r.code() != ErrorCode::network && r.code() != ErrorCode::timeout)
-        {
-            setTokens ({});
-            if (onSessionLost) onSessionLost();
-        }
-        for (auto& w : waiting) w (r.ok());
-    });
+    sessionLostOnRefreshFailure = true;
+    refresh ([done] (Result<Tokens> r) { done (r.ok()); }, why);
 }
 
 template <typename T>
@@ -182,18 +181,55 @@ void MeonApi::login (const String& email, const String& password, Callback<AuthR
     request ("POST", "/auth/login", body, false, [this, cb] (const HttpResponse& r) { storeAuth (r, cb); });
 }
 
-void MeonApi::refresh (Callback<Tokens> cb)
+void MeonApi::refresh (Callback<Tokens> cb, const String& whyGiven)
 {
+    const auto why = whyGiven.isNotEmpty() ? whyGiven : LOGTXT ("요청");
+    refreshWaiters.push_back (std::move (cb));
+    if (refreshing)
+    {
+        AppLog::write ("auth", LOGTXT ("토큰 갱신 진행 중이라 결과를 같이 기다림 (") + why + ")");
+        return;
+    }
+    refreshing = true;
+    AppLog::write ("auth", LOGTXT ("토큰 갱신 시작 (") + why + ")");
+
     auto body = json::obj ({ { "refresh_token", tokens.refreshToken } });
     std::weak_ptr<bool> weak = alive;
-    sendNow ("POST", "/auth/refresh", body, false, false, [this, weak, cb] (const HttpResponse& r)
+    sendNow ("POST", "/auth/refresh", body, false, false, [this, weak] (const HttpResponse& r)
     {
         if (weak.expired()) return;
-        if (! isSuccess (r.status)) { cb (errorFromResponse (r)); return; }
-        auto at = r.body.getProperty ("access_token", var()), rt = r.body.getProperty ("refresh_token", var());
-        if (! at.isString() || ! rt.isString()) { cb (ApiError::of (ErrorCode::badResponse)); return; }
-        setTokens ({ at.toString(), rt.toString() });
-        cb (tokens);
+
+        Result<Tokens> result = ApiError::of (ErrorCode::badResponse);
+        if (! isSuccess (r.status))
+            result = errorFromResponse (r);
+        else
+        {
+            auto at = r.body.getProperty ("access_token", var()), rt = r.body.getProperty ("refresh_token", var());
+            if (at.isString() && rt.isString())
+            {
+                setTokens ({ at.toString(), rt.toString() });
+                result = tokens;
+            }
+        }
+
+        refreshing = false;
+        const bool loseSession = std::exchange (sessionLostOnRefreshFailure, false);
+        auto waiters = std::move (refreshWaiters);
+        refreshWaiters.clear();
+
+        if (result.ok())
+            AppLog::write ("auth", LOGTXT ("토큰 갱신 성공"));
+        else if (result.code() == ErrorCode::network || result.code() == ErrorCode::timeout)
+            AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: ") + errorKey (result.code()) + LOGTXT (" (연결 문제라 로그인은 유지)"));
+        else
+        {
+            AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: ") + errorKey (result.code()) + " (HTTP " + String (r.status) + LOGTXT (") → 저장된 로그인을 지움"));
+            setTokens ({});
+            if (loseSession && onSessionLost) onSessionLost();
+        }
+
+        for (auto& w : waiters)
+            if (w) w (result);
     });
 }
 

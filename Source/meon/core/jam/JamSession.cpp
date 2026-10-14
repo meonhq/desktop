@@ -1,4 +1,5 @@
 #include "JamSession.h"
+#include "../log/AppLog.h"
 
 namespace meon::core
 {
@@ -86,6 +87,7 @@ void JamSession::stateChanged (StateKey k)
 
 void JamSession::enter (const RoomDetail& room)
 {
+    AppLog::write ("jam", LOGTXT ("방 입장: ") + room.id + (room.type == "private" ? LOGTXT (" (비공개)") : ""));
     currentRoomId = room.id;
     connection = room.connection;
     myId = connection.aooUsername;
@@ -144,6 +146,7 @@ void JamSession::joinGroup()
 
 void JamSession::exit (const String& reason)
 {
+    AppLog::write ("jam", LOGTXT ("방 나감: ") + currentRoomId + " (" + reason + ")");
     // 방을 나가면(직접 퇴장·방 닫힘·추방·다른 방으로 옮김) 틀어 둔 파일을 닫는다 (옛 앱 동작)
     closeFile();
     scheduler.cancel (tickTask);

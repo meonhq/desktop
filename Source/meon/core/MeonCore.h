@@ -29,6 +29,7 @@ public:
         juce::File dataFolder;                  // 가짜 서버 상태 파일을 둘 곳 (설정 폴더)
         FakeMeonServer::Options fake;
         bool resetFakeState = false;            // 개발용: 가짜 계정을 지우고 시작
+        juce::File logFile;                     // 진단 로그 (logs/app.log). 비우면 쓰지 않는다 (단위 테스트)
     };
 
     explicit MeonCore (Options);
@@ -72,6 +73,7 @@ private:
     std::unique_ptr<AccountController> accountController;
     bool started = false;
     juce::File fakeStateFile;
+    bool fakeStateWriteFailed = false;
     std::unique_ptr<Engine> engineImpl;
     std::unique_ptr<JamSession> jamSession;
     std::unique_ptr<RttReporter> rtt;
