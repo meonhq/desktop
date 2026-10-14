@@ -191,7 +191,8 @@ struct Realtime {
 | `meon/MeonTheme.*`, `MeonLookAndFeel.*`, `MeonWidgets.*`, `MeonEmoji.*`, `OnboardingScreens.*`, `LobbyScreens.*`, `JamScreen.*`, `SettingsScreen.*` | **삭제** | 새 `ui/` 로 대체. 단, 쓸 만한 조각은 옮겨 쓴다: Pretendard 로딩·Windows ttf 처리(`MeonTheme.cpp`), 로고 경로, 링크 감지·한글 자모 합치기(`JamScreen.cpp`, `MeonSession::composeHangul`), 이모지 그리기(`MeonEmoji`), 6칸 코드 입력의 키 처리(`MeonWidgets.cpp`) |
 | `Source/SonoStandaloneFilterApp.cpp` | **수정** | `meon::MeonEditor` 캐스팅 → `meon::ShellHooks` 캐스팅 (버그 #20). 개발용 실행 옵션은 `MEON_DEV_OPTIONS` 일 때만 해석 (버그 #21) |
 | `Source/SonoStandaloneFilterWindow.h` | **수정** | 같은 이유로 캐스팅 변경. 최소·기본 창 크기 1024×680 / 1280×800 유지 |
-| `Source/SonobusPluginProcessor.*` | **허용 범위 수정** | `createEditor()` 가 새 에디터, 호스트 파라미터 숨김, 플러그인 송신 채널·셀프 모니터 기본값, 버퍼 모드 연결. 승인 필요: E1 멤버 필터, E2 `MeonCore` 소유 (8장) |
+| `Source/SonobusPluginProcessor.*` | **허용 범위 수정** | `createEditor()` 가 새 에디터, 호스트 파라미터 숨김, 플러그인 송신 채널·셀프 모니터 기본값, 버퍼 모드 연결. 승인 필요: E1 멤버 필터, E2 `MeonCore` 소유, E3 `setInputMonitorPan` (8장) |
+| `Source/ChannelGroup.*` | **승인 수정 (E3)** | `ChannelGroupParams::monitorPan`, `processMonitor` 에서만 사용 (8.2) |
 | `CMakeLists.txt` | **수정** | 새 소스 목록, 테스트 타깃 `MEON_Tests`(콘솔, JUCE `UnitTest`), `MEON_DEV_OPTIONS` 정의, fixtures BinaryData |
 
 ---
@@ -466,7 +467,19 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 |---|---|---|---|
 | **E1** | **피어 허용 목록**: `setAllowedPeerNames(StringArray)` 추가. 그룹 피어 입장 이벤트(`SPP.cpp:4320-4345`)에서 허용 목록이 켜져 있고 이름이 없으면 **연결하지 않고 주소를 대기 목록에 둔다**. 목록이 바뀌면 새로 허용된 대기 피어를 연결하고, 빠진 피어는 연결을 끊는다 | API 2.8 "멤버 목록 밖의 상대와는 소리를 주고받지 않는다". 엔진이 피어를 들어오는 즉시 자동 연결하므로, 엔진 밖에서는 연결된 뒤에야 끊을 수 있어 그사이 소리가 오간다. 멤버 목록(`room.updated`)이 AOO 입장보다 늦게 오는 경우도 있어서 "나중에 연결"이 필요하다 | 약 60줄. 허용 목록이 비어 있으면(꺼짐) 지금 동작과 같다 |
 | **E2** | **`SonobusAudioProcessor` 가 `MeonCore` 를 소유**: 전방 선언 + `std::unique_ptr<meon::core::MeonCore>` 멤버 1개, 생성·소멸 각 1줄 | 플러그인 창을 닫아도 로그인·실시간 연결·방 상태·RTT 보고가 이어져야 한다 (1.6). 지금은 에디터가 `MeonSession` 을 만들어서 창을 다시 열 때마다 기본값을 덮는 버그(#1)가 생겼다 | 약 10줄 |
-| E3 (Q10 에 따라) | 마스터(`wet`) 범위를 0~2 에서 0~3.17(+10 dB)로 | 디자인 마스터 −30~+10 dB. 지금 엔진 최대는 +6.02 dB | 1줄. Q10 에서 "+6 으로 제한"을 고르면 필요 없음 |
+| (안 함) | 마스터(`wet`) 범위를 0~2 에서 0~3.17(+10 dB)로 | 디자인 마스터 −30~+10 dB. 지금 엔진 최대는 +6.02 dB | Q10 에서 마스터를 −30~+6 dB 로 제한해 필요 없어졌다. 처음엔 이 자리를 E3 으로 잡아 두었으나, E3 번호는 아래 모니터 전용 패닝이 쓴다 |
+| **E3** (사후 승인) | **셀프 모니터 전용 패닝**: `ChannelGroupParams::monitorPan` 추가. `ChannelGroup::processMonitor` 가 입력 패닝에 이 값을 더해(−1~1 로 자름) 모니터에만 쓴다. `SonobusAudioProcessor::setInputMonitorPan(changroup, pan)` 추가. `EngineLink::applyMonitorParams` 가 입력 그룹마다 이 값을 넣는다 | 합주 화면 내 줄의 패닝(= 셀프 모니터 패닝). 엔진의 입력 패닝(`pan`/`panStereo`)은 모니터와 송출에 같이 걸려서, 그대로 쓰면 스테레오로 보낼 때 남이 듣는 내 소리 위치도 바뀐다 | 약 15줄 (아래 근거) |
+
+**E3 이 보내는 소리에 영향이 없는 근거** (줄 번호는 `remake` 의 eb7c371 기준)
+
+- 바꾼 곳: `Source/ChannelGroup.h` (`ChannelGroupParams::monitorPan`, 기본 0), `Source/ChannelGroup.cpp` `processMonitor` 안의 패닝 계산 한 줄(491)과 램프용으로 기억하는 값(539–543), `Source/SonobusPluginProcessor.h/.cpp` `setInputMonitorPan`(2084–2089). 이 밖의 엔진 코드는 그대로다.
+- 보내는 소리는 `processBlock` 에서 `sendWorkBuffer` 로 만든다. 입력은 `ChannelGroup::processPan`(`SPP.cpp:7620`)이 `inputPostBuffer` 에서 `sendWorkBuffer` 로 옮기는데, `processPan`(`ChannelGroup.cpp:322`)은 `params.pan`/`panStereo` 만 읽고 `monitorPan` 을 읽지 않는다. 램프 상태도 따로 쓴다(`processPan` 은 `mainProcState`, `processMonitor` 는 `monProcState`). 그 밖에 `sendWorkBuffer` 에 더해지는 것은 파일·메트로놈·입력 리버브(`inputRevBuffer`, 7845)뿐이고, 모두 `monitorPan` 과 무관하다.
+- `processMonitor`(`SPP.cpp:7656`)가 쓰는 `inputBuffer` 는 내 출력(`buffer`, 8162), 메인 리버브 버스(`mainFxBuffer`, 8191·8207, MEON 은 리버브를 끔), 로컬 녹음(8419–8442)에만 들어가고 `sendWorkBuffer` 로는 가지 않는다.
+- `processMonitor` 안의 리버브 보내기(`processReverbSend`)도 `params.pan` 만 읽는다.
+- `monitorPan` 은 입력 그룹(`mInputChannelGroups`)에만 넣는다. 파일·메트로놈 그룹도 `processMonitor` 를 쓰지만 값이 늘 0 이라 동작이 그대로다.
+- 따라서 바뀌는 것은 내가 듣는 소리와, 로컬 녹음 기능을 쓸 경우 그 녹음 속 내 소리 위치뿐이다.
+
+새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E3 은 고친 뒤 승인받았다 (2026-10-14).
 
 ---
 
@@ -532,7 +545,7 @@ R4 의 E1·E2 는 8장 승인이 나야 들어간다. 승인 전에는 E1 없이
 7. **이용약관·개인정보 처리방침 주소**가 없다. → 주소를 알려 주세요 (그때까지 링크 비활성)
 8. **입력 채널 위치를 고르는 곳이 없다**: 디자인은 모노/스테레오만 있다. 오늘 일처럼 "인터페이스 2번 입력"을 골라야 하는 경우가 있다. 지금 앱에는 있다. → 잠정: 설정 › 오디오에 "입력 채널" 선택 상자("입력 1", "입력 2", …, 스테레오면 "입력 1–2") 추가, 모노/스테레오는 그대로
 9. **Windows 드라이버·ASIO 안내·드라이버 설정 버튼**이 디자인 설정 › 오디오에 없다 (기획 결정은 "설정 › 오디오로 옮김"). → 잠정: 오디오 탭 맨 위에 드라이버 선택(Windows), 장치 행 아래 경고 상자(장치 없음 / ASIO 아님 + "장치 다시 검색"·"ASIO 설치 안내 보기"), 버퍼 옆 "드라이버 설정"(ASIO 일 때)
-10. **마스터 볼륨 +10 dB**: 디자인은 −30~+10 dB 인데 엔진 마스터 최대는 +6.02 dB 다. → (a) 화면을 −30~+6 으로 (엔진 수정 없음, 잠정) (b) 엔진 범위를 넓힘 (E3)
+10. **마스터 볼륨 +10 dB**: 디자인은 −30~+10 dB 인데 엔진 마스터 최대는 +6.02 dB 다. → (a) 화면을 −30~+6 으로 (엔진 수정 없음, 잠정) (b) 엔진 범위를 넓힘 (엔진 수정, 8.2 "안 함")
 11. **미터의 빨강(0 dB 초과)**: 엔진 미터가 0 dBFS 에서 값을 잘라 0 dB 를 넘는 값이 나오지 않는다. → 잠정: 0 dBFS 에 닿으면 빨강·클리핑 표시. (의존성 `ff_meters` 를 고치면 넘는 값도 보이지만 의존성 수정이다)
 12. **모니터 "전체 음소거"의 범위**: "내가 듣는 모든 소리"라 멤버·파일·셀프 모니터를 모두 끈다(엔진 Output Level 0 + Dry 0). 맞나? (잠정: 그렇게)
 13. **초대 토스트 소리**: 효과음 파일이 없다. → 잠정: 짧은 효과음 하나를 직접 만들어 넣음 (원하는 소리가 있으면 주세요)
