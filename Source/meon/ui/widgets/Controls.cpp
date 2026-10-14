@@ -140,7 +140,7 @@ void Choice::paint (juce::Graphics& g)
             const auto f = font (weight, px);
             const float tw = textWidth (f, labels[i]);
             const float x = r.getCentreX() - (partIconPx + partIconGap + tw) * 0.5f;
-            icons::drawPart (g, values[i], { x, r.getY(), partIconPx, r.getHeight() }, partIconPx, ink, icons::PartWeight::regular);
+            icons::drawPart (g, values[i], { x, r.getY(), partIconPx, r.getHeight() }, partIconPx, ink, icons::PartWeight::thin);
             g.setColour (ink);
             g.drawText (labels[i], juce::Rectangle<float> (x + partIconPx + partIconGap, r.getY(), tw + 2.0f, r.getHeight()),
                         juce::Justification::centredLeft, false);

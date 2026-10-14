@@ -1071,8 +1071,8 @@ void JamScreen::timerCallback()
 void JamScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
-    const float logoW = meon::logoWidth ((float) metric::logoH);
-    meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), (float) metric::logoH, col::ink,
+    const float logoW = meon::logoWidth (metric::logoDrawH);
+    meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
                     juce::Justification::centredLeft);
     // 로고 오른쪽 세로 구분선은 없다 (디자인 파일과 다른 결정, REMAKE_PLAN 3.6). 로고 끝에서 18px 뒤에 방 제목
     g.setColour (col::line);
@@ -1102,7 +1102,7 @@ void JamScreen::resized()
     auto area = getLocalBounds();
     // 헤더
     {
-        const float logoW = meon::logoWidth ((float) metric::logoH);
+        const float logoW = meon::logoWidth (metric::logoDrawH);
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
         const int lw = leave.getIdealWidth(), sw = settings.getIdealWidth();
         leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));

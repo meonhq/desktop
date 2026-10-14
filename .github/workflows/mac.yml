@@ -94,6 +94,19 @@ jobs:
           codesign --verify --deep --verbose "$A/Standalone/Meon.app"
           lipo -info "$A/Standalone/Meon.app/Contents/MacOS/Meon"
 
+      - name: 최소 macOS 버전 확인
+        # CMakeLists.txt 의 CMAKE_OSX_DEPLOYMENT_TARGET(10.13) 이 러너·Xcode 와 관계없이 지켜졌는지 본다.
+        # Intel 은 10.13, Apple Silicon 은 OS 가 11.0 부터라 11.0 으로 나온다
+        run: |
+          A=build/MEON_artefacts/Release
+          for b in "$A/Standalone/Meon.app/Contents/MacOS/Meon" "$A/AU/Meon.component/Contents/MacOS/Meon" "$A/VST3/Meon.vst3/Contents/MacOS/Meon"; do
+            X=$(vtool -arch x86_64 -show-build "$b" | awk '/minos/{print $2; exit}')
+            R=$(vtool -arch arm64 -show-build "$b" | awk '/minos/{print $2; exit}')
+            echo "$b: x86_64 minos $X, arm64 minos $R"
+            if [ "$X" != "10.13" ]; then echo "::error::$b 의 최소 macOS 버전이 $X 입니다 (10.13 이어야 함)"; exit 1; fi
+          done
+          echo "LSMinimumSystemVersion: $(plutil -extract LSMinimumSystemVersion raw "$A/Standalone/Meon.app/Contents/Info.plist")"
+
       - name: 디스크 이미지 만들기
         run: |
           A=build/MEON_artefacts/Release

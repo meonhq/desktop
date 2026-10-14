@@ -1053,7 +1053,7 @@ void OnboardingScreen::paint (juce::Graphics& g)
 void OnboardingScreen::paintContent (juce::Graphics& g)
 {
     g.fillAll (col::softBg);
-    meon::drawLogo (g, logoBounds.toFloat(), (float) metric::logoH, col::ink);
+    meon::drawLogo (g, logoBounds.toFloat(), metric::logoDrawH, col::ink);
     g.setColour (col::white);
     g.fillRoundedRectangle (cardBounds.toFloat(), metric::radius);
     g.setColour (col::line);
