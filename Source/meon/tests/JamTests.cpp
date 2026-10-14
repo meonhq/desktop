@@ -78,6 +78,7 @@ namespace
         void setMonitorMuted (bool b) override { monitorMuted = b; }
         void setBufferMode (BufferMode m) override { mode = m; }
         void setInputChannels (int, int c) override { inputChannels = c; }
+        DeviceInfo deviceInfo() const override { return { "Windows Audio", {}, "LG HDR WQHD (HDMI)", 48000.0, 480 }; }   // 입력 장치 없음
         int inputChannelCount() const override { return inputChannels; }
         juce::String inputChannelText() const override { return "2"; }
         float inputLevel (int) const override { return inLevel; }
@@ -144,11 +145,32 @@ public:
             expect (d.update (19800, true, false, 1, -70.0f) == SilenceDetector::Change::none);
             expect (d.update (24700, true, false, 1, -70.0f) == SilenceDetector::Change::none);
             expect (d.update (24800, true, false, 1, -70.0f) == SilenceDetector::Change::started);
-            // 입력 채널이 없거나 방 밖이면 경고하지 않음
+            // 입력 장치(채널)가 없으면 무음 대신 "입력 장치 없음" (버그 17: 예전에는 판정을 건너뛰어 아무것도 안 떴다)
             SilenceDetector d2;
-            expect (d2.update (0, true, false, 0, -90.0f) == SilenceDetector::Change::none);
-            expect (d2.update (9000, true, false, 0, -90.0f) == SilenceDetector::Change::none);
-            expect (d2.update (19000, false, false, 1, -90.0f) == SilenceDetector::Change::none);
+            using K = SilenceDetector::Kind;
+            expect (d2.update (0, true, false, 0, -100.0f) == SilenceDetector::Change::none);
+            expect (d2.update (4900, true, false, 0, -100.0f) == SilenceDetector::Change::none);
+            expect (d2.update (5000, true, false, 0, -100.0f) == SilenceDetector::Change::started);
+            expect (d2.warningKind() == K::noInput);
+            // 송출 정지면 지움
+            expect (d2.update (6000, true, true, 0, -100.0f) == SilenceDetector::Change::ended);
+            expect (d2.lastKind() == K::noInput);
+            expect (d2.update (6500, true, false, 0, -100.0f) == SilenceDetector::Change::none);
+            expect (d2.update (11500, true, false, 0, -100.0f) == SilenceDetector::Change::started);
+            // 장치가 생기면 바로 해제하고, 무음 판정은 처음부터 (5초)
+            expect (d2.update (12000, true, false, 1, -100.0f) == SilenceDetector::Change::ended);
+            expect (d2.update (16900, true, false, 1, -100.0f) == SilenceDetector::Change::none);
+            expect (d2.update (17000, true, false, 1, -100.0f) == SilenceDetector::Change::started);
+            expect (d2.warningKind() == K::silent);
+            // 무음 경고 중 장치가 빠지면 무음은 바로 해제, 5초 뒤 장치 없음
+            expect (d2.update (17500, true, false, 0, -100.0f) == SilenceDetector::Change::ended);
+            expect (d2.lastKind() == K::silent);
+            expect (d2.update (22500, true, false, 0, -100.0f) == SilenceDetector::Change::started);
+            expect (d2.warningKind() == K::noInput);
+            // 방 밖이면 경고하지 않음
+            SilenceDetector d3;
+            expect (d3.update (0, false, false, 0, -90.0f) == SilenceDetector::Change::none);
+            expect (d3.update (19000, false, false, 1, -90.0f) == SilenceDetector::Change::none);
         }
 
         beginTest ("ChatChannel: 1000 bytes, alone, ack, partial ack fails after 3s, resend");
@@ -215,6 +237,7 @@ public:
             JamPrefs saved;
             JamSession::Options o;
             o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs");
+            o.logFolder.deleteRecursively();   // 지난 실행이 남긴 로그
             o.fake = &server;
             o.prefs.sendMuted = true;     // 지난번에 송출 정지 상태로 끔 → 켤 때 그대로 (버그 #1)
             o.savePrefs = [&] (const JamPrefs& x) { saved = x; };
@@ -272,6 +295,40 @@ public:
             engine.inLevel = 0.1f;
             clock.advance (JamSession::tickMs);
             expect (! jam.isInputSilent());
+
+            // 버그 17 재현: 입력 장치가 없음 (채널 0, 레벨 −100 dB, 보내기 켜짐) → 5초 뒤 "입력 장치 없음"
+            engine.inLevel = 0.0f;
+            engine.inputChannels = 0;
+            clock.advance (5600);
+            expect (jam.isInputMissing() && ! jam.isInputSilent() && jam.hasInputWarning());
+            engine.inputChannels = 2;
+            engine.inLevel = 0.1f;
+            clock.advance (JamSession::tickMs);
+            expect (! jam.hasInputWarning());
+
+            // 버그 18: 세션 로그의 audio 칸 (입력이 없으면 "없음"), 장치 없음 이벤트
+            {
+                const auto logs = o.logFolder.findChildFiles (juce::File::findFiles, false, "meon-session-*.json");
+                expect (logs.size() == 1);
+                if (logs.size() == 1)
+                {
+                    const auto root = juce::JSON::parse (logs[0]);
+                    const auto audio = root.getProperty ("audio", {});
+                    expectEquals (audio.getProperty ("deviceType", {}).toString(), juce::String ("Windows Audio"));
+                    expectEquals (audio.getProperty ("inputDevice", {}).toString(), juce::String (juce::CharPointer_UTF8 ("없음")));
+                    expectEquals (audio.getProperty ("outputDevice", {}).toString(), juce::String ("LG HDR WQHD (HDMI)"));
+                    expectEquals ((int) audio.getProperty ("sampleRate", 0), 48000);
+                    expectEquals ((int) audio.getProperty ("bufferSize", 0), 480);
+                    bool started = false, ended = false;
+                    if (auto* ev = root.getProperty ("events", {}).getArray())
+                        for (auto& e : *ev)
+                        {
+                            started = started || e.getProperty ("type", {}).toString() == "inputMissingStart";
+                            ended = ended || e.getProperty ("type", {}).toString() == "inputMissingEnd";
+                        }
+                    expect (started && ended);
+                }
+            }
 
             // 버퍼 모드·마스터 저장
             jam.setBufferMode (Engine::BufferMode::stable);

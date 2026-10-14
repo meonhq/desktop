@@ -57,6 +57,7 @@ public:
     float monitorLevel (int channel) const override;
     int sendChannelCount() const override;
     juce::String audioDescription() const override;
+    DeviceInfo deviceInfo() const override;
 
     bool sendChat (const EngineChat&) override;
 

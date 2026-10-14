@@ -33,6 +33,8 @@ RoomSettingsModal::RoomSettingsModal (core::MeonCore& c) : Modal (TXT ("방 설�
         body.addAndMakeVisible (comp);
     footer.setButtons ({ &cancel, &save });
     closeRoom.setConfirm (TXT ("한 번 더 누르면 방을 닫아요"));
+    // 확정 대기 문구로 바뀌거나 되돌아가면 글자 폭에 맞춰 다시 배치 (Body::resized 가 getIdealWidth 를 쓴다)
+    closeRoom.onStateChange = [this] { body.resized(); body.repaint(); };
 
     name.onChange = desc.onChange = [this] { footer.setNote ({}, col::danger); refresh(); };
     visibility.onChange = entry.onChange = [this] { refresh(); };

@@ -90,7 +90,16 @@ public:
     virtual float sendLevel (int channel) const = 0;    // 실제로 보내는 신호
     virtual float monitorLevel (int channel) const = 0; // 내가 듣는 출력
     virtual int sendChannelCount() const = 0;
-    virtual juce::String audioDescription() const = 0;  // 로그용 장치 정보
+    virtual juce::String audioDescription() const = 0;  // 로그용 장치 정보 (한 줄 요약)
+
+    /** 로그용 장치 정보 (칸별). input 이 비어 있으면 입력 장치가 없거나 켜진 입력 채널이 없다 */
+    struct DeviceInfo
+    {
+        juce::String type, input, output;
+        double sampleRate = 0.0;
+        int bufferSize = 0;
+    };
+    virtual DeviceInfo deviceInfo() const { return {}; }
 
     virtual bool sendChat (const EngineChat&) = 0;
 

@@ -31,7 +31,6 @@ public:
     std::function<void()> onOpenSettings, onOpenAudioSettings;
 
     void paint (juce::Graphics&) override;
-    void paintOverChildren (juce::Graphics&) override;
     bool keyPressed (const juce::KeyPress&) override;
     /** 단축키 (설정 › 단축키, REMAKE_PLAN 4.4): M 송출, N 모니터, ⌘↑/⌘↓ 마스터 ±1 dB, Enter 채팅 입력, Esc 겹침 닫기 */
     bool handleShortcut (const juce::KeyPress&);
@@ -83,7 +82,7 @@ private:
     bool sendOpen = true, monOpen = true;
     struct SilenceRow;
     std::unique_ptr<SilenceRow> silenceRow;   // 입력 신호 없음 경고 (내 오디오 카드 안, 미터 아래)
-    int silenceRowH() const { return jam.isInputSilent() ? 37 : 0; }
+    int silenceRowH() const { return jam.hasInputWarning() ? 37 : 0; }
 
     // 채팅
     Card chatCard;
@@ -93,6 +92,8 @@ private:
     TextInput chatInput { TXT ("메시지 입력") };
     Button chatSend { Button::Kind::link, TXT ("전송") };
     juce::String chatNote;
+    struct ChatDecor;
+    std::unique_ptr<ChatDecor> chatDecor;   // 목록·입력 사이 구분선, 남은 글자 (채팅 카드 안이라 모달 아래에 그려진다)
     bool chatOpen = true, chatAtBottom = true;
     void sendChat();
 
