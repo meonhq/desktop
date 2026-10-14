@@ -157,12 +157,21 @@ struct JamScreen::MemberRow : juce::Component
         refresh();
     }
 
+    /** 아바타·이름 자리 (누르면 프로필, 내 행 제외) */
+    bool isProfileSpot (juce::Point<int> p) const
+    {
+        if (member.isMe) return false;
+        return (p.x < 12 + 41 + 9 + 160 && p.y < 9 + 17 + 3) || avatar.getBounds().contains (p);
+    }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
-        // 아바타·이름을 누르면 프로필 (내 행 제외)
-        if (member.isMe || ! e.mouseWasClicked()) return;
-        if (e.x < 12 + 41 + 9 + 160 && e.y < 9 + 17 + 3) owner.openProfile (member.userId);
-        else if (avatar.getBounds().contains (e.getPosition())) owner.openProfile (member.userId);
+        if (e.mouseWasClicked() && isProfileSpot (e.getPosition())) owner.openProfile (member.userId);
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        setMouseCursor (isProfileSpot (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
 
     void update (const core::JamSession::Member& m)
@@ -448,11 +457,28 @@ struct JamScreen::ChatView : juce::Component
         }
     }
 
+    /** 전송 실패 줄의 "다시 보내기" 글자 자리 (paint 와 같은 계산) */
+    static juce::Rectangle<float> resendLink (const Item& it)
+    {
+        if (it.resendArea.isEmpty()) return {};
+        const auto f = font (400, 12.0f);
+        const float w2 = textWidth (f, TXT ("다시 보내기"));
+        return { (float) it.resendArea.getRight() - w2 - 2.0f, (float) it.resendArea.getY(), w2 + 2.0f, 16.0f };
+    }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
         for (auto& it : items)
-            if (! it.resendArea.isEmpty() && it.resendArea.contains (e.getPosition()))
+            if (resendLink (it).contains (e.position))
                 owner.jam.chat().resend (it.msg.id);
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        bool onLink = false;
+        for (auto& it : items)
+            onLink = onLink || resendLink (it).contains (e.position);
+        setMouseCursor (onLink ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
 
     JamScreen& owner;
@@ -473,6 +499,7 @@ struct JamScreen::FriendList : juce::Component
             avatar.setDimmed (st == S::offline);
             avatar.setInterceptsMouseClicks (false, false);
             addAndMakeVisible (avatar);
+            setMouseCursor (juce::MouseCursor::PointingHandCursor);   // 누르면 프로필
             if (fr.canInvite)
             {
                 addAndMakeVisible (invite);

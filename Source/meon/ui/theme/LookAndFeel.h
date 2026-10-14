@@ -15,6 +15,9 @@ public:
 
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
 
+    /** 커서 규칙: 누를 수 있는 것만 손가락. 비활성(자기나 부모가 setEnabled(false))이면 일반 화살표 */
+    juce::MouseCursor getMouseCursorFor (juce::Component&) override;
+
     // 선택 상자
     void drawComboBox (juce::Graphics&, int width, int height, bool isButtonDown,
                        int buttonX, int buttonY, int buttonW, int buttonH, juce::ComboBox&) override;

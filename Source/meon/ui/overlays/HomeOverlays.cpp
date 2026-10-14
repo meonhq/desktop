@@ -413,6 +413,7 @@ struct NotificationList::Row : juce::Component
         addAndMakeVisible (accept);
         decline.onPress = [this] { owner.core.home().declineFriendRequest (request.id); };
         accept.onPress = [this] { owner.core.home().acceptFriendRequest (request.id); };
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);   // 누르면 프로필
     }
 
     void paint (juce::Graphics& g) override

@@ -28,6 +28,7 @@ void Meter::setGreyed (bool g)
 void Meter::resetClip()
 {
     clipped = false;
+    setMouseCursor (juce::MouseCursor::NormalCursor);
     for (auto& c : chans) { c.peak = c.db; c.peakAt = lastMs; }
     repaint();
 }
@@ -80,7 +81,7 @@ void Meter::step (double now)
         c.db = target > c.db ? target : juce::jmax (target, c.db - 26.0f * (float) dt);
         if (c.db >= c.peak) { c.peak = c.db; c.peakAt = now; }
         else if (now - c.peakAt > 1500.0) c.peak = juce::jmax (c.db, c.peak - 10.0f * (float) dt);
-        if (c.db >= 0.0f && ! clipped) { clipped = true; changed = true; }
+        if (c.db >= 0.0f && ! clipped) { clipped = true; changed = true; setMouseCursor (juce::MouseCursor::PointingHandCursor); }   // 눌러서 지움
         if (std::abs (before - c.db) > 0.05f || std::abs (peakBefore - c.peak) > 0.05f) changed = true;
     }
     if (changed) repaint();
