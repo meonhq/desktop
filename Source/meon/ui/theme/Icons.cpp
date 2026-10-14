@@ -80,9 +80,12 @@ void drawDiscord (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour c
     g.fillPath (logo, logo.getTransformToScaleToFit (area, true));
 }
 
-void drawPart (juce::Graphics& g, const juce::String& key, juce::Rectangle<float> area, float size, juce::Colour c)
+void drawPart (juce::Graphics& g, const juce::String& key, juce::Rectangle<float> area, float size, juce::Colour c, PartWeight weight)
 {
-    meon::parts::drawIcon (g, area, size, meon::parts::fromKey (key), c);
+    auto p = meon::parts::fromKey (key);
+    if (p == meon::Part::None) p = meon::Part::Other;
+    meon::parts::drawIcon (g, area, size, p, c,
+                           weight == PartWeight::thin ? meon::parts::IconWeight::thin : meon::parts::IconWeight::regular);
 }
 
 juce::String partLabel (const juce::String& key)

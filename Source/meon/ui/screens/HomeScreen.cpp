@@ -122,7 +122,10 @@ struct HomeScreen::RoomCard : juce::Component
             const auto name = nameOf (m.user);
             const auto part = icons::partLabel (m.user.part.value_or ("other"));
             const auto tag = m.isHost ? TXT ("방장") : (m.isFriend ? TXT ("친구") : juce::String());
-            const float partW = textWidth (nameF, part) + 1.0f;
+            // 파트: 아이콘(얇은 버전 16px, 파트 글자와 같은 색) + 이름. 디자인은 글자만 있다 (REMAKE_PLAN 3.6)
+            // 14px 에서는 1px 선이 흐려 기타·베이스가 잘 구별되지 않아 16px
+            constexpr float iconPx = 16.0f, iconGap = 3.0f;
+            const float partW = iconPx + iconGap + textWidth (nameF, part) + 1.0f;
             const auto tagF = font (500, 11.0f);
             const float tagW = tag.isEmpty() ? 0.0f : textWidth (tagF, tag) + 8.0f + 2.0f + 3.0f;
             const float nameMax = (float) w - 5.0f - 2.0f - 5.0f - partW - tagW - (tag.isEmpty() ? 0.0f : 5.0f);
@@ -135,8 +138,10 @@ struct HomeScreen::RoomCard : juce::Component
             g.setColour (col::inkFaint);
             g.fillEllipse (cx, (float) y + 7.5f, 2.0f, 2.0f);
             cx += 2.0f + 5.0f;
+            icons::drawPart (g, m.user.part.value_or ("other"), { cx, (float) y, iconPx, 17.0f }, iconPx, col::inkSub, icons::PartWeight::thin);
             g.setColour (col::inkSub);
-            g.drawText (part, juce::Rectangle<float> (cx, (float) y, partW, 17.0f), juce::Justification::centredLeft, false);
+            g.drawText (part, juce::Rectangle<float> (cx + iconPx + iconGap, (float) y, partW - iconPx - iconGap, 17.0f),
+                        juce::Justification::centredLeft, false);
             cx += partW + 5.0f;
             if (tag.isNotEmpty())
             {
@@ -755,7 +760,7 @@ void HomeScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
     const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
-    meon::drawLogo (g, logoArea.toFloat(), (float) metric::logoH, col::ink, juce::Justification::centredLeft);
+    meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
     g.setColour (col::line);
     g.fillRect (0, headerLineY, getWidth(), 1);
 

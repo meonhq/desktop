@@ -1,128 +1,136 @@
 #!/usr/bin/env python3
-"""MEON 아이콘 생성기.
+"""Meon 앱 아이콘 생성기.
 
-images/meon_logo.svg (필기체 로고, 외곽선 수정 없음) 를 #FFFFFF 단색 배경 위에 #1A1A1A 로 올려
-macOS .icns / Windows .ico / 크기별 PNG / 미리보기 이미지를 만든다.
+디자인 파일(images/brand/app-icon)을 그대로 그려서 만든다. 원본 SVG 는 고치지 않는다.
+- macOS: meon_app_icon_mac.svg (Apple 템플릿: 1024 캔버스, 824 타일, 여백 100)
+    → images/icons/mac/meon_mac_N.png, images/icons/MEON.icns
+    → images/icons/AppIcon.icon (macOS 26 의 Icon Composer 형식. 타일 안쪽만 잘라 1024 로 키운 마크 + 흰 배경.
+       모서리 모양·테두리는 시스템이 그린다. CI 의 Xcode 26 actool 로 Assets.car 를 만든다)
+- Windows: meon_app_icon_win.svg (여백을 거의 없앤 Windows 전용)
+    → images/icons/win/meon_win_N.png, images/icons/MEON.ico (16·24·32·48·64·128·256)
 
-- 큰 크기는 로고 전체, 작은 크기(아래 M_ONLY_*)는 첫 글자 M 만 잘라서 쓴다.
-- 로고 주변 여백은 로고(보이는 글자) 높이의 25% 이상.
-- 그림자·그라디언트·반투명 없음.
-
-필요 도구: rsvg-convert, magick (ImageMagick), iconutil (macOS)
+필요 도구: rsvg-convert (librsvg), Python Pillow
 사용: python3 scripts/make_icons.py
 """
 
+import io
+import json
 import os
 import re
-import shutil
+import struct
 import subprocess
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOGO_SVG = os.path.join(ROOT, "images", "meon_logo.svg")
-OUT_DIR = os.path.join(ROOT, "images", "icons")
+from PIL import Image
 
-BG = "#FFFFFF"
-INK = "#1A1A1A"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(ROOT, "images", "brand", "app-icon")
+OUT = os.path.join(ROOT, "images", "icons")
+MAC_SVG = os.path.join(SRC, "meon_app_icon_mac.svg")
+WIN_SVG = os.path.join(SRC, "meon_app_icon_win.svg")
 
 MAC_SIZES = [16, 32, 64, 128, 256, 512, 1024]
-WIN_SIZES = [16, 24, 32, 48, 256]
-
-# 이 크기 이하에서는 로고 전체 대신 M 만 쓴다 (전체 로고는 획 굵기가 1px 아래로 떨어져 뭉개진다)
-M_ONLY_MAX_MAC = 64
-M_ONLY_MAX_WIN = 48
-
-# 로고 경로의 실제 외곽(viewBox 기준). 여백 계산은 이 '보이는 글자' 기준으로 한다.
-FULL_BOX = (8.1, 8.1, 388.6, 144.7)          # x0, y0, x1, y1
-# M 만 남기는 자르기 다각형 (E 로 이어지는 연결 획을 획 방향에 수직으로 끊는다)
-M_CLIP = [(0, 0), (182, 0), (182, 58), (150, 96), (132, 114), (152, 134), (152, 153), (0, 153)]
-M_BOX = (8.1, 8.1, 176.9, 144.7)
-
-# macOS 앱 아이콘 격자: 1024 캔버스 안에 824 둥근 사각형 (Apple 템플릿과 같은 비율)
-MAC_TILE = 824 / 1024
-MAC_RADIUS = 185.4 / 824
-# Windows: 캔버스를 꽉 채우는 사각형, 모서리만 살짝 둥글게
-WIN_TILE = 1.0
-WIN_RADIUS = 0.125
+WIN_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
 
-def logo_path_d():
-    with open(LOGO_SVG, encoding="utf-8") as f:
-        return re.search(r' d="([^"]+)"', f.read()).group(1)
+def render(svg_path, size):
+    """SVG 를 size×size PNG(바이트)로"""
+    return subprocess.run(["rsvg-convert", "-w", str(size), "-h", str(size), svg_path],
+                          check=True, capture_output=True).stdout
 
 
-def icon_svg(size, tile, radius, m_only):
-    """size×size 아이콘 한 장의 SVG. 로고는 viewBox 단위 그대로 두고 transform 으로 크기·위치만 바꾼다."""
-    d = logo_path_d()
-    tile_px = size * tile
-    off = (size - tile_px) / 2
-    x0, y0, x1, y1 = M_BOX if m_only else FULL_BOX
-    w, h = x1 - x0, y1 - y0
-    # 타일 안에서 로고가 차지할 폭 비율 (여백 = 로고 높이의 25% 이상이 되도록 아래에서 다시 제한)
-    target_w = tile_px * (0.56 if m_only else 0.80)
-    scale = target_w / w
-    # 여백 조건: 가로·세로 모두 (타일 - 로고) / 2 >= 0.25 * 로고 높이
-    max_scale = min(tile_px / (w + 0.5 * h), tile_px / (h * 1.5))
-    scale = min(scale, max_scale)
-    lw, lh = w * scale, h * scale
-    tx = off + (tile_px - lw) / 2 - x0 * scale
-    ty = off + (tile_px - lh) / 2 - y0 * scale
-    r = tile_px * radius
-    clip = ""
-    clip_ref = ""
-    if m_only:
-        pts = " ".join(f"{x},{y}" for x, y in M_CLIP)
-        clip = f'<clipPath id="m"><polygon points="{pts}"/></clipPath>'
-        clip_ref = ' clip-path="url(#m)"'
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
-            f'<defs>{clip}</defs>'
-            f'<rect x="{off}" y="{off}" width="{tile_px}" height="{tile_px}" rx="{r}" ry="{r}" fill="{BG}"/>'
-            f'<g transform="translate({tx} {ty}) scale({scale})">'
-            f'<path fill="{INK}" fill-rule="evenodd" d="{d}"{clip_ref}/></g></svg>')
+def write_icns(pngs, path):
+    """pngs: {크기: PNG 바이트}. 모든 항목을 PNG 로 담는다 (macOS 10.7+)"""
+    types = [("icp4", 16), ("icp5", 32), ("icp6", 64), ("ic07", 128), ("ic08", 256), ("ic09", 512),
+             ("ic10", 1024), ("ic11", 32), ("ic12", 64), ("ic13", 256), ("ic14", 512)]
+    body = b""
+    for code, size in types:
+        data = pngs[size]
+        body += code.encode("ascii") + struct.pack(">I", 8 + len(data)) + data
+    with open(path, "wb") as f:
+        f.write(b"icns" + struct.pack(">I", 8 + len(body)) + body)
 
 
-def render(svg, png, size):
-    with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False) as f:
-        f.write(svg)
-        tmp = f.name
-    subprocess.run(["rsvg-convert", "-w", str(size), "-h", str(size), tmp, "-o", png], check=True)
-    os.unlink(tmp)
+def bmp_entry(png):
+    """작은 크기는 예전 Windows 구성 요소와도 맞게 32비트 BMP(+AND 마스크)로 담는다"""
+    img = Image.open(io.BytesIO(png)).convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    rows = b""
+    for y in range(h - 1, -1, -1):   # 아래에서 위로
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            rows += bytes((b, g, r, a))
+    mask_row = ((w + 31) // 32) * 4
+    mask = b"\x00" * (mask_row * h)   # 투명도는 알파로 한다
+    header = struct.pack("<IiiHHIIiiII", 40, w, h * 2, 1, 32, 0, len(rows) + len(mask), 0, 0, 0, 0)
+    return header + rows + mask
+
+
+def write_ico(pngs, path):
+    entries = []
+    for size in sorted(pngs):
+        data = pngs[size] if size >= 256 else bmp_entry(pngs[size])   # 256 은 PNG 그대로
+        entries.append((size, data))
+    offset = 6 + 16 * len(entries)
+    head = struct.pack("<HHH", 0, 1, len(entries))
+    dir_ = b""
+    blob = b""
+    for size, data in entries:
+        dim = 0 if size >= 256 else size
+        dir_ += struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(data), offset + len(blob))
+        blob += data
+    with open(path, "wb") as f:
+        f.write(head + dir_ + blob)
+
+
+def write_icon_composer(path):
+    """macOS 26 Icon Composer 형식 (.icon 폴더). 레이어 하나(마크), 흰 배경, 유리 효과·그림자 없음"""
+    with open(MAC_SVG, encoding="utf-8") as f:
+        svg = f.read()
+    # 타일(둥근 사각형)은 시스템이 그리므로 빼고, 타일 영역(100,100,824,824)만 캔버스 전체로 쓴다
+    svg = re.sub(r"<rect\b[^>]*/>", "", svg, count=1)
+    svg = svg.replace('viewBox="0 0 1024 1024"', 'viewBox="100 100 824 824"', 1)
+    os.makedirs(os.path.join(path, "Assets"), exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False, encoding="utf-8") as tmp:
+        tmp.write(svg)
+    try:
+        with open(os.path.join(path, "Assets", "mark.png"), "wb") as f:
+            f.write(render(tmp.name, 1024))
+    finally:
+        os.unlink(tmp.name)
+    icon = {
+        "fill": {"solid": "srgb:1.00000,1.00000,1.00000,1.00000"},
+        "groups": [{
+            "layers": [{"glass": False, "image-name": "mark.png", "name": "mark"}],
+            "shadow": {"kind": "neutral", "opacity": 0},
+            "translucency": {"enabled": False, "value": 0},
+        }],
+        "supported-platforms": {"squares": ["macOS"]},
+    }
+    with open(os.path.join(path, "icon.json"), "w", encoding="utf-8") as f:
+        json.dump(icon, f, indent=2)
+        f.write("\n")
 
 
 def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    mac_dir = os.path.join(OUT_DIR, "mac")
-    win_dir = os.path.join(OUT_DIR, "win")
-    os.makedirs(mac_dir, exist_ok=True)
-    os.makedirs(win_dir, exist_ok=True)
+    os.makedirs(os.path.join(OUT, "mac"), exist_ok=True)
+    os.makedirs(os.path.join(OUT, "win"), exist_ok=True)
 
-    # macOS: 크기별 PNG → iconset → .icns
-    mac_png = {}
-    for s in MAC_SIZES:
-        p = os.path.join(mac_dir, f"meon_mac_{s}.png")
-        render(icon_svg(s, MAC_TILE, MAC_RADIUS, s <= M_ONLY_MAX_MAC), p, s)
-        mac_png[s] = p
-    iconset = os.path.join(tempfile.mkdtemp(), "MEON.iconset")
-    os.makedirs(iconset)
-    for base in [16, 32, 128, 256, 512]:
-        shutil.copy(mac_png[base], os.path.join(iconset, f"icon_{base}x{base}.png"))
-        shutil.copy(mac_png[base * 2], os.path.join(iconset, f"icon_{base}x{base}@2x.png"))
-    subprocess.run(["iconutil", "-c", "icns", iconset, "-o", os.path.join(OUT_DIR, "MEON.icns")], check=True)
-    shutil.rmtree(os.path.dirname(iconset))
+    mac = {s: render(MAC_SVG, s) for s in MAC_SIZES}
+    for s, data in mac.items():
+        with open(os.path.join(OUT, "mac", f"meon_mac_{s}.png"), "wb") as f:
+            f.write(data)
+    write_icns(mac, os.path.join(OUT, "MEON.icns"))
 
-    # Windows: 크기별 PNG → .ico
-    win_png = []
-    for s in WIN_SIZES:
-        p = os.path.join(win_dir, f"meon_win_{s}.png")
-        render(icon_svg(s, WIN_TILE, WIN_RADIUS, s <= M_ONLY_MAX_WIN), p, s)
-        win_png.append(p)
-    subprocess.run(["magick", *win_png, os.path.join(OUT_DIR, "MEON.ico")], check=True)
+    win = {s: render(WIN_SVG, s) for s in WIN_SIZES}
+    for s, data in win.items():
+        with open(os.path.join(OUT, "win", f"meon_win_{s}.png"), "wb") as f:
+            f.write(data)
+    write_ico(win, os.path.join(OUT, "MEON.ico"))
 
-    # 설치 파일 아이콘은 앱 아이콘과 같은 그림을 쓴다
-    shutil.copy(os.path.join(OUT_DIR, "MEON.icns"), os.path.join(OUT_DIR, "MEON-installer.icns"))
-    shutil.copy(os.path.join(OUT_DIR, "MEON.ico"), os.path.join(OUT_DIR, "MEON-installer.ico"))
-
-    print("written to", OUT_DIR)
+    write_icon_composer(os.path.join(OUT, "AppIcon.icon"))
+    print("만들어짐:", OUT)
 
 
 if __name__ == "__main__":

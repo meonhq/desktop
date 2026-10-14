@@ -279,6 +279,8 @@ struct Realtime {
 | 날짜 | 자리 | 디자인 파일 | 결정 |
 |---|---|---|---|
 | 2026-10-14 | 합주 화면 헤더 (버그 19) | 로고 오른쪽에 세로 구분선(1px `#E0E0E0`), 양옆 18px | 구분선을 없앤다. 로고 오른쪽 끝에서 방 제목까지 18px 여백만 |
+| 2026-10-14 | 로고 (홈 헤더, 합주 헤더, 로그인·가입 화면) | `MEON-logo.svg` 높이 34px | 새 로고(`images/brand/logo/meon_logo.svg`)는 높이 약 31px 로 그린다 (`metric::logoDrawH`). 디자인의 34px 는 예전 파일의 안쪽 여백을 포함한 높이이고, 새 파일은 여백이 없어 34px 로 그리면 약 11% 커 보인다. 로고 자리(34px)와 헤더 배치는 그대로 |
+| 2026-10-14 | 파트 아이콘 (방 카드 멤버 줄, 방 필터 칩) | 아이콘 없음 (글자만) | 다른 자리처럼 얇은 버전(`-thin`) 아이콘을 글자 앞에 넣는다. 설정 › 프로필의 파트 선택은 디자인대로 글자만 |
 
 ---
 
@@ -293,7 +295,7 @@ struct Realtime {
 | 접기 화살표 회전 0.15s, 토글 스위치 0.15s | 같음 | 같은 `AnimatedValue` |
 | 소개 2줄 말줄임 | `-webkit-line-clamp` | `TextLayout` 으로 줄 수를 재고 2줄째 끝을 "…" 로 자름. 실제 줄 수(1·2)를 카드 높이 계산에 넘김 (디자인의 `descL`) |
 | 숫자 고정폭(`tabular-nums`) | JUCE 7 은 OpenType 기능을 못 켠다 | 숫자 칸을 고정 폭 상자에 오른쪽/가운데 정렬. 미터 값·시간·카운트다운이 흔들리지 않게 |
-| 아이콘 (톱니, 종, 필터, 사람+, 닫기, 화살표, 재생, 스피커, 외부 링크) | SVG | 디자인의 SVG `path` 문자열을 `Drawable::createFromSVG` 로 읽어 경로로 캐시. 파트 아이콘은 `MeonParts.cpp` 의 경로, 로고는 `images/meon_logo.svg` (지시서) |
+| 아이콘 (톱니, 종, 필터, 사람+, 닫기, 화살표, 재생, 스피커, 외부 링크) | SVG | 디자인의 SVG `path` 문자열을 `Drawable::createFromSVG` 로 읽어 경로로 캐시. 파트 아이콘은 `images/brand/part-icons/part-*.svg` (모든 자리에 얇은 `-thin`. 방 카드·필터 칩은 디자인에 없던 자리, 3.6), 로고는 `images/brand/logo/meon_logo.svg` (워드마크, 좁은 자리는 `meon_mark.svg`). 브랜드 SVG 는 `meon::brandSvg` 로 도형만 읽고 색·선 굵기는 앱이 정한다 (JUCE 는 `non-scaling-stroke` 를 모른다) |
 | 디스코드 로고 | 디자인은 CDN 이미지 | 지금 앱 코드 안의 경로를 쓴다 (외부 요청 없음) |
 | 반투명 덮개(rgba 26,26,26,0.4), 둥근 모서리 6, 테두리 1px | 쉬움 | `MeonLookAndFeel` 과 공통 `Panel` 이 그림 |
 | hover 색 | JUCE 는 hover 상태를 직접 관리 | 위젯 기본 클래스에서 `mouseEnter/Exit` 로 처리 |

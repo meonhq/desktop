@@ -47,7 +47,8 @@ namespace metric
     constexpr int padX = 18;            // 좌우 여백
     constexpr int padY = 12;            // 상하 여백
     constexpr int headerH = 58;         // 로고 34 + 12 × 2
-    constexpr int logoH = 34;
+    constexpr int logoH = 34;           // 로고 자리 높이 (헤더·온보딩 배치)
+    constexpr float logoDrawH = 31.0f;  // 그리는 높이: 새 로고 파일은 안쪽 여백이 없어 예전 로고(34, 여백 포함)와 같은 크기로 (REMAKE_PLAN 3.6)
     constexpr int buttonH = 32;
     constexpr int smallH = 19;          // 작은 버튼·슬라이더·미터 상자
     constexpr int bigButtonH = 40;      // 온보딩 버튼

@@ -49,7 +49,8 @@ void Avatar::paint (juce::Graphics& g)
     auto r = juce::Rectangle<float> (size, size).withCentre (getLocalBounds().toFloat().getCentre());
     g.setColour (col::line);
     g.drawEllipse (r.reduced (0.5f), 1.0f);
-    icons::drawPart (g, part, r, iconPx, col::ink.withAlpha (dimmed ? 0.4f : 1.0f));
+    // 아이콘은 이름과 같은 색 (박힌 #1A1A1A 를 쓰지 않는다). 흐린 상태도 이름의 #AAAAAA 와 같게
+    icons::drawPart (g, part, r, iconPx, dimmed ? col::inkFaint : ink);
     if (status != Status::none)
     {
         // right:-1 bottom:-1, 9×9, 흰 테두리 2px

@@ -1,4 +1,5 @@
 #include "Controls.h"
+#include "../theme/Icons.h"
 
 namespace meon::ui
 {
@@ -81,6 +82,8 @@ int Choice::itemWidth (int i) const
     // 굵기가 바뀌어도 폭이 흔들리지 않게 굵은 쪽으로 잰다
     const auto fb = style == Style::chip ? font (600, 13.0f) : font (500, 12.0f);
     juce::ignoreUnused (f);
+    if (partIcons)   // 아이콘 자리만큼 넓히고, 한 줄에 들어가게 좌우 여백은 8 로 줄인다
+        return (int) std::ceil (textWidth (fb, labels[i]) + partIconPx + partIconGap) + 16 + 2;
     return (int) std::ceil (textWidth (fb, labels[i])) + (style == Style::chip ? 24 : 12) + 2;
 }
 
@@ -132,6 +135,17 @@ void Choice::paint (juce::Graphics& g)
         g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
         g.setColour (ink);
         g.setFont (font (weight, px));
+        if (partIcons)
+        {
+            const auto f = font (weight, px);
+            const float tw = textWidth (f, labels[i]);
+            const float x = r.getCentreX() - (partIconPx + partIconGap + tw) * 0.5f;
+            icons::drawPart (g, values[i], { x, r.getY(), partIconPx, r.getHeight() }, partIconPx, ink, icons::PartWeight::thin);
+            g.setColour (ink);
+            g.drawText (labels[i], juce::Rectangle<float> (x + partIconPx + partIconGap, r.getY(), tw + 2.0f, r.getHeight()),
+                        juce::Justification::centredLeft, false);
+            continue;
+        }
         g.drawText (labels[i], r, juce::Justification::centred, false);
     }
 }
