@@ -370,6 +370,9 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     // 내 오디오
     addAndMakeVisible (audioCard);
     audioCard.setTitle (TXT ("내 오디오"));
+    monitorTag.setSize (monitorTag.getIdealWidth(), 19);
+    audioCard.setHeaderAccessory (&monitorTag);
+    monitorTag.setVisible (false);
     audioCard.addAndMakeVisible (deviceName);
     audioCard.addAndMakeVisible (sendMute);
     audioCard.addAndMakeVisible (sendGain);
@@ -484,6 +487,9 @@ void HomeScreen::refreshAudio()
     sendGain.setMuted (muted);
     // 송출 정지 중: 미터는 그대로 움직이되 회색으로 (지금 안 보내는 중, 합주 화면 내 오디오와 같은 표시)
     inputMeter->meter.setGreyed (muted);
+    // 홈에서 내 소리가 스피커로 나가는 중이면 머리말 오른쪽에 표시 (송출 정지 중에는 들리지 않으므로 사라진다)
+    const bool hearing = jam != nullptr && jam->isHomeMonitorAudible();
+    if (monitorTag.isVisible() != hearing) { monitorTag.setVisible (hearing); audioCard.resized(); }
     deviceName.setText (deviceText());
     resized();
 }

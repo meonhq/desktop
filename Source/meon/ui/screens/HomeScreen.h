@@ -91,6 +91,7 @@ private:
     Button sendMute { Button::Kind::small, TXT ("송출 정지") };
     DbSlider sendGain { -30.0f, 10.0f };
     std::unique_ptr<MeterBox> inputMeter;
+    Tag monitorTag { TXT ("내 소리 듣는 중") };   // 홈에서 내 소리가 들릴 때 (설정 › 오디오 "입장 전에도 내 소리 듣기", 버그 28)
 
     // 친구
     Card friendsCard;

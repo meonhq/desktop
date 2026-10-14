@@ -27,6 +27,7 @@ struct JamPrefs
     bool selfMonitor = false;                     // 기본 끔 (앱·플러그인 모두, Q30)
     float selfMonitorDb = 0.0f;                   // 합주 화면 내 행의 볼륨 (-60 ~ +6)
     int selfMonitorPan = 0;                       // 합주 화면 내 행의 패닝 (-100 ~ 100, 모니터에만)
+    bool homeMonitor = false;                     // 앱만: 입장 전(홈)에도 내 소리 듣기 (버그 28, 기본 끔)
     bool keepMasterVolume = true;
     float masterDb = 0.0f;                        // -30 ~ +6 (Q10)
     int inputChannelStart = 0, inputChannelCount = 1;   // 앱만 (Q8: 입력 채널 위치)
@@ -101,8 +102,14 @@ public:
     void setSendGainDb (float);
     /** 셀프 모니터 설정값 (합주 화면 내 행의 음소거·설정 화면). 실제로 들리는지는 isSelfMonitorAudible */
     bool isSelfMonitor() const { return prefs.selfMonitor; }
-    /** 내 소리가 지금 내 스피커로 나가는지: 설정이 켜져 있고, 방 안이고, 송출 정지가 아닐 때만 (버그 21·22·23) */
+    /** 내 소리가 지금 내 스피커로 나가는지 (버그 21·22·23·28). 송출 정지 중에는 언제나 아니다.
+        방 안: 셀프 모니터 설정(내 행 음소거)을 따른다. 방 밖(홈): "입장 전에도 내 소리 듣기"(앱만)를 따른다 */
     bool isSelfMonitorAudible() const;
+    /** 설정 › 오디오 "입장 전에도 내 소리 듣기" (앱만, 기본 끔). 크기는 마스터·내 행 볼륨·송출 레벨을 그대로 따른다 */
+    bool isHomeMonitor() const { return prefs.homeMonitor; }
+    void setHomeMonitor (bool);
+    /** 홈에서 지금 내 소리가 들리는지 (홈 "내 오디오" 의 표시) */
+    bool isHomeMonitorAudible() const { return ! inRoomForAudio() && isSelfMonitorAudible(); }
     float getSelfMonitorDb() const { return prefs.selfMonitorDb; }
     void setSelfMonitorDb (float);
     int getSelfMonitorPan() const { return prefs.selfMonitorPan; }

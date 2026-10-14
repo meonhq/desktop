@@ -53,7 +53,7 @@ jobs:
           mkdir -p "$HOME"
           for size in 1280x800 900x600; do
             W=${size%x*}; H=${size#*x}
-            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:sendoff home:friendreq home:profile home:profilereq jam jam:host jam:sendoff settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:sendoff home:homemon home:friendreq home:profile home:profilereq jam jam:host jam:sendoff settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
               D=3000; [ "$s" = "home:toast" ] && D=6000; case "$s" in jam*|settings*) D=5000;; esac
               timeout 60 xvfb-run -a -s "-screen 0 1600x1000x24" \
                 "$APP" --nickname=테스트 --screen=$s --window=0,0,$W,$H --no-input --snapshot-delay=$D \

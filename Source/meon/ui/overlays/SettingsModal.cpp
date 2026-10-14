@@ -624,6 +624,9 @@ namespace
             add (bufRow).setControl (&bufBox, 220 + 9 + panelBtn.getIdealWidth(), 32);
             add (chRow).setControl (&chBox, 220, metric::smallH * 2 + 9 + 32 - 19);
             add (testRow).setControl (&testBox, 140 + 9 + test.getIdealWidth());
+            add (homeMonRow).setControl (&homeMon, 26, 16);
+            if (auto* jam = core.jam()) homeMon.setOn (jam->isHomeMonitor(), false);
+            homeMon.onChange = [this] (bool on) { if (auto* jam = core.jam()) jam->setHomeMonitor (on); };
 
             driver.onValueChange = [this] (const juce::String& t) { if (dm) { audio::setDriverType (*dm, t); fill(); } };
             inDev.onValueChange = [this] (const juce::String& v) { if (dm) { audio::setDevices (*dm, v, outDev.getValue()); fill(); } };
@@ -833,7 +836,10 @@ namespace
         bool testing = false;
         SettingsModal::Row driverRow { TXT ("드라이버") }, inRow { TXT ("입력 장치") }, outRow { TXT ("출력 장치") }, warnRow { {} },
                            bufRow { TXT ("버퍼 크기") }, chRow { TXT ("입력 채널") },
-                           testRow { TXT ("입력 테스트"), TXT ("선택한 입력 장치로 소리가 들어오는지 확인해요") };
+                           testRow { TXT ("입력 테스트"), TXT ("선택한 입력 장치로 소리가 들어오는지 확인해요") },
+                           homeMonRow { TXT ("입장 전에도 내 소리 듣기"),
+                                        TXT ("방에 들어가기 전 홈 화면에서 마이크 소리를 들어볼 수 있어요. 스피커로 들으면 하울링이 날 수 있으니 이어폰을 써 주세요.") };
+        Toggle homeMon;
         Select driver, inDev, outDev, buffer, chStart;
         Box bufBox, chBox, testBox, warnBox;
         Button panelBtn { Button::Kind::small, TXT ("드라이버 설정") };

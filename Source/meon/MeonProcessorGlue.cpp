@@ -40,6 +40,7 @@ namespace
         j.selfMonitor = p.getBoolValue (plugin ? "selfMonitorPlugin" : "selfMonitorApp", false);   // 기본 끔 (Q30)
         j.selfMonitorDb = (float) p.getDoubleValue ("selfMonitorDb", 0.0);
         j.selfMonitorPan = juce::jlimit (-100, 100, p.getIntValue ("selfMonitorPan", 0));
+        j.homeMonitor = ! plugin && p.getBoolValue ("homeMonitor", false);   // 앱만, 기본 끔 (버그 28)
         j.keepMasterVolume = p.getBoolValue ("keepMasterVolume", true);
         j.masterDb = juce::jlimit (-30.0f, 6.0f, (float) p.getDoubleValue ("masterVolumeDb", 0.0));
         j.inputChannelStart = s.getInputChannelStart();
@@ -59,6 +60,7 @@ namespace
         p.setValue (plugin ? "selfMonitorPlugin" : "selfMonitorApp", j.selfMonitor);
         p.setValue ("selfMonitorDb", j.selfMonitorDb);
         p.setValue ("selfMonitorPan", j.selfMonitorPan);
+        if (! plugin) p.setValue ("homeMonitor", j.homeMonitor);
         p.setValue ("keepMasterVolume", j.keepMasterVolume);
         p.setValue ("masterVolumeDb", j.masterDb);
         if (! plugin) s.setInputChannels (j.inputChannelStart, j.inputChannelCount);

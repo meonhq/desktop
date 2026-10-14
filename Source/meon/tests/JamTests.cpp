@@ -212,6 +212,38 @@ public:
             expect (ch.sendText ("x") == ChatChannel::SendResult::failed);
         }
 
+        beginTest ("JamSession: hear myself before entering (setting 28), send mute, plugin");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            FakeEngine engine;
+            JamPrefs saved;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-28");
+            o.prefs.homeMonitor = true;
+            o.prefs.selfMonitor = false;   // 방 안의 내 행 음소거와는 따로
+            o.savePrefs = [&] (const JamPrefs& x) { saved = x; };
+            {
+                JamSession jam (engine, store, clock, o);
+                expect (engine.selfMon && jam.isHomeMonitorAudible());     // 켜 두면 홈에서도 들린다
+                jam.setSendMuted (true);
+                expect (! engine.selfMon && ! jam.isHomeMonitorAudible()); // 송출 정지 중에는 홈에서도 안 들린다
+                jam.setSendMuted (false);
+                expect (engine.selfMon);
+                jam.setHomeMonitor (false);
+                expect (! engine.selfMon && ! saved.homeMonitor);           // 끄면 22번 규칙대로
+                jam.setHomeMonitor (true);
+                expect (engine.selfMon && saved.homeMonitor);
+            }
+            FakeEngine pluginEngine;
+            o.plugin = true;
+            {
+                JamSession jam (pluginEngine, store, clock, o);
+                expect (! pluginEngine.selfMon && ! jam.isHomeMonitorAudible());   // 플러그인에는 이 설정이 없다
+            }
+            o.logFolder.deleteRecursively();
+        }
+
         beginTest ("JamSession: follows current room, E1 allow list, fake directory, silence, leave");
         {
             ManualScheduler clock;
@@ -374,6 +406,9 @@ public:
             store.setCurrentRoom (std::nullopt);
             expect (jam.getPhase() == JamSession::Phase::idle);
             expect (! engine.selfMon && jam.isSelfMonitor());   // 버그 22: 방을 나오면 꺼지고, 설정값은 그대로
+            jam.setHomeMonitor (true);                          // 버그 28: 홈에서 듣기를 켜면 방 밖에서도
+            expect (engine.selfMon && jam.isHomeMonitorAudible());
+            jam.setHomeMonitor (false);
             expect (! engine.connected && engine.group.isEmpty() && ! engine.allowEnabled);
             expect (! engine.file && ! engine.filePlaying && ! jam.hasFile());
             rt.removeListener (&store);

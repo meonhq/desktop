@@ -409,6 +409,10 @@ void MeonEditor::applyHomePreview()
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
     else if (p == "notif")  home->toggleNotifications();
+    else if (p == "homemon")   // 설정 › 오디오 "입장 전에도 내 소리 듣기" 를 켠 홈 ("내 소리 듣는 중")
+    {
+        if (auto* jam = core.jam()) jam->setHomeMonitor (true);
+    }
     else if (p == "sendoff")   // 송출 정지 중인 홈 (미터 회색)
     {
         if (auto* jam = core.jam()) jam->setSendMuted (true);
