@@ -1,6 +1,6 @@
 // MEON core - 서버와 바이트를 주고받는 층. 위의 MeonApi / Realtime 은 이 인터페이스만 안다.
-//   지금: FakeMeonServer 가 두 인터페이스를 다 구현한다 (메모리 안에서 JSON 을 주고받음).
-//   진짜 서버 단계(R11): HTTP 구현과 WebSocket 구현으로 바꾼다. 위층 코드는 그대로.
+//   진짜 서버: net/HttpTransport (REST), net/WsTransport (WebSocket). 어느 서버인지는 net/ServerConfig.
+//   가짜 서버(개발 옵션 --server=fake, 단위 테스트): FakeMeonServer 가 두 인터페이스를 다 구현한다.
 #pragma once
 
 #include <JuceHeader.h>
@@ -41,7 +41,9 @@ public:
         virtual ~Sink() = default;
         virtual void transportOpened() = 0;
         virtual void transportMessage (const juce::var& message) = 0;
-        virtual void transportClosed() = 0;   // 연결 실패도 여기로
+        /** 닫힘. code 는 서버가 보낸 WebSocket 닫는 코드 (API 10.1: 4000 다른 곳에서 접속, 4001 세션 폐기,
+            4002 느린 클라이언트, 1008 인증 실패 …). 연결 실패·네트워크 끊김처럼 닫는 코드가 없으면 0 */
+        virtual void transportClosed (int code) = 0;
     };
 
     virtual ~RealtimeTransport() = default;

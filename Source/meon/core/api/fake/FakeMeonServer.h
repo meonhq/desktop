@@ -24,8 +24,8 @@ public:
     struct Options
     {
         int latencyMs = 120;                  // 응답·이벤트 지연
-        juce::String aooHost = "aoo.sonobus.net";
-        int aooPort = 10998;
+        juce::String aooHost = "localhost";   // 로컬 aooserver (서버 저장소의 docker compose). --fake-aoo=host:port 로 바꾼다
+        int aooPort = 10999;
         bool scripts = true;                  // 다른 사용자 각본
         double scriptSpeed = 1.0;             // 2.0 이면 두 배 빠르게
         bool fakeHostsAccept = true;          // 가짜 방장이 내 승인 요청을 수락

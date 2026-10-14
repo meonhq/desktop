@@ -42,7 +42,11 @@ jobs:
         run: cmake --build build --parallel --target MEON_Tests MEON_Standalone
 
       - name: 단위 테스트
-        run: build/MEON_Tests_artefacts/RelWithDebInfo/MEON_Tests
+        # 전송층 테스트(Transport)는 가짜 HTTP·WebSocket 서버(scripts/meon_test_server.py)에 붙는다
+        run: |
+          python3 scripts/meon_test_server.py 18080 2> mock.log &
+          sleep 1
+          MEON_TEST_MOCK=http://127.0.0.1:18080 build/MEON_Tests_artefacts/RelWithDebInfo/MEON_Tests
 
       - name: 화면 스냅숏
         continue-on-error: true

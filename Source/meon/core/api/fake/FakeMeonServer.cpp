@@ -707,7 +707,7 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
                         auto* s = sink;
                         wsOpen = false;
                         ++connectionGen;
-                        s->transportClosed();
+                        s->transportClosed (4001);   // 세션 폐기 (API 10.1)
                     });
                 }
                 return fail (ErrorCode::unauthorized);
@@ -1420,7 +1420,7 @@ void FakeMeonServer::open (Sink* s)
     scheduler.post (options.latencyMs, [this, weak, gen, refuse]
     {
         if (weak.expired() || gen != connectionGen || sink == nullptr) return;
-        if (refuse) { sink->transportClosed(); return; }
+        if (refuse) { sink->transportClosed (0); return; }
         wsOpen = true;
         seq = 0;
         sink->transportOpened();
@@ -1451,7 +1451,7 @@ void FakeMeonServer::send (const var& msg)
         {
             if (weak.expired() || gen != connectionGen) return;
             wsOpen = false;
-            if (sink != nullptr) sink->transportClosed();
+            if (sink != nullptr) sink->transportClosed (1008);   // 인증 실패 (API 10.1)
         });
     };
 
@@ -1510,7 +1510,7 @@ void FakeMeonServer::devDropLink (int seconds)
     auto* s = sink;
     wsOpen = false;
     ++connectionGen;
-    s->transportClosed();
+    s->transportClosed (0);   // 네트워크 끊김
 }
 
 void FakeMeonServer::devKickMe()

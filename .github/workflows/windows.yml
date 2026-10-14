@@ -68,6 +68,18 @@ jobs:
           path: build/MEON_artefacts/Release/Standalone/*.pdb
           if-no-files-found: warn
 
+      - name: 전송층 테스트 (HTTP·WebSocket·TLS)
+        # R11: Windows 의 HTTP(WinINet)와 WebSocket(IXWebSocket + mbedTLS, 시스템 인증서 저장소)을 확인한다.
+        # 가짜 서버(scripts/meon_test_server.py)로 상태 코드·본문·닫는 코드를, 실제 인터넷으로 인증서 검증을 본다
+        if: env.RELEASE != 'true'
+        run: |
+          cmake --build build --config Release --parallel --target MEON_Tests
+          python scripts/meon_test_server.py 18080 2> mock.log &
+          sleep 2
+          T=build/MEON_Tests_artefacts/Release/MEON_Tests.exe
+          MEON_TEST_MOCK=http://127.0.0.1:18080 "$T" Transport
+          MEON_TEST_TLS=1 "$T" TransportTls
+
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
         if: env.RELEASE != 'true'

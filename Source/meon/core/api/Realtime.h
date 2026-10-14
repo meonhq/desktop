@@ -90,6 +90,7 @@ private:
     Link link = Link::offline;
     bool wanted = false, transportOpen = false, publicRooms = false;
     int lastSeq = 0, backoffMs = 1000, heartbeatTask = 0, reconnectTask = 0;
+    int lastCloseCode = 0;   // 마지막으로 닫힌 코드 (0: 코드 없음). 닫는 코드별 처리는 R11 PR2
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void setLink (Link);
@@ -100,7 +101,7 @@ private:
 
     void transportOpened() override;
     void transportMessage (const juce::var&) override;
-    void transportClosed() override;
+    void transportClosed (int code) override;
 
     JUCE_DECLARE_NON_COPYABLE (Realtime)
 };
