@@ -39,7 +39,10 @@ public:
     void usernameAvailable (const juce::String& username, Callback<bool>);
     void signup (const juce::String& email, const juce::String& username, const juce::String& password, bool agreedTerms, Callback<AuthResult>);
     void login (const juce::String& email, const juce::String& password, Callback<AuthResult>);
-    void refresh (Callback<Tokens>);
+    /** 토큰 갱신. 이미 갱신 중이면 새로 보내지 않고 그 결과를 같이 받는다 (refresh 토큰은 한 번 쓰면 바뀌므로
+        두 번 보내면 늦게 간 쪽이 이미 지워진 토큰을 보내 거절된다). 실패(네트워크 외)면 토큰을 비운다.
+        why 는 진단 로그용 (누가 갱신을 불렀나) */
+    void refresh (Callback<Tokens>, const juce::String& why = {});
     void logout (Callback<Done>);
     void verifyEmail (const juce::String& code, Callback<Me>);
     void resendVerification (Callback<Done>);
@@ -102,13 +105,14 @@ private:
     const int build;
     Tokens tokens;
     bool refreshing = false;
-    std::vector<std::function<void (bool)>> waitingForRefresh;
+    bool sessionLostOnRefreshFailure = false;       // 요청 도중 401 로 시작한 갱신이면 실패 때 onSessionLost
+    std::vector<Callback<Tokens>> refreshWaiters;   // 진행 중인 갱신의 결과를 기다리는 쪽 (요청 재시도 포함)
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     using Raw = std::function<void (const HttpResponse&)>;
     void request (const juce::String& method, const juce::String& path, const juce::var& body, bool auth, Raw done);
     void sendNow (const juce::String& method, const juce::String& path, const juce::var& body, bool auth, bool mayRetry, Raw done);
-    void doRefresh (std::function<void (bool ok)> done);
+    void doRefresh (std::function<void (bool ok)> done, const juce::String& why);
 
     template <typename T>
     void call (const juce::String& method, const juce::String& path, const juce::var& body, bool auth, Callback<T> cb);

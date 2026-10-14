@@ -62,6 +62,8 @@ Source/meon/
 │   │   └── UpdateController.*   # 켤 때 + 6시간마다 확인, 버튼 눌렀을 때만 받기, 합주 중 막기, min/latest_build 판정 (버그 #16)
 │   ├── settings/MeonSettings.*  # 설정 파일 (키 추가, 4.3)
 │   ├── log/MeonSessionLog.*     # 그대로 + 기록 항목 추가 (송신 레벨, 무음, 재접속 요약)
+│   ├── log/AppLog.*             # 진단 로그 logs/app.log (플러그인 plugin.log): 시작·종료, 로그인 단계, 토큰 갱신·세션 끊김 이유, 실시간 연결, 저장 실패. 줄마다 바로 쓴다
+│   ├── MeonCrashDump.*          # Windows 독립 앱이 죽으면 미니덤프를 %APPDATA%\MEON\crashes 에 (레지스트리·관리자 권한 없이). PDB 는 Actions 아티팩트
 │   └── model/
 │       ├── Parts.*              # 파트 데이터만 (key·이름·코드). 그리기는 ui 로
 │       ├── Validation.*         # API 3.1 입력 규칙 (NFC 코드포인트, 이모지, 비밀번호 ASCII …). 서버와 같은 규칙

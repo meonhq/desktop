@@ -3,7 +3,12 @@
 #include "core/MeonCore.h"
 #include "core/jam/EngineLink.h"
 #include "MeonSettings.h"
+#include "MeonCrashDump.h"
 #include "shell/ShellHooks.h"
+
+// 독립 앱(Meon.exe)이면 프로세스가 뜨자마자 크래시 덤프 처리기를 건다 (창·오디오 장치를 여는 중에 죽어도 남게).
+// DAW 안의 플러그인에서는 걸지 않는다 (installForStandalone 이 실행 파일 이름으로 가른다)
+static const bool meonCrashDumpAtStartup = meon::crashdump::installForStandalone();
 
 namespace
 {
@@ -59,10 +64,14 @@ meon::core::MeonCore& SonobusAudioProcessor::getMeonCore()
        #endif
         o.build = MEON_BUILD_ID;
         o.dataFolder = meon::MeonSettings::getSettingsFolder();
+        o.logFile = meon::MeonSettings::getLogFolder().getChildFile (juce::JUCEApplicationBase::isStandaloneApp() ? "app.log" : "plugin.log");
        #if MEON_DEV_OPTIONS
         meon::core::MeonCore::applyDevOptions (o, meon::devOptions());
        #endif
         mMeonCore = std::make_unique<meon::core::MeonCore> (o);
+        juce::ignoreUnused (meonCrashDumpAtStartup);
+        meon::crashdump::installForStandalone();   // 장치를 연 뒤 드라이버가 처리기를 바꿔 놓았으면 다시 건다
+        meon::crashdump::tidyAndLog();
 
         auto link = std::make_unique<meon::core::EngineLink> (*this, o.plugin);
         link->deviceManager = [] { auto& p = meon::deviceManagerProvider(); return p ? p() : nullptr; };

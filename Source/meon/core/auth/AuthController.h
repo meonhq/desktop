@@ -60,8 +60,8 @@ public:
     void finishDone();
 
     void logout();
-    /** refresh 실패 등으로 세션이 끊겼을 때 (MeonApi::onSessionLost) */
-    void sessionLost();
+    /** refresh 실패 등으로 세션이 끊겼을 때 (MeonApi::onSessionLost). why 는 진단 로그용 */
+    void sessionLost (const juce::String& why);
 
     static constexpr int resendGapMs = 30000;
 

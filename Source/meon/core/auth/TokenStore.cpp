@@ -39,6 +39,7 @@ namespace
             CFTypeRef result = nullptr;
             const auto status = SecItemCopyMatching (query, &result);
             CFRelease (query);
+            error = (status == errSecSuccess || status == errSecItemNotFound) ? String() : juce::String::fromUTF8 ("키체인 읽기 오류 ") + String ((int) status);
             if (status != errSecSuccess || result == nullptr) return {};
             auto data = (CFDataRef) result;
             const String token = String::fromUTF8 ((const char*) CFDataGetBytePtr (data), (int) CFDataGetLength (data));
@@ -65,6 +66,7 @@ namespace
             }
             CFRelease (query);
             CFRelease (data);
+            error = status == errSecSuccess ? String() : juce::String::fromUTF8 ("키체인 저장 오류 ") + String ((int) status);
             return status == errSecSuccess;
         }
 
@@ -100,7 +102,13 @@ namespace
         String load() override
         {
             PCREDENTIALW cred = nullptr;
-            if (! CredReadW (target.toWideCharPointer(), CRED_TYPE_GENERIC, 0, &cred)) return {};
+            if (! CredReadW (target.toWideCharPointer(), CRED_TYPE_GENERIC, 0, &cred))
+            {
+                const auto e = GetLastError();
+                error = e == ERROR_NOT_FOUND ? String() : juce::String::fromUTF8 ("자격 증명 읽기 오류 ") + String ((int) e);
+                return {};
+            }
+            error = {};
             const String token = String::fromUTF8 ((const char*) cred->CredentialBlob, (int) cred->CredentialBlobSize);
             CredFree (cred);
             return token;
@@ -116,7 +124,10 @@ namespace
             cred.CredentialBlob = (LPBYTE) blob.getData();
             cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
             cred.UserName = const_cast<LPWSTR> (L"MEON");
-            return CredWriteW (&cred, 0) != FALSE;
+            if (CredWriteW (&cred, 0) != FALSE) { error = {}; return true; }
+            const auto e = GetLastError();
+            error = juce::String::fromUTF8 ("자격 증명 저장 오류 ") + String ((int) e);
+            return false;
         }
 
         void clear() override
@@ -143,6 +154,7 @@ namespace
         {
             file.getParentDirectory().createDirectory();
             const bool ok = file.replaceWithText (token);
+            error = ok ? String() : juce::String::fromUTF8 ("파일 쓰기 실패 ") + file.getFullPathName();
            #if JUCE_LINUX || JUCE_BSD
             if (ok) ::chmod (file.getFullPathName().toRawUTF8(), 0600);
            #endif

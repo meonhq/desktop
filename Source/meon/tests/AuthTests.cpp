@@ -93,6 +93,46 @@ public:
             r.wait();
             expect (r.auth.step() == S::login && tokens.value.isEmpty());
         }
+
+        // refresh 토큰은 한 번 쓰면 바뀐다. 요청 401 의 갱신과 실시간 연결 거절의 갱신이 겹쳐도
+        // 한 번만 보내고 결과를 같이 받아야 한다 (예전에는 늦게 간 쪽이 지워진 토큰을 보내 로그아웃됐다)
+        beginTest ("overlapping refreshes share one request and stay logged in");
+        {
+            tokens.clear();
+            Rig r (tokens);
+            r.server.loadState (saved);
+            r.auth.start();
+            r.wait();
+            bool ok = false;
+            r.auth.login ("me@example.com", "abcd123!", [&] (Result<Done> x) { ok = x.ok(); });
+            r.wait();
+            r.auth.finishDone();
+            expect (ok && r.auth.step() == S::ready);
+
+            r.clock.advance (16 * 60 * 1000);   // access 토큰 만료 (15분)
+            bool meOk = false, refreshOk = false;
+            r.api.getMe ([&] (Result<Me> m) { meOk = m.ok(); });
+            r.clock.advance (10);                // getMe 가 401 을 받아 갱신을 보낸 상태
+            r.api.refresh ([&] (Result<Tokens> t) { refreshOk = t.ok(); });
+            r.wait();
+            r.wait();
+            expect (meOk, "request retried after 401 succeeds");
+            expect (refreshOk, "overlapping refresh succeeds");
+            expect (r.auth.step() == S::ready);
+            expect (tokens.value.isNotEmpty() && tokens.value == r.api.getTokens().refreshToken);
+            saved = r.server.saveState();
+        }
+
+        beginTest ("rejected saved token: login screen, stored token cleared");
+        {
+            tokens.value = "rt_not_valid";
+            Rig r (tokens);
+            r.server.loadState (saved);
+            r.auth.start();
+            r.wait();
+            expect (r.auth.step() == S::login);
+            expect (tokens.value.isEmpty());
+        }
     }
 };
 

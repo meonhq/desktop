@@ -52,6 +52,13 @@ if (MEON_BUILD_ID EQUAL 0)
 else()
     set(MEON_DEV_OPTIONS 0)
 endif()
+# 진단 로그(app.log)에 적는 커밋. 빌드 번호 0 인 시험 빌드끼리 구분하려고 넣는다 (구성할 때 한 번 읽는다)
+execute_process(COMMAND git rev-parse --short=8 HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE MEON_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if (NOT MEON_GIT_COMMIT)
+    set(MEON_GIT_COMMIT "unknown")
+endif()
 
 
 # If you've installed JUCE somehow (via a package manager, or directly using the CMake install
@@ -129,6 +136,8 @@ set(MEON_CORE_SOURCES
     Source/meon/core/jam/JamSession.cpp
     Source/meon/core/log/SessionLog.h
     Source/meon/core/log/SessionLog.cpp
+    Source/meon/core/log/AppLog.h
+    Source/meon/core/log/AppLog.cpp
     Source/meon/core/jam/RttReporter.h
     Source/meon/core/MeonCore.h
     Source/meon/core/MeonCore.cpp
@@ -390,6 +399,8 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonAudio.h
         Source/meon/MeonUpdater.cpp
         Source/meon/MeonUpdater.h
+        Source/meon/MeonCrashDump.cpp
+        Source/meon/MeonCrashDump.h
         Source/meon/shell/ShellHooks.h
         Source/meon/MeonProcessorGlue.cpp
         Source/meon/core/jam/EngineLink.h
@@ -477,6 +488,15 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
 
     # 소스의 한국어 리터럴은 UTF-8 (MSVC 는 기본이 시스템 코드 페이지)
     target_compile_options("${target_name}" PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+    # Windows: 크래시 덤프(%APPDATA%\MEON\crashes)를 읽으려면 같은 빌드의 PDB 가 있어야 한다.
+    # Release 에서도 디버그 정보와 PDB 를 만든다. 최적화·실행 파일은 그대로 (/OPT:REF /OPT:ICF), PDB 는 설치 파일에 넣지 않는다
+    if (MSVC)
+        target_compile_options("${target_name}" PRIVATE $<$<CONFIG:Release>:/Zi>)
+        if (TARGET ${target_name}_Standalone)
+            target_link_options(${target_name}_Standalone PRIVATE "$<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF>")
+        endif()
+    endif()
         
 
     # This cleans up the folder organization, especially on Xcode.
@@ -523,6 +543,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         MEON_BUILD_VERSION="${PROJECT_VERSION}"
         MEON_BUILD_NUMBER=${BUILDVERSION}
         MEON_BUILD_ID=${MEON_BUILD_ID}
+        MEON_GIT_COMMIT="${MEON_GIT_COMMIT}"
         MEON_DEV_OPTIONS=${MEON_DEV_OPTIONS}
         ${PLAT_COMPILE_DEFS} )
 
@@ -663,6 +684,7 @@ if (MEON_TESTS)
         Source/meon/tests/HomeTests.cpp
         Source/meon/tests/RoomTests.cpp
         Source/meon/tests/ScriptSoakTests.cpp
+        Source/meon/tests/AppLogTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
@@ -673,6 +695,7 @@ if (MEON_TESTS)
         JUCE_DISPLAY_SPLASH_SCREEN=0
         MEON_BUILD_ID=${MEON_BUILD_ID}
         MEON_BUILD_VERSION="${PROJECT_VERSION}"
+        MEON_GIT_COMMIT="${MEON_GIT_COMMIT}"
         MEON_DEV_OPTIONS=${MEON_DEV_OPTIONS})
     target_link_libraries(MEON_Tests PRIVATE
         juce::juce_core

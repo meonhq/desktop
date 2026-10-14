@@ -16,9 +16,14 @@ public:
     virtual juce::String load() = 0;                 // 없으면 빈 문자열
     virtual bool save (const juce::String& token) = 0;
     virtual void clear() = 0;
+    /** 마지막 load·save 가 실패한 이유 (진단 로그용). 없으면 빈 문자열 */
+    virtual juce::String lastError() const          { return error; }
 
     /** 이 OS 의 기본 저장소. name 은 항목 이름 (가짜 서버 기간에는 "fake-refresh-token" 처럼 진짜와 구분) */
     static std::unique_ptr<TokenStore> createDefault (const juce::String& name);
+
+protected:
+    juce::String error;
 };
 
 /** 테스트용 */

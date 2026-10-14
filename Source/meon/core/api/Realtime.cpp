@@ -1,4 +1,5 @@
 #include "Realtime.h"
+#include "../log/AppLog.h"
 #include "ApiJson.h"
 
 namespace meon::core
@@ -88,9 +89,22 @@ Realtime::~Realtime()
     if (transportOpen) transport.close();
 }
 
+static juce::String linkName (Realtime::Link l)
+{
+    switch (l)
+    {
+        case Realtime::Link::offline:      return LOGTXT ("꺼짐");
+        case Realtime::Link::connecting:   return LOGTXT ("연결 중");
+        case Realtime::Link::online:       return LOGTXT ("연결됨");
+        case Realtime::Link::reconnecting: return LOGTXT ("끊김, 다시 연결 중");
+    }
+    return LOGTXT ("?");
+}
+
 void Realtime::setLink (Link l)
 {
     if (link == l) return;
+    AppLog::write ("realtime", juce::String (LOGTXT ("실시간 연결: ")) + linkName (link) + LOGTXT (" → ") + linkName (l));
     link = l;
     listeners.call ([l] (Listener& x) { x.linkChanged (l); });
 }
@@ -186,6 +200,7 @@ void Realtime::transportMessage (const var& msg)
     if (type == "error")
     {
         const auto code = msg.getProperty ("code", "").toString();
+        AppLog::write ("realtime", LOGTXT ("서버가 오류를 보냄: ") + code);
         wanted = false;   // 같은 토큰으로 다시 붙어도 같은 결과. 위층이 토큰을 고친 뒤 connect() 를 다시 부른다
         listeners.call ([&code] (Listener& l) { l.authRejected (code); });
         return;
@@ -232,6 +247,7 @@ void Realtime::transportClosed()
         return;
     }
     setLink (link == Link::connecting ? Link::connecting : Link::reconnecting);
+    AppLog::write ("realtime", LOGTXT ("연결이 닫힘 → ") + juce::String (backoffMs / 1000.0, 0) + LOGTXT ("초 뒤 다시 연결"));
     scheduleReconnect();
 }
 
