@@ -142,6 +142,10 @@ void AppStore::linkChanged (Realtime::Link l)
     if (s.link == l) return;
     s.link = l;
     changed (StateKey::link);
+    // 다른 곳에서 같은 계정으로 접속했다 (4000): 이 기기는 방에서 손을 뗀다. 서버에서는 방에 그대로 있고(새 연결 쪽),
+    // 여기서 다시 연결하면 hello 의 current_room 으로 돌아온다. 합주(AOO) 연결도 이걸 보고 끊는다 (aooserver 가 같은 이름의 두 번째 로그인을 거부)
+    if (l == Realtime::Link::replaced && s.currentRoom)
+        leaveRoomState();
 }
 
 void AppStore::hello (const Hello& h)

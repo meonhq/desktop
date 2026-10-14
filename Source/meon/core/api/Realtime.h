@@ -50,7 +50,9 @@ struct RealtimeEvent
 class Realtime : private RealtimeTransport::Sink
 {
 public:
-    enum class Link { offline, connecting, online, reconnecting };
+    /** replaced: 같은 계정이 다른 곳(앱·플러그인)에서 접속해서 서버가 이 연결을 닫았다 (닫는 코드 4000, API 10.1).
+        다시 접속하지 않는다. 사용자가 connect() 로 직접 다시 붙을 때까지 그대로 */
+    enum class Link { offline, connecting, online, reconnecting, replaced };
 
     struct Listener
     {
@@ -61,6 +63,8 @@ public:
         virtual void event (const RealtimeEvent&) {}
         /** auth 단계 거부: "unauthorized" | "email_not_verified" | "client_outdated". 재연결은 멈춘다 */
         virtual void authRejected (const juce::String& code) { juce::ignoreUnused (code); }
+        /** 서버가 세션을 폐기했다 (닫는 코드 4001: 로그아웃·비밀번호 변경·refresh 재사용 감지·탈퇴). 재연결은 멈춘다 */
+        virtual void sessionRevoked() {}
     };
 
     Realtime (RealtimeTransport&, Scheduler&, int buildNumber);
@@ -80,6 +84,11 @@ public:
 
     static constexpr int heartbeatMs = 20000;
     static constexpr int maxBackoffMs = 30000;
+    /** 이만큼 아무것도 받지 못하면 연결이 죽은 것으로 보고 다시 연결한다 (서버도 45초, API 10.3) */
+    static constexpr int silenceLimitMs = 45000;
+
+    /** 닫는 코드 (API 10.1) */
+    static constexpr int closeReplaced = 4000, closeSessionRevoked = 4001, closeSlow = 4002;
 
 private:
     RealtimeTransport& transport;
@@ -90,7 +99,7 @@ private:
     Link link = Link::offline;
     bool wanted = false, transportOpen = false, publicRooms = false;
     int lastSeq = 0, backoffMs = 1000, heartbeatTask = 0, reconnectTask = 0;
-    int lastCloseCode = 0;   // 마지막으로 닫힌 코드 (0: 코드 없음). 닫는 코드별 처리는 R11 PR2
+    juce::int64 lastReceivedMs = 0;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void setLink (Link);

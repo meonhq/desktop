@@ -171,13 +171,17 @@ namespace
             // 이메일
             add (emailRow).setControl (&emailEdit, emailEdit.getIdealWidth());
             emailRow.setBelow (&emailPanel, [this] (int) { return emailPanelHeight(); });
-            emailEdit.onPress = [this] { emailMode = 1; newEmail.setText ({}); emailError = {}; refreshEmail(); newEmail.focus(); };
-            for (auto* comp : std::initializer_list<juce::Component*> { &newEmail, &emailCancel, &emailSend, &code, &codeCancel, &codeConfirm, &resend })
+            emailEdit.onPress = [this] { emailMode = 1; newEmail.setText ({}); emailPw.setText ({}); emailError = {}; refreshEmail(); newEmail.focus(); };
+            for (auto* comp : std::initializer_list<juce::Component*> { &newEmail, &emailPw, &emailCancel, &emailSend, &code, &codeCancel, &codeConfirm, &resend })
                 emailPanel.addChildComponent (comp);
             newEmail.setPlaceholder (TXT ("새 이메일"));
-            newEmail.onReturn = [this] { sendEmailCode(); };
+            newEmail.onReturn = [this] { emailPw.focus(); };
             newEmail.onChange = [this] { emailError = {}; emailPanel.repaint(); };
-            emailCancel.onPress = codeCancel.onPress = [this] { emailMode = 0; emailError = {}; refreshEmail(); };
+            // 이메일을 바꾸려면 지금 비밀번호를 확인한다 (API 4.4)
+            emailPw.setPassword (true);
+            emailPw.onReturn = [this] { sendEmailCode(); };
+            emailPw.onChange = [this] { emailError = {}; emailPanel.repaint(); };
+            emailCancel.onPress = codeCancel.onPress = [this] { emailMode = 0; emailError = {}; emailPw.setText ({}); core.account().cancelEmailChange(); refreshEmail(); };
             emailSend.onPress = [this] { sendEmailCode(); };
             code.onChange = [this] { codeError = false; code.setError (false); emailPanel.repaint(); codeConfirm.setDimmed (! code.isComplete()); };
             code.onSubmit = codeConfirm.onPress = [this] { confirmEmailCode(); };
@@ -300,7 +304,7 @@ namespace
 
         int emailPanelHeight() const
         {
-            if (emailMode == 1) return 32 + (emailError.isNotEmpty() ? 6 + 18 : 0);
+            if (emailMode == 1) return 32 + 9 + 32 + (emailError.isNotEmpty() ? 6 + 18 : 0);
             if (emailMode == 2) return 12 + 36 + 9 + 44 + (codeError ? 9 + 16 : 0) + 9 + metric::smallH + 12;
             return 0;
         }
@@ -312,7 +316,7 @@ namespace
             emailEdit.setVisible (emailMode == 0);
             emailPanel.setVisible (emailMode != 0);
             emailPanel.framed = emailMode == 2;
-            for (auto* comp : std::initializer_list<juce::Component*> { &newEmail, &emailCancel, &emailSend })
+            for (auto* comp : std::initializer_list<juce::Component*> { &newEmail, &emailPw, &emailCancel, &emailSend })
                 comp->setVisible (emailMode == 1);
             for (auto* comp : std::initializer_list<juce::Component*> { &code, &codeCancel, &codeConfirm, &resend })
                 comp->setVisible (emailMode == 2);
@@ -329,16 +333,19 @@ namespace
             const auto e = newEmail.getText().trim();
             const auto p = core::validation::email (e);
             if (p != core::validation::Problem::none) { emailError = msg::email (p).isNotEmpty() ? msg::email (p) : TXT ("이메일을 입력해 주세요"); refreshEmail(); return; }
+            if (emailPw.getText().isEmpty()) { emailError = TXT ("지금 비밀번호를 입력해 주세요"); refreshEmail(); emailPw.focus(); return; }
             if (busy) return;
             busy = true;
             refreshEmail();
             juce::Component::SafePointer<AccountPage> safe (this);
-            core.account().requestEmailChange (e, [safe, e] (core::Result<core::Done> r)
+            core.account().requestEmailChange (e, emailPw.getText(), [safe, e] (core::Result<core::Done> r)
             {
                 if (safe == nullptr) return;
                 safe->busy = false;
-                if (r.ok()) { safe->emailMode = 2; safe->sentTo = e; safe->sentAt = juce::Time::currentTimeMillis(); safe->code.clear(); safe->codeError = false; }
-                else safe->emailError = r.code() == core::ErrorCode::emailTaken ? TXT ("이미 가입된 이메일이에요") : msg::general (r.err());
+                if (r.ok()) { safe->emailMode = 2; safe->sentTo = e; safe->sentAt = juce::Time::currentTimeMillis(); safe->code.clear(); safe->codeError = false; safe->emailPw.setText ({}); }
+                else if (r.code() == core::ErrorCode::emailTaken)          safe->emailError = TXT ("이미 가입된 이메일이에요");
+                else if (r.code() == core::ErrorCode::invalidCredentials)  safe->emailError = TXT ("비밀번호가 맞지 않아요");
+                else safe->emailError = msg::general (r.err());
                 safe->refreshEmail();
                 if (r.ok()) safe->code.focusFirst();
             });
@@ -367,7 +374,7 @@ namespace
             {
                 g.setColour (col::danger);
                 g.setFont (font (400, 12.0f));
-                g.drawText (emailError, 0, 32 + 6, w, 18, juce::Justification::centredLeft, true);
+                g.drawText (emailError, 0, 32 + 9 + 32 + 6, w, 18, juce::Justification::centredLeft, true);
             }
             if (emailMode == 2)
             {
@@ -401,8 +408,9 @@ namespace
             if (emailMode == 1)
             {
                 const int bw = emailCancel.getIdealWidth() + 9 + emailSend.getIdealWidth();
-                newEmail.setBounds (0, 0, w - bw - 9, 32);
-                layoutRight ({ &emailCancel, &emailSend }, { 0, 0, w, 32 });
+                newEmail.setBounds (0, 0, w, 32);
+                emailPw.setBounds (0, 32 + 9, w - bw - 9, 32);
+                layoutRight ({ &emailCancel, &emailSend }, { 0, 32 + 9, w, 32 });
             }
             else if (emailMode == 2)
             {
@@ -538,7 +546,7 @@ namespace
         SettingsModal::Row emailRow { TXT ("이메일") };
         Button emailEdit { Button::Kind::small, TXT ("변경") };
         Box emailPanel;
-        TextInput newEmail;
+        TextInput newEmail, emailPw { TXT ("지금 비밀번호") };
         Button emailCancel { Button::Kind::small, TXT ("취소") }, emailSend { Button::Kind::smallPrimary, TXT ("인증 코드 받기") };
         OtpInput code { OtpInput::Charset::digits, OtpInput::Size::small };
         Button codeCancel { Button::Kind::small, TXT ("취소") }, codeConfirm { Button::Kind::smallPrimary, TXT ("확인") };

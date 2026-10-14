@@ -192,45 +192,83 @@ void MeonApi::refresh (Callback<Tokens> cb, const String& whyGiven)
     }
     refreshing = true;
     AppLog::write ("auth", LOGTXT ("토큰 갱신 시작 (") + why + ")");
+    sendRefresh (0);
+}
+
+void MeonApi::sendRefresh (int attempt)
+{
+    std::weak_ptr<bool> weak = alive;
+    if (coordinator != nullptr)
+    {
+        if (! coordinator->tryLock())
+        {
+            // 다른 프로세스(독립 앱·플러그인)가 갱신 중: 끝나면 그쪽이 저장한 새 토큰을 읽어서 쓴다
+            if (attempt < 40)
+            {
+                if (attempt == 0) AppLog::write ("auth", LOGTXT ("다른 MEON(앱·플러그인)이 토큰을 갱신하는 중이라 기다림"));
+                coordinator->retryLater (250, [this, weak, attempt] { if (! weak.expired()) sendRefresh (attempt + 1); });
+                return;
+            }
+            AppLog::write ("auth", LOGTXT ("다른 MEON 의 토큰 갱신이 10초 넘게 끝나지 않아 잠금 없이 갱신"));
+        }
+        else
+            coordinatorLocked = true;
+
+        const auto stored = coordinator->storedRefreshToken();
+        if (stored.isNotEmpty() && stored != tokens.refreshToken)
+        {
+            AppLog::write ("auth", LOGTXT ("다른 MEON 이 바꿔 둔 로그인 토큰으로 갱신"));
+            tokens.refreshToken = stored;
+        }
+    }
 
     auto body = json::obj ({ { "refresh_token", tokens.refreshToken } });
-    std::weak_ptr<bool> weak = alive;
     sendNow ("POST", "/auth/refresh", body, false, false, [this, weak] (const HttpResponse& r)
     {
-        if (weak.expired()) return;
-
-        Result<Tokens> result = ApiError::of (ErrorCode::badResponse);
-        if (! isSuccess (r.status))
-            result = errorFromResponse (r);
-        else
-        {
-            auto at = r.body.getProperty ("access_token", var()), rt = r.body.getProperty ("refresh_token", var());
-            if (at.isString() && rt.isString())
-            {
-                setTokens ({ at.toString(), rt.toString() });
-                result = tokens;
-            }
-        }
-
-        refreshing = false;
-        const bool loseSession = std::exchange (sessionLostOnRefreshFailure, false);
-        auto waiters = std::move (refreshWaiters);
-        refreshWaiters.clear();
-
-        if (result.ok())
-            AppLog::write ("auth", LOGTXT ("토큰 갱신 성공"));
-        else if (result.code() == ErrorCode::network || result.code() == ErrorCode::timeout)
-            AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: ") + errorKey (result.code()) + LOGTXT (" (연결 문제라 로그인은 유지)"));
-        else
-        {
-            AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: ") + errorKey (result.code()) + " (HTTP " + String (r.status) + LOGTXT (") → 저장된 로그인을 지움"));
-            setTokens ({});
-            if (loseSession && onSessionLost) onSessionLost();
-        }
-
-        for (auto& w : waiters)
-            if (w) w (result);
+        if (! weak.expired()) finishRefresh (r);
     });
+}
+
+void MeonApi::finishRefresh (const HttpResponse& r)
+{
+    Result<Tokens> result = ApiError::of (ErrorCode::badResponse);
+    if (! isSuccess (r.status))
+        result = errorFromResponse (r);
+    else
+    {
+        auto at = r.body.getProperty ("access_token", var()), rt = r.body.getProperty ("refresh_token", var());
+        if (at.isString() && rt.isString())
+        {
+            setTokens ({ at.toString(), rt.toString() });   // 저장(onTokensChanged)까지 끝낸 뒤 잠금을 푼다
+            result = tokens;
+        }
+    }
+    if (coordinatorLocked)
+    {
+        coordinatorLocked = false;
+        coordinator->unlock();
+    }
+
+    refreshing = false;
+    const bool loseSession = std::exchange (sessionLostOnRefreshFailure, false);
+    auto waiters = std::move (refreshWaiters);
+    refreshWaiters.clear();
+
+    if (result.ok())
+        AppLog::write ("auth", LOGTXT ("토큰 갱신 성공"));
+    else if (result.code() == ErrorCode::network || result.code() == ErrorCode::timeout)
+        AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: ") + errorKey (result.code()) + LOGTXT (" (연결 문제라 로그인은 유지)"));
+    else if (result.code() == ErrorCode::clientOutdated)
+        AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: 앱 버전이 낮음 (로그인은 유지, 업데이트 뒤 이어서 씀)"));
+    else
+    {
+        AppLog::write ("auth", LOGTXT ("토큰 갱신 실패: ") + errorKey (result.code()) + " (HTTP " + String (r.status) + LOGTXT (") → 저장된 로그인을 지움"));
+        setTokens ({});
+        if (loseSession && onSessionLost) onSessionLost();
+    }
+
+    for (auto& w : waiters)
+        if (w) w (result);
 }
 
 void MeonApi::logout (Callback<Done> cb)
@@ -270,9 +308,9 @@ void MeonApi::verifyEmailChange (const String& code, Callback<Me> cb)
     call ("POST", "/me/email/verify", json::obj ({ { "code", code } }), true, cb);
 }
 
-void MeonApi::deleteAccount (const String& password, Callback<Done> cb)
+void MeonApi::deleteAccount (Callback<Done> cb)
 {
-    callDone ("DELETE", "/me", json::obj ({ { "password", password } }), true, [this, cb] (Result<Done> r)
+    callDone ("DELETE", "/me", {}, true, [this, cb] (Result<Done> r)
     {
         if (r.ok()) setTokens ({});
         cb (r);

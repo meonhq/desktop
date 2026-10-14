@@ -3,6 +3,10 @@
 //   로그인 뒤에도 같은 판정. 단, 다 있으면 "다시 오셨네요"(done) 화면을 한 번 보여 준다 (Q5)
 //   가입: 인증 → 닉네임 → 파트 → 디스코드 → 완료 → 홈
 // 인증을 마친 계정이면 실시간 연결을 시작한다.
+// 두 가지 막는 단계 (R11):
+//   outdated: 앱 버전이 낮다 (config.min_build, 426, WS client_outdated). 앱 전체를 덮는 강제 업데이트 화면 (API 13장).
+//             합주 중이면 방을 나갈 때까지 기다린다. 저장된 로그인은 지우지 않는다
+//   replaced: 같은 계정이 다른 곳(앱·플러그인)에서 접속했다 (닫는 코드 4000). "여기서 다시 연결"을 누를 때까지 그대로
 #pragma once
 
 #include "../api/MeonApi.h"
@@ -14,10 +18,11 @@
 namespace meon::core
 {
 
-class AuthController : private Realtime::Listener
+class AuthController : private Realtime::Listener,
+                       private AppStore::Listener
 {
 public:
-    enum class Step { loading, login, signup, verify, nickname, part, discord, done, ready };
+    enum class Step { loading, login, signup, verify, nickname, part, discord, done, ready, outdated, replaced };
 
     struct Listener
     {
@@ -59,6 +64,11 @@ public:
     void finishDiscord();
     void finishDone();
 
+    /** replaced 화면의 "여기서 다시 연결": 실시간 연결을 다시 열고(다른 곳의 연결이 끊긴다) 홈으로 */
+    void reconnectHere();
+    /** 앱 버전이 낮아 서버가 받아 주지 않는다 (426·client_outdated·config) */
+    bool isOutdated() const { return outdatedPending; }
+
     void logout();
     /** refresh 실패 등으로 세션이 끊겼을 때 (MeonApi::onSessionLost). why 는 진단 로그용 */
     void sessionLost (const juce::String& why);
@@ -73,14 +83,19 @@ private:
     Scheduler& scheduler;
     juce::ListenerList<Listener> listeners;
     Step current = Step::loading;
-    bool fromLogin = false, offline = false, signedUp = false;
+    bool fromLogin = false, offline = false, signedUp = false, outdatedPending = false;
     juce::int64 codeSentAt = 0;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void go (Step);
     void afterMe (const Me&, bool afterLogin);
     void connectRealtime();
+    void markOutdated (const juce::String& why);
+    void checkMinBuild();
     void authRejected (const juce::String& code) override;
+    void sessionRevoked() override;
+    void linkChanged (Realtime::Link) override;
+    void stateChanged (StateKey) override;
 };
 
 } // namespace meon::core

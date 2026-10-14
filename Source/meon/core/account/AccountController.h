@@ -1,8 +1,7 @@
 // MEON core - 내 계정·프로필·차단 (API 4·7.6·8장): 프로필 보기, 닉네임·파트·개인정보 설정 바꾸기, 비밀번호·이메일 변경,
 // 친구 삭제, 차단·해제, 로그아웃, 탈퇴. 결과는 store 에 반영하고 화면에는 Result 로 돌려준다.
 //
-// 잠정 (API 질문 대기): 사용자 결정으로 이메일 변경·탈퇴 화면에는 비밀번호 칸이 없다. API 4.4·4.5 는 비밀번호를 받으므로
-// 지금은 빈 비밀번호로 보낸다 (가짜 서버는 받아 준다). 서버 쪽 방식이 정해지면 여기만 바꾼다.
+// 이메일 변경은 지금 비밀번호를 받는다 (API 4.4. 인증을 마친 계정). 탈퇴는 비밀번호 없이 세션만으로 (API 4.5, v0.5).
 #pragma once
 
 #include "../api/MeonApi.h"
@@ -28,8 +27,11 @@ public:
     void setRoomInvites (const juce::String&, Callback<Me> = {});
 
     void changePassword (const juce::String& current, const juce::String& next, Callback<Done>);
-    void requestEmailChange (const juce::String& newEmail, Callback<Done>);
+    /** 새 주소로 코드 보내기. password 는 지금 비밀번호 (다시 보내기에 쓰려고 이 흐름이 끝날 때까지만 기억한다) */
+    void requestEmailChange (const juce::String& newEmail, const juce::String& password, Callback<Done>);
     void resendEmailChange (Callback<Done>);
+    /** 이메일 변경 취소 (기억한 주소·비밀번호를 지운다) */
+    void cancelEmailChange();
     void verifyEmailChange (const juce::String& code, Callback<Me>);
 
     void removeFriend (const juce::String& userId, Callback<Done> = {});
@@ -44,7 +46,7 @@ private:
     MeonApi& api;
     AppStore& store;
     AuthController& auth;
-    juce::String pendingEmail;
+    juce::String pendingEmail, pendingPassword;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void patch (const MePatch&, Callback<Me>);

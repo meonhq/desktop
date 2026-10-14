@@ -59,6 +59,7 @@ public:
     /** 마지막으로 "메일로 보낸" 6자리 코드 (가입 인증·이메일 변경). 개발 빌드는 화면에 보여 준다 */
     juce::String getLastMailedCode() const { return lastMailedCode; }
     void devDropLink (int seconds);             // 실시간 연결 끊김 흉내
+    void devCloseLink (int code);               // 서버가 닫는 코드로 닫음 흉내 (4000 다른 곳에서 접속, 4001 세션 폐기, 4002 느림)
     void devKickMe();                           // 내가 있는 방의 방장이 나를 내보냄 (가짜 방장일 때)
     void devCloseMyRoom();                      // 내가 있는 방의 가짜 방장이 방을 닫음
     void devSetConfig (int minBuild, int latestBuild);
