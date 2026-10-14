@@ -240,13 +240,18 @@ public:
             o.logFolder.deleteRecursively();   // 지난 실행이 남긴 로그
             o.fake = &server;
             o.prefs.sendMuted = true;     // 지난번에 송출 정지 상태로 끔 → 켤 때 그대로 (버그 #1)
+            o.prefs.selfMonitor = true;   // 셀프 모니터를 켜 둔 사람
             o.savePrefs = [&] (const JamPrefs& x) { saved = x; };
+            engine.selfMon = true;        // 지난 실행의 엔진 상태가 켜진 채로 남아 있어도
             JamSession jam (engine, store, clock, o);
-            expect (! engine.sendMuted);   // 방에 들어가기 전에는 엔진을 건드리지 않는다
+            expect (engine.sendMuted);     // 홈의 송출 정지 버튼도 설정 파일 값
+            expect (! engine.selfMon);     // 버그 22: 홈(방 밖)에서는 내 소리를 내보내지 않는다
+            expect (jam.isSelfMonitor() && ! jam.isSelfMonitorAudible());
 
             run ([&] { api.joinByCode ("Q7K2MX", [&] (Result<JoinResult> r) { store.setCurrentRoom (r.get().room); }); });
             expect (jam.getPhase() == JamSession::Phase::connecting);
             expect (engine.sendMuted);     // 지난 송출 정지 상태 그대로
+            expect (! engine.selfMon);     // 버그 23: 송출 정지 중에는 셀프 모니터도 꺼진다
             expectEquals (engine.user, server.meId());
             engine.finishConnect();
             expect (jam.getPhase() == JamSession::Phase::joining);
@@ -275,6 +280,18 @@ public:
             for (auto& m : jam.members())
                 if (m.userId == "u_peer") { expect (m.nickname == juce::String::fromUTF8 ("민준") && m.isHost); }
 
+            // 버그 24: 방 안에서 닉네임·파트를 바꾸면 내 프로필을 바로 다시 보낸다 (다른 컴퓨터의 멤버 목록)
+            {
+                auto profiles = [&] { int n = 0; for (auto& c : engine.sent) if (c.tags == "profile") ++n; return n; };
+                const int before = profiles();
+                auto me = *store.state().me;
+                me.part = juce::String ("drums");
+                store.setMe (me);
+                expectEquals (profiles(), before + 1);
+                const auto last = juce::JSON::parse (engine.sent.back().message);
+                expectEquals (last.getProperty ("part", {}).toString(), juce::String ("drums"));
+            }
+
             // 멤버가 아닌 사람의 채팅은 버린다
             const auto before = jam.chat().getMessages().size();
             jam.chat().received ({ "Q7K2MX", "u_stranger", "id:1", "spam" });   // (직접 넣으면 들어가지만)
@@ -290,6 +307,11 @@ public:
             expect (! jam.isInputSilent());
             jam.setSendMuted (false);
             expect (! saved.sendMuted);
+            expect (engine.selfMon);       // 송출을 다시 켜면 설정값대로 돌아온다
+            jam.setSendMuted (true);
+            expect (! engine.selfMon && jam.isSelfMonitor() && saved.selfMonitor);   // 설정값 자체는 그대로
+            jam.setSendMuted (false);
+            expect (engine.selfMon && jam.isSelfMonitorAudible());
             clock.advance (5600);
             expect (jam.isInputSilent());
             engine.inLevel = 0.1f;
@@ -351,6 +373,7 @@ public:
             // 방에서 나오면 엔진도 나오고, 파일도 닫는다 (방 닫힘·추방도 같은 길: currentRoom 이 빈다)
             store.setCurrentRoom (std::nullopt);
             expect (jam.getPhase() == JamSession::Phase::idle);
+            expect (! engine.selfMon && jam.isSelfMonitor());   // 버그 22: 방을 나오면 꺼지고, 설정값은 그대로
             expect (! engine.connected && engine.group.isEmpty() && ! engine.allowEnabled);
             expect (! engine.file && ! engine.filePlaying && ! jam.hasFile());
             rt.removeListener (&store);

@@ -133,6 +133,73 @@ public:
             expectEquals ((int) rooms.get().size(), 7);
         }
 
+        beginTest ("PATCH /me in a room: room.updated to members, rooms.updated to subscribers, friend.updated to friends (bug 24)");
+        {
+            Harness h;
+            h.signupReady();
+            const auto myId = h.server.meId();
+            struct Ev { juce::String to, type; juce::var data; };
+            std::vector<Ev> evs;
+            h.server.onEmitForTest = [&] (const juce::String& to, const juce::String& type, const juce::var& d) { evs.push_back ({ to, type, d }); };
+            h.rt.subscribePublicRooms (true);
+            h.clock.advance (100);
+            auto j = h.run<JoinResult> ([&] (auto cb) { h.api.joinRoom ("r_f_1", cb); });   // 바로 입장 공개 방 (멤버 4명)
+            expect (j.ok() && j.get().room.has_value());
+            if (j.ok() && j.get().room) h.store.setCurrentRoom (j.get().room);
+            h.clock.advance (100);
+            evs.clear();
+
+            MePatch p;
+            p.part = juce::String ("drums");
+            p.nickname = juce::String::fromUTF8 ("새이름");
+            expect (h.run<Me> ([&] (auto cb) { h.api.patchMe (p, cb); }).ok());
+
+            auto count = [&] (const juce::String& type, const juce::String& to)
+            {
+                int n = 0;
+                for (auto& e : evs) if (e.type == type && (to.isEmpty() || e.to == to)) ++n;
+                return n;
+            };
+            // 1) 방 멤버 모두 (나 + 4명)
+            expectEquals (count ("room.updated", {}), 5);
+            for (auto& u : { "u_f_minjun", "u_f_seoyeon", "u_f_hajun", "u_f_jiwoo" }) expectEquals (count ("room.updated", u), 1);
+            // 2) 공개 방 목록 구독자 (가짜 서버는 실시간 연결이 하나라 나)
+            expectEquals (count ("rooms.updated", myId), 1);
+            // 3) 친구 모두 (가짜 세계의 친구 5명), 내용은 나의 새 파트·닉네임
+            expectEquals (count ("friend.updated", {}) - count ("friend.updated", myId), 5);
+            for (auto& e : evs)
+                if (e.type == "friend.updated" && e.to == "u_f_yuna")
+                {
+                    const auto user = e.data.getProperty ("user", {});
+                    expectEquals (user.getProperty ("id", {}).toString(), myId);
+                    expectEquals (user.getProperty ("part", {}).toString(), juce::String ("drums"));
+                    expectEquals (user.getProperty ("nickname", {}).toString(), juce::String::fromUTF8 ("새이름"));
+                }
+
+            // 내 앱: 방 멤버 줄과 공개 방 목록이 바로 바뀐다
+            h.clock.advance (100);
+            bool roomOk = false, listOk = false;
+            if (h.store.state().currentRoom)
+                for (auto& m : h.store.state().currentRoom->members)
+                    if (m.user.id == myId) roomOk = m.user.part.value_or ("") == "drums" && m.user.nickname.value_or ("") == juce::String::fromUTF8 ("새이름");
+            if (auto* r = h.store.state().findPublicRoom ("r_f_1"))
+                for (auto& m : r->members)
+                    if (m.user.id == myId) listOk = m.user.part.value_or ("") == "drums";
+            expect (roomOk);
+            expect (listOk);
+
+            // 방 밖에서 바꿔도 친구에게는 간다
+            h.store.setCurrentRoom (std::nullopt);
+            expect (h.run<Done> ([&] (auto cb) { h.api.leaveRoom ("r_f_1", cb); }).ok());
+            evs.clear();
+            p.part = juce::String ("bass");
+            p.nickname.reset();
+            expect (h.run<Me> ([&] (auto cb) { h.api.patchMe (p, cb); }).ok());
+            expectEquals (count ("room.updated", {}), 0);
+            expectEquals (count ("friend.updated", {}) - count ("friend.updated", myId), 5);
+            h.server.onEmitForTest = nullptr;
+        }
+
         beginTest ("login, token expiry -> refresh -> retry");
         {
             Harness h;

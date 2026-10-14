@@ -94,7 +94,10 @@ void HomeController::handleJoin (const juce::String& roomId, Result<JoinResult> 
         if (r.get().room)
             store.setCurrentRoom (r.get().room);
         else if (r.get().requestUntil && roomId.isNotEmpty())
+        {
+            requestUntilByRoom[roomId] = json::parseIsoTime (*r.get().requestUntil);
             store.setMyJoinRequestUntil (roomId, *r.get().requestUntil);
+        }
     }
     else if (classify (r.err()) == JoinFailure::closed && roomId.isNotEmpty())
     {
@@ -131,6 +134,7 @@ void HomeController::joinFriend (const Friend& f, Callback<JoinResult> cb)
         if (cb) cb (ApiError::of (ErrorCode::roomNotFound));
         return;
     }
+    if (friendJoinState (f) == FriendJoin::requested) return;   // "요청 보냄" 동안은 다시 보내지 않는다 (방 목록 카드와 같은 규칙)
     joinRoom (f.room->id, std::move (cb));
 }
 
@@ -156,8 +160,28 @@ void HomeController::leaveRoom()
 
 bool HomeController::isRequestPending (const Room& r) const
 {
-    if (! r.myJoinRequestUntil) return false;
-    return json::parseIsoTime (*r.myJoinRequestUntil) > scheduler.nowMs();
+    if (r.myJoinRequestUntil && json::parseIsoTime (*r.myJoinRequestUntil) > scheduler.nowMs()) return true;
+    auto it = requestUntilByRoom.find (r.id);
+    return it != requestUntilByRoom.end() && it->second > scheduler.nowMs();
+}
+
+bool HomeController::isRequestPending (const juce::String& roomId) const
+{
+    if (const auto* r = store.state().findPublicRoom (roomId)) return isRequestPending (*r);
+    auto it = requestUntilByRoom.find (roomId);
+    return it != requestUntilByRoom.end() && it->second > scheduler.nowMs();
+}
+
+HomeController::FriendJoin HomeController::friendJoinState (const Friend& f) const
+{
+    // 비공개 방이면 room 이 비어 있다 (위치 비공개, API 2.10) → 버튼 없음. 정원이 찼거나 차단이면 joinable false
+    if (f.status != "in_room" || ! f.room || ! f.room->joinable) return FriendJoin::none;
+    // 입장 방식은 공개 방 목록의 그 방을 따른다 (rooms.updated 로 바뀌면 바로 따라간다). 카드와 같은 순서:
+    // 바로 입장이면 "참여", 승인이 필요하면 요청을 보낸 뒤 request_until 까지 "요청 보냄"
+    const auto* room = store.state().findPublicRoom (f.room->id);
+    if (room != nullptr && ! room->isApproval()) return FriendJoin::join;
+    if (isRequestPending (f.room->id)) return FriendJoin::requested;
+    return room != nullptr ? FriendJoin::request : FriendJoin::join;   // 목록에 없으면 모른다 → "참여" (승인 방이면 서버가 요청으로 받는다)
 }
 
 //==============================================================================

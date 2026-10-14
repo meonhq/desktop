@@ -99,7 +99,10 @@ public:
     void setSendMuted (bool);
     float getSendGainDb() const { return prefs.sendGainDb; }
     void setSendGainDb (float);
+    /** 셀프 모니터 설정값 (합주 화면 내 행의 음소거·설정 화면). 실제로 들리는지는 isSelfMonitorAudible */
     bool isSelfMonitor() const { return prefs.selfMonitor; }
+    /** 내 소리가 지금 내 스피커로 나가는지: 설정이 켜져 있고, 방 안이고, 송출 정지가 아닐 때만 (버그 21·22·23) */
+    bool isSelfMonitorAudible() const;
     float getSelfMonitorDb() const { return prefs.selfMonitorDb; }
     void setSelfMonitorDb (float);
     int getSelfMonitorPan() const { return prefs.selfMonitorPan; }
@@ -196,6 +199,7 @@ private:
     juce::String nameOf (const juce::String& userId) const;
     void setPhase (Phase);
     void applyMonitor();
+    bool inRoomForAudio() const { return currentRoomId.isNotEmpty(); }   // 입장 처리 시작부터 나갈 때까지 (접속 중 포함)
 
     // AppStore::Listener
     void stateChanged (StateKey) override;

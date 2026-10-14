@@ -109,6 +109,60 @@ public:
             expect (after != nullptr && ! r.home.isRequestPending (*after));
         }
 
+        beginTest ("friend button: join / request / requested shared with the room card, follows entry mode (bug 25)");
+        {
+            using J = HomeController::FriendJoin;
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            // 유나(u_f_yuna)는 승인 방 r_f_2 에 있다
+            const Friend* yuna = r.store.state().findFriend ("u_f_yuna");
+            expect (yuna != nullptr && yuna->room && yuna->room->id == "r_f_2");
+            if (yuna == nullptr) return;
+            const auto fr = *yuna;
+            expect (r.home.friendJoinState (fr) == J::request);
+
+            // 친구 목록에서 요청 → "요청 보냄", 같은 방 카드도 요청 보냄
+            bool requested = false;
+            r.home.joinFriend (fr, [&] (Result<JoinResult> x) { requested = x.ok() && x.get().requested(); });
+            r.wait();
+            expect (requested);
+            expect (r.home.friendJoinState (fr) == J::requested);
+            const auto* card = r.store.state().findPublicRoom ("r_f_2");
+            expect (card != nullptr && r.home.isRequestPending (*card));
+            // "요청 보냄" 동안은 다시 보내지 않는다
+            bool called = false;
+            r.home.joinFriend (fr, [&] (Result<JoinResult>) { called = true; });
+            r.wait();
+            expect (! called);
+
+            // 방의 입장 방식이 바로 입장으로 바뀌면 바로 "참여"
+            auto changed = *card;
+            changed.entryMode = juce::String ("instant");
+            r.store.upsertPublicRoom (changed);
+            expect (r.home.friendJoinState (fr) == J::join);
+            changed.entryMode = juce::String ("approval");
+            r.store.upsertPublicRoom (changed);
+            expect (r.home.friendJoinState (fr) == J::requested);
+
+            // 5분이 지나면 다시 "요청" (거절·만료를 구분하지 않는다)
+            r.wait (5 * 60 * 1000 + 1000);
+            expect (r.home.friendJoinState (fr) == J::request);
+
+            // 카드에서 요청해도 친구 쪽이 "요청 보냄"
+            r.home.joinRoom ("r_f_2", [] (Result<JoinResult>) {});
+            r.wait();
+            expect (r.home.friendJoinState (fr) == J::requested);
+
+            // 비공개 방이나 정원이 찬 방(room 이 없거나 joinable false)은 버튼 없음
+            auto hidden = fr;
+            hidden.room.reset();
+            expect (r.home.friendJoinState (hidden) == J::none);
+            auto fullRoom = fr;
+            fullRoom.room->joinable = false;
+            expect (r.home.friendJoinState (fullRoom) == J::none);
+        }
+
         beginTest ("full room and codes map to failure kinds");
         {
             Rig r;

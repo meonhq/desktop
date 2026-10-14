@@ -222,18 +222,33 @@ struct HomeScreen::FriendList : juce::Component
             avatar.setInterceptsMouseClicks (false, false);
             addAndMakeVisible (avatar);
             setMouseCursor (juce::MouseCursor::PointingHandCursor);   // 누르면 프로필
-            if (fr.status == "in_room" && fr.room && fr.room->joinable)
+            addChildComponent (join);
+            join.onPress = [this]
             {
-                addAndMakeVisible (join);
-                join.onPress = [this]
+                juce::Component::SafePointer<HomeScreen> safe (&owner);
+                juce::Component::SafePointer<Row> self (this);
+                owner.core.home().joinFriend (fr, [safe, self] (core::Result<core::JoinResult> r)
                 {
-                    juce::Component::SafePointer<HomeScreen> safe (&owner);
-                    owner.core.home().joinFriend (fr, [safe] (core::Result<core::JoinResult> r)
-                    {
-                        if (safe != nullptr && ! r.ok() && safe->onJoinFailure) safe->onJoinFailure (r.err());
-                    });
-                };
-            }
+                    if (self != nullptr) self->refreshJoin();
+                    if (safe != nullptr && ! r.ok() && safe->onJoinFailure) safe->onJoinFailure (r.err());
+                });
+            };
+            refreshJoin();
+        }
+
+        /** 참여 버튼 (버그 25): 바로 입장 방 "참여", 승인 방 "요청" → 보낸 뒤 5분 "요청 보냄" (방 목록 카드와 같은 상태) */
+        void refreshJoin()
+        {
+            using J = core::HomeController::FriendJoin;
+            const auto st = owner.core.home().friendJoinState (fr);
+            const auto label = st == J::request ? TXT ("요청") : st == J::requested ? TXT ("요청 보냄") : TXT ("참여");
+            const bool show = st != J::none;
+            // "요청 보냄" 은 방 목록 카드와 같은 모양으로 두고 누르면 아무것도 하지 않는다 (joinFriend 가 막는다)
+            if (show == join.isVisible() && label == join.getButtonText()) return;
+            join.setButtonText (label);
+            join.setVisible (show);
+            resized();
+            repaint();
         }
 
         juce::String statusText() const
@@ -464,6 +479,8 @@ void HomeScreen::refreshAudio()
     sendMute.setButtonText (muted ? TXT ("송출 재개") : TXT ("송출 정지"));
     if (jam != nullptr && ! sendGain.isDragging()) sendGain.setValue (jam->getSendGainDb());
     sendGain.setMuted (muted);
+    // 송출 정지 중: 미터는 그대로 움직이되 회색으로 (지금 안 보내는 중, 합주 화면 내 오디오와 같은 표시)
+    inputMeter->meter.setGreyed (muted);
     deviceName.setText (deviceText());
     resized();
 }
@@ -725,6 +742,8 @@ void HomeScreen::stateChanged (core::StateKey k)
     {
         case K::publicRooms: case K::config: case K::myRtt: case K::me:
             rebuildRooms();
+            // 친구 목록의 참여·요청 버튼도 방의 입장 방식·요청 상태를 따른다 (카드에서 요청하면 친구 쪽도 "요청 보냄")
+            for (auto* r : friendList->rows) r->refreshJoin();
             break;
         case K::friends:
             rebuildFriends();
@@ -746,7 +765,8 @@ void HomeScreen::timerCallback()
 {
     // 승인 요청 표시(request_until)·마지막 접속·업데이트 진행을 시간에 맞춰 다시 그린다
     for (auto* c : roomList->cards)
-        if (c->room.myJoinRequestUntil) c->setRoom (c->room);
+        if (c->room.myJoinRequestUntil || core.home().isRequestPending (c->room.id)) c->setRoom (c->room);
+    for (auto* r : friendList->rows) r->refreshJoin();   // "요청 보냄" 5분이 지나면 원래대로
     friendList->repaint();
     const int before = bannersHeight();
     refreshHeader();

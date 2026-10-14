@@ -48,6 +48,7 @@ public:
     void setEarGuardLevel (int) override;
     void setMasterDb (float) override;
     void setMonitorMuted (bool) override;
+    void reapplyMonitor() override { applyMonitorParams(); }
     void setBufferMode (BufferMode) override;
     void setInputChannels (int start, int count) override;
     int inputChannelCount() const override;
@@ -82,7 +83,7 @@ private:
     juce::ListenerList<Listener> listeners;
     int pcmFormatIndex = -1;
     bool selfMonitor = false, monitorMuted = false;
-    float masterDb = 0.0f, selfMonitorDb = 0.0f;
+    float masterDb = 0.0f, selfMonitorDb = 0.0f, sendGainDb = 0.0f;
     int selfMonitorPan = 0;
     class PlaybackFader;
     std::unique_ptr<PlaybackFader> fader;
@@ -101,8 +102,9 @@ private:
     void handleAsyncUpdate() override;
 
     int indexOf (const juce::String& user) const;
-    void setParam (const juce::String& id, float value);
+    void setParam (const juce::String& id, float value);   // 이미 같은 값이면 건드리지 않는다 (DAW 에 변경 알림을 보내지 않게)
     void applyMonitorParams();
+    void applySendGain();
     static float meter (foleys::LevelMeterSource&, int channel);
 
     void aooClientConnected (SonobusAudioProcessor*, bool success, const juce::String& errmesg) override;

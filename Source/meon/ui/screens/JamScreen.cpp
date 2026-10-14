@@ -221,21 +221,32 @@ struct JamScreen::MemberRow : juce::Component
         refresh();
     }
 
-    bool isMuted() const { return member.isMe ? ! owner.jam.isSelfMonitor() : member.muted; }
+    /** 지금 안 들림: 멤버는 내가 음소거, 내 행은 셀프 모니터가 실제로 꺼져 있음 (설정 끔 또는 송출 정지 중) */
+    bool isMuted() const { return member.isMe ? ! owner.jam.isSelfMonitorAudible() : member.muted; }
 
     void refresh()
     {
         const bool muted = isMuted();
+        // 송출 정지 중에는 내 소리가 내 귀에도 안 들린다 (버그 23). 내 행의 조절은 막아 두고, 송출을 다시 켜면 설정값대로 돌아온다
+        const bool sendOff = member.isMe && owner.jam.isSendMuted();
         mute.setOn (muted);
         mute.setButtonText (muted ? TXT ("음소거 해제") : TXT ("음소거"));
         const float vol = member.isMe ? owner.jam.getSelfMonitorDb() : member.gainDb;
         const int pv = member.isMe ? owner.jam.getSelfMonitorPan() : member.pan;
         if (! volume.isDragging()) volume.setValue (vol);
-        volume.setTitle (DbSlider::dbText (vol) + TXT (" · 더블클릭하면 0 dB"));
+        volume.setTitle (sendOff ? TXT ("송출 정지 중에는 내 소리가 들리지 않아요")
+                                 : DbSlider::dbText (vol) + TXT (" · 더블클릭하면 0 dB"));
         pan.setValue (pv);
         if (member.isMe)
         {
-            // 내 패닝은 셀프 모니터에만 걸리므로, 셀프 모니터가 꺼져(음소거) 있을 때만 막는다
+            mute.setTooltip (sendOff ? TXT ("송출 정지 중에는 내 소리가 들리지 않아요") : TXT ("셀프 모니터 · 내 소리를 내가 듣기"));
+            for (auto* c : std::initializer_list<juce::Component*> { &mute, &volume, &reset })
+            {
+                c->setEnabled (! sendOff);
+                c->setAlpha (sendOff ? 0.4f : 1.0f);
+            }
+            volume.setMuted (muted);
+            // 내 패닝은 셀프 모니터에만 걸리므로, 지금 안 들리면(설정 끔 · 송출 정지) 막는다
             pan.setEnabled (! muted);
             pan.setAlpha (muted ? 0.4f : 1.0f);
         }
@@ -975,6 +986,8 @@ void JamScreen::rebuildMembers()
 
 void JamScreen::jamStatsChanged()
 {
+    // 송출 정지·전체 음소거가 이 화면 밖에서 바뀌면(홈, 단축키 처리 전, 플러그인의 DAW 상태) 0.4초 안에 따라간다
+    if (sendMute.isOn() != jam.isSendMuted() || monMute.isOn() != jam.isMonitorMuted()) refreshAudio();
     const auto list = jam.members();
     if ((int) list.size() != memberList->rows.size()) { rebuildMembers(); return; }
     for (size_t i = 0; i < list.size(); ++i)

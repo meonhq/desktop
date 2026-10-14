@@ -216,7 +216,11 @@ void EngineLink::setFileGainDb (float db)
 void EngineLink::setParam (const String& id, float value)
 {
     if (auto* param = processor.getValueTreeState().getParameter (id))
-        param->setValueNotifyingHost (param->convertTo0to1 (value));
+    {
+        const float v = param->convertTo0to1 (value);
+        if (std::abs (param->getValue() - v) > 1.0e-6f)
+            param->setValueNotifyingHost (v);
+    }
 }
 
 void EngineLink::applyDefaults()
@@ -278,7 +282,13 @@ bool EngineLink::connect (const String& host, int port, const String& user, cons
     return processor.connectToServer (host, port, user, password);
 }
 
-void EngineLink::disconnect()          { if (processor.isConnectedToServer()) processor.disconnectFromServer(); }
+void EngineLink::disconnect()
+{
+    if (processor.isConnectedToServer()) processor.disconnectFromServer();
+    // 서버가 끊긴 채로 방을 나오면 위에서 아무것도 하지 않아 직접 연결된 상대가 남는다 (소리를 계속 주고받는다).
+    // 방 밖에서는 아무에게도 보내지 않도록 남은 상대를 모두 지운다
+    if (processor.getNumberRemotePeers() > 0) processor.removeAllRemotePeers();
+}
 bool EngineLink::isConnected() const   { return processor.isConnectedToServer(); }
 String EngineLink::connectedUser() const { return processor.getCurrentUsername(); }
 String EngineLink::joinedGroup() const { return processor.getCurrentJoinedGroup(); }
@@ -317,7 +327,9 @@ std::vector<EnginePeer> EngineLink::peers() const
         p.user = processor.getRemotePeerUserName (i);
         p.connected = processor.getRemotePeerConnected (i);
         p.recvActive = processor.getRemotePeerRecvActive (i);
+        p.sendActive = processor.getRemotePeerSendActive (i);
         p.packetsReceived = processor.getRemotePeerPacketsReceived (i);
+        p.packetsSent = processor.getRemotePeerPacketsSent (i);
         p.packetsDropped = processor.getRemotePeerPacketsDropped (i);
         p.packetsResent = processor.getRemotePeerPacketsResent (i);
         SonobusAudioProcessor::LatencyInfo li;
@@ -408,7 +420,17 @@ bool EngineLink::isSendMuted() const
 }
 
 void EngineLink::setSendMuted (bool b)               { setParam (SonobusAudioProcessor::paramMainSendMute, b ? 1.0f : 0.0f); }
-void EngineLink::setSendGainDb (float db)            { setParam (SonobusAudioProcessor::paramInGain, juce::Decibels::decibelsToGain (db)); }
+void EngineLink::setSendGainDb (float db)            { sendGainDb = db; applySendGain(); }
+
+void EngineLink::applySendGain()
+{
+    // 송출 레벨 = 입력 그룹 gain (옛 SonoBus 화면과 같은 곳). 엔진의 "ingain" 파라미터는 엔진 안에서 쓰지 않아(주석 처리됨)
+    // 예전에는 슬라이더를 움직여도 보내는 소리·미터·셀프 모니터 어디에도 반영되지 않았다 (버그 26 조사 중 발견).
+    // 이 gain 뒤에서 송신·입력 미터·셀프 모니터가 갈라지므로 셋 다 따라간다
+    const float g = juce::jlimit (0.0f, 4.0f, juce::Decibels::decibelsToGain (sendGainDb, -60.0f));
+    for (int i = 0; i < juce::jmax (1, processor.getInputGroupCount()); ++i)
+        processor.setInputGroupGain (i, g);
+}
 void EngineLink::setSelfMonitor (bool on)            { selfMonitor = on; applyMonitorParams(); }
 void EngineLink::setSelfMonitorDb (float db)         { selfMonitorDb = db; applyMonitorParams(); }
 void EngineLink::setSelfMonitorPan (int pan)         { selfMonitorPan = pan; applyMonitorParams(); }
@@ -418,14 +440,20 @@ void EngineLink::setMonitorMuted (bool m)            { monitorMuted = m; applyMo
 
 void EngineLink::applyMonitorParams()
 {
+    // 엔진의 모니터 경로: 입력 × 송출 레벨(입력 그룹 gain) × 입력 그룹 모니터 × dry → 멤버 소리·파일과 합친 뒤 × wet(마스터) → 귀 테러 방지 → 출력.
     // 모니터 전체 음소거 = 출력(wet) 0 + 셀프 모니터(dry) 0 (Q12). 마스터는 −30 ~ +6 dB (Q10, wet 최대 2.0)
     const float wet = monitorMuted ? 0.0f : juce::jlimit (0.0f, 2.0f, juce::Decibels::decibelsToGain (masterDb));
     setParam (SonobusAudioProcessor::paramWet, wet);
-    setParam (SonobusAudioProcessor::paramDry, (monitorMuted || ! selfMonitor) ? 0.0f
-                                                                               : juce::jlimit (0.0f, 2.0f, juce::Decibels::decibelsToGain (selfMonitorDb)));
+    // 셀프 모니터: dry 는 켜고 끄기만(0/1, 엔진이 램프한다), 크기는 입력 그룹 모니터에 넣는다.
+    // dry 는 엔진 범위가 0~1 이라 내 행 볼륨을 0 dB 위로 올려도 커지지 않았다 (+6 dB 까지 쓰려고 그룹 모니터로 옮김)
+    setParam (SonobusAudioProcessor::paramDry, (monitorMuted || ! selfMonitor) ? 0.0f : 1.0f);
+    const float monGain = juce::jlimit (0.0f, 2.0f, juce::Decibels::decibelsToGain (selfMonitorDb, -60.0f));
     // 셀프 모니터 패닝: 입력 그룹의 모니터 패닝에만 더한다 (송출 패닝은 그대로, 엔진 수정 ChannelGroupParams::monitorPan)
     for (int g = 0; g < juce::jmax (1, processor.getInputGroupCount()); ++g)
+    {
+        processor.setInputMonitor (g, monGain);
         processor.setInputMonitorPan (g, (float) juce::jlimit (-100, 100, selfMonitorPan) / 100.0f);
+    }
 }
 
 void EngineLink::setBufferMode (BufferMode m)
@@ -441,6 +469,7 @@ void EngineLink::setInputChannels (int start, int count)
     {
         // 플러그인: 입력은 DAW 버스 그대로, 보내는 채널만 모노/스테레오로 고정 (버그 #13, "Match # Inputs" 를 쓰지 않음)
         setParam (SonobusAudioProcessor::paramSendChannels, (float) count);
+        applySendGain();
         return;
     }
     processor.setInputGroupCount (1);
@@ -448,6 +477,7 @@ void EngineLink::setInputChannels (int start, int count)
     processor.setInputGroupChannelDestStartAndCount (0, 0, 2);
     processor.setInputGroupMuted (0, false);
     setParam (SonobusAudioProcessor::paramSendChannels, (float) count);   // 1 = 모노, 2 = 스테레오
+    applySendGain();   // 입력 그룹을 다시 잡았으니 송출 레벨도 다시
 }
 
 int EngineLink::inputChannelCount() const
