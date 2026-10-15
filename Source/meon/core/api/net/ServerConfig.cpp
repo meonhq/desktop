@@ -80,14 +80,11 @@ ServerConfig ServerConfig::choose (int build, const juce::StringPairArray& dev)
         if (v.equalsIgnoreCase ("fake"))  return fake();
         auto c = fromUrl (v);
         if (c.restBase.isNotEmpty()) return c;
-        return local();   // 알아볼 수 없는 값: 기본으로
+        return fake();   // 알아볼 수 없는 값: 기본으로
     }
 
-    // 화면 미리보기·자동 가입은 서버 없이 도는 가짜 서버로 (CI 스냅숏)
-    if (keys.contains ("screen") || keys.contains ("dev-signup") || keys.contains ("dev-jam"))
-        return fake();
-
-    return local();
+    // 기본은 가짜 서버: PR 빌드를 더블클릭만으로 (플러그인도) 서버 없이 시험한다
+    return fake();
 }
 
 } // namespace meon::core

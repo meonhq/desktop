@@ -77,7 +77,7 @@ void MeonCore::createFake()
     fake = std::make_unique<FakeMeonServer> (sched, options.fake);
     fake->loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
 
-    // 가짜 계정(이 설치의 계정 ID·AOO 비밀번호·refresh 토큰)은 설정 폴더의 파일에 둔다 (개발 옵션 --server=fake 전용)
+    // 가짜 계정(이 설치의 계정 ID·AOO 비밀번호·refresh 토큰)은 설정 폴더의 파일에 둔다 (빌드 0 의 기본·--server=fake 전용)
     fakeStateFile = options.dataFolder.getChildFile ("MEONFakeServer.json");
     if (options.resetFakeState)
     {

@@ -80,7 +80,7 @@ meon::core::MeonCore& SonobusAudioProcessor::getMeonCore()
         if (meon::devOptions().getAllKeys().contains ("as-plugin")) o.plugin = true;   // 개발용: 독립 앱에서 플러그인 화면 보기
        #endif
         o.build = MEON_BUILD_ID;
-        // 실제 번호 빌드는 운영 서버 고정. 빌드 0 은 로컬 서버가 기본이고 --server=prod|local|fake|<주소> 로 바꾼다
+        // 실제 번호 빌드는 운영 서버 고정. 빌드 0 은 가짜 서버가 기본이고 --server=prod|local|fake|<주소> 로 바꾼다
        #if MEON_DEV_OPTIONS
         o.server = meon::core::ServerConfig::choose (MEON_BUILD_ID, meon::devOptions());
        #else
