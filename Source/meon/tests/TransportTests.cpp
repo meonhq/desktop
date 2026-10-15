@@ -54,7 +54,11 @@ public:
 
         beginTest ("build 0 defaults to the fake server (plugin too: it gets no dev options)");
         {
-            expect (ServerConfig::choose (0, {}).isFake());
+            const auto c = ServerConfig::choose (0, {});
+            expect (c.isFake());
+            // 서버 없는 PR 빌드로 두 컴퓨터 합주를 시험할 수 있게 SonoBus 공개 AOO 서버 (운영 확인 뒤 지운다)
+            expectEquals (c.aooHost, juce::String ("aoo.sonobus.net"));
+            expectEquals (c.aooPort, 10998);
         }
 
         beginTest ("--server=local is the docker compose server");

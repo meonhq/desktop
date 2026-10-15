@@ -165,7 +165,9 @@ struct Realtime {
 | `aoo_user_password` | 이 설치에서 한 번 만든 무작위 값 (설정 파일에 저장) |
 | `members` | 내 ID + **실제로 AOO 그룹에 들어온 상대의 ID** (`FakeAooDirectory` 가 엔진의 피어 입장 이벤트를 받아 가짜 방 멤버로 올림) |
 
-- 상대의 닉네임·파트는 AOO 이름(계정 ID)으로 알 수 없으므로, 가짜 기간에만 채팅 메시지의 `tags` 로 "프로필" 메시지(`{"nickname","part"}`)를 주고받는다 (엔진 수정 없음). 진짜 서버가 생기면 `RoomDetail.members` 가 대신하고 이 코드는 지운다.
+- 상대의 닉네임·파트는 AOO 이름(계정 ID)으로 알 수 없으므로, 가짜 서버에서만 채팅 메시지의 `tags` 로 "프로필" 메시지(`{"nickname","part"}`)를 주고받는다 (엔진 수정 없음). 진짜 서버에서는 `RoomDetail.members` 가 대신한다.
+- **R11 뒤에도 남긴다 (2026-10-15 결정).** 빌드 0(PR 빌드)은 가짜 서버가 기본이라, 서버 없이 PR 빌드로 두 컴퓨터 합주를 시험하는 데 이 방식이 필요하다. 실제 번호 빌드는 가짜 서버를 고를 수 없다 (`ServerConfig::choose`).
+- **할 일: 운영 서버 + 실제 번호 빌드로 두 대 합주를 확인한 뒤 제거** — 가짜 AOO 주소 `aoo.sonobus.net:10998` (`FakeMeonServer::Options`, `ServerConfig::fake`), `FakeAooDirectory`, 프로필 채팅 메시지. 10장 "가짜용 합주 코드 제거".
 - 공개 방은 다른 컴퓨터의 목록에 나타나지 않는다. **가짜 기간에 두 컴퓨터로 소리를 확인할 때는 비공개 방 + 입장 코드**로 한다. 공개 방 목록은 가짜 데이터로 화면만 확인한다.
 
 ### 1.6 프로세스 모델
@@ -503,7 +505,7 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 | E3 (안 함) | 마스터(`wet`) 범위를 0~2 에서 0~3.17(+10 dB)로 | 디자인 마스터 −30~+10 dB. 지금 엔진 최대는 +6.02 dB | Q10 에서 마스터를 −30~+6 dB 로 제한해 필요 없어졌다 |
 | **E4** (사후 승인) | **셀프 모니터 전용 패닝**: `ChannelGroupParams::monitorPan` 추가. `ChannelGroup::processMonitor` 가 입력 패닝에 이 값을 더해(−1~1 로 자름) 모니터에만 쓴다. `SonobusAudioProcessor::setInputMonitorPan(changroup, pan)` 추가. `EngineLink::applyMonitorParams` 가 입력 그룹마다 이 값을 넣는다 | 합주 화면 내 줄의 패닝(= 셀프 모니터 패닝). 엔진의 입력 패닝(`pan`/`panStereo`)은 모니터와 송출에 같이 걸려서, 그대로 쓰면 스테레오로 보낼 때 남이 듣는 내 소리 위치도 바뀐다 | 약 15줄 (아래 근거) |
 | **E5** (승인, R11 PR3 에서 구현 예정) | **서버에 로그인하지 않았을 때 모르는 상대의 연결 요청 거절**: `AOO_INVITE_EVENT`(더미 소스, `SPP.cpp` 3550 근처)는 AOO 서버에 로그인하지 않은 동안(홈, 서버 끊김 중) 어느 주소의 요청이든 받아 이름 없는 피어를 만든다. E1 허용 목록이 켜져 있으면 이 요청을 받지 않는다 | 이름 없는 피어는 E1 필터에 걸리지 않아(`setAllowedPeerNames` 가 이름 없는 피어를 건너뜀), 멤버가 아닌 상대와 소리가 오갈 수 있다 (API 2.8 위반) | 몇 줄. 허용 목록이 꺼져 있으면 지금 동작과 같다 (근거는 구현할 때 적는다) |
-| **E6** (승인, R11 PR5 에서 구현 예정) | **SonoBus 공개 서버 기본값과 옛 명령줄 옵션 제거**: `SonobusPluginProcessor.h` 의 `DEFAULT_SERVER_HOST "aoo.sonobus.net"`·`DEFAULT_SERVER_PORT`, `SonoStandaloneFilterApp.cpp` 의 옛 SonoBus 명령줄 연결 옵션(`--server`·`--group`·`--headless` 등) | MEON 은 서버가 준 `aoo_host` 만 쓴다 (API 2.8). 옛 옵션은 MEON 화면과 무관하게 `aoo.sonobus.net` 에 붙을 수 있는 길이다 | 삭제 위주 (근거는 구현할 때 적는다) |
+| **E6** (승인, R11 PR5 에서 구현 예정. 2026-10-15 범위 축소) | **실제 번호 빌드에서 SonoBus 공개 서버(`aoo.sonobus.net`)로 붙는 길을 막는다**: 엔진에서 이 주소를 쓰는 곳은 `SonoStandaloneFilterApp.cpp` 의 옛 SonoBus 명령줄 연결 옵션(`--server`·`--group`·`--headless` 등, `DEFAULT_SERVER_HOST`·`DEFAULT_SERVER_PORT` 사용) 뿐이다. 이 길을 실제 번호 빌드에서 막는다. 빌드 0 의 가짜 서버가 주는 `aoo.sonobus.net:10998` (`Source/meon`, 1.5)은 남긴다 | 실제 번호 빌드의 MEON 은 운영 서버가 준 `aoo_host` 만 쓴다 (API 2.8). 옛 옵션은 MEON 화면과 무관하게 `aoo.sonobus.net` 에 붙을 수 있는 길이다 | 막는 것 위주 (근거는 구현할 때 적는다) |
 
 **E4 가 보내는 소리에 영향이 없는 근거** (줄 번호는 `remake` 의 eb7c371 기준)
 
@@ -564,7 +566,8 @@ E 번호는 다시 쓰지 않는다. 하지 않기로 한 수정도 번호를 �
 | R8 플러그인 | 파라미터 숨김(#17), 송신 채널 고정(#13), 셀프 모니터 기본 끔, 플러그인 크기·레이아웃, DAW 에서 창 닫았다 열기 | Logic·Ableton 등에서: 파라미터 목록이 비었는지, 창을 닫았다 열어도 방·송출 정지 유지 |
 | R9 다듬기 | 애니메이션, 토스트 소리, 키보드 단축키, 접근성(탭 이동), 스냅숏 전체 비교 | 디자인과 전체 비교 |
 | R10 main 반영 준비 | `remake` → `main` PR. 태그는 붙이지 않는다 (2026-10-14 결정). 이후 PR 은 `main` 대상, 테스터 빌드는 `main` 수동 실행 | 사용자 최종 확인 |
-| R11 진짜 서버 (서버 준비 후) | `main` 대상 PR 5개: PR1 통신 기반(IXWebSocket+mbedTLS, `HttpTransport`·`WsTransport`, 서버 선택 `ServerConfig`, 서버별 토큰) → PR2 인증·계정(닫는 코드, refresh 프로세스 간 잠금, 강제 업데이트 화면) → PR3 방·합주(재접속, RTT, `FakeAooDirectory`·프로필 채팅 제거, E5) → PR4 친구·초대·알림(지연 보정 자료) → PR5 정리(가짜 서버 v0.5 맞춤, E6). 서버: 실제 번호 빌드는 운영 고정, 빌드 0(PR 빌드)은 가짜 서버가 기본이고 `--server=local\|<주소>` 로 바꾼다 (플러그인도 가짜 서버) | 로컬 서버 계약 테스트(`Contract`), 전송층 테스트(CI 3 OS), 앱 두 개로 전체 흐름 |
+| R11 진짜 서버 (서버 준비 후) | `main` 대상 PR 5개: PR1 통신 기반(IXWebSocket+mbedTLS, `HttpTransport`·`WsTransport`, 서버 선택 `ServerConfig`, 서버별 토큰) → PR2 인증·계정(닫는 코드, refresh 프로세스 간 잠금, 강제 업데이트 화면) → PR3 방·합주(재접속, RTT, E5) → PR4 친구·초대·알림(지연 보정 자료) → PR5 정리(가짜 서버 v0.5 맞춤, E6 줄인 범위). 서버: 실제 번호 빌드는 운영 고정, 빌드 0(PR 빌드)은 가짜 서버가 기본이고 `--server=local\|<주소>` 로 바꾼다 (플러그인도 가짜 서버). 가짜 서버의 합주 코드(1.5)는 남긴다 | 로컬 서버 계약 테스트(`Contract`), 전송층 테스트(CI 3 OS), 앱 두 개로 전체 흐름 |
+| 가짜용 합주 코드 제거 (할 일) | **조건: 운영 서버 + 실제 번호 빌드로 두 대 합주를 확인한 뒤.** 가짜 AOO 주소 `aoo.sonobus.net:10998`, `FakeAooDirectory`, 프로필 채팅 메시지 (1.5). 그 뒤 PR 빌드의 가짜 서버로는 두 컴퓨터 합주를 시험할 수 없다 | 실제 번호 빌드 두 대 합주 |
 
 R4 의 E1·E2 는 8장 승인이 나야 들어간다. 승인 전에는 E1 없이(연결 후 바로 끊는 방식, 잠깐 소리가 섞일 수 있음) 만들고 표시해 둔다.
 

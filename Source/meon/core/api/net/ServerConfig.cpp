@@ -1,4 +1,5 @@
 #include "ServerConfig.h"
+#include "../fake/FakeMeonServer.h"
 
 namespace meon::core
 {
@@ -26,8 +27,9 @@ ServerConfig ServerConfig::fake()
 {
     ServerConfig c;
     c.kind = Kind::fake;
-    c.aooHost = "localhost";   // 가짜 서버가 주는 AOO 주소 (--fake-aoo 로 바꾼다)
-    c.aooPort = 10999;
+    // 가짜 서버가 주는 AOO 주소 (FakeMeonServer::Options 와 같다. --fake-aoo 로 바꾼다)
+    c.aooHost = FakeMeonServer::Options().aooHost;
+    c.aooPort = FakeMeonServer::Options().aooPort;
     c.tokenItem = "fake-refresh-token";
     return c;
 }
