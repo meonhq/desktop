@@ -154,8 +154,8 @@ DevJamScreen::DevJamScreen (core::MeonCore& c) : core (c), jam (*c.jam())
     {
         using R = core::ChatChannel::SendResult;
         const auto r = jam.chat().sendText (chatInput.getText());
-        if (r == R::sent) chatInput.setText ({});
-        chatNote.setText (r == R::alone ? TXT ("아직 방에 아무도 없어요") : r == R::failed ? TXT ("보내지 못했어요") : juce::String());
+        if (r == R::sent || r == R::localOnly) chatInput.setText ({});
+        chatNote.setText (r == R::failed ? TXT ("보내지 못했어요") : juce::String());
     };
     resend.onPress = [this] { if (failedId.isNotEmpty()) jam.chat().resend (failedId); };
     openLogs.onPress = [this] { jam.log().getFolder().createDirectory(); jam.log().getFolder().startAsProcess(); };

@@ -53,6 +53,11 @@ public:
     bool isArmed() const { return armed; }
     void disarm();
 
+    /** 글자를 잠깐 바꿨다가 ms 뒤 되돌린다 (복사 → "복사됨"). 그 사이 다시 부르면 시간을 처음부터 센다.
+        글자 폭이 바뀌므로 바뀔 때와 되돌아갈 때 onStateChange 를 부른다 (부모가 다시 배치) */
+    void flashText (const juce::String& text, int ms);
+    bool isFlashing() const { return flashing; }
+
     /** 내용에 맞는 폭 (여백 포함) */
     int getIdealWidth() const;
 
@@ -72,7 +77,7 @@ protected:
 
 private:
     Kind kind;
-    bool on = false, pending = false, dimmed = false, armed = false, confirm = false, confirmYellow = false;
+    bool on = false, pending = false, dimmed = false, armed = false, confirm = false, confirmYellow = false, flashing = false;
     juce::String normalText, armedText;
     int fixedWidth = 0;
 

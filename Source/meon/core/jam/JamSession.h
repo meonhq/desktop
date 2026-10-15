@@ -185,6 +185,7 @@ private:
     bool outputMissing = false;
     juce::int64 outputMissingSince = -1, outputMissingAt = 0;
     void updateOutputMissing (juce::int64 now);
+    void updateChatReach();
     ChatChannel chatChannel;
     SessionLog sessionLog;
 

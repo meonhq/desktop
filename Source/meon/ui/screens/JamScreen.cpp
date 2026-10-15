@@ -145,9 +145,16 @@ struct JamScreen::CodeBox : juce::Component
     CodeBox()
     {
         addAndMakeVisible (copy);
-        // 복사만 한다 (글자를 "복사됨" 으로 바꾸면 버튼 폭이 바뀌어 상자가 흔들린다)
-        copy.onPress = [this] { juce::SystemClipboard::copyTextToClipboard (code); };
+        // 복사하고 2초 동안 "복사됨". 버튼이 넓어지는 만큼 상자도 넓어진다 (코드와 버튼 사이 9px 유지, 오른쪽 고정)
+        copy.onPress = [this]
+        {
+            juce::SystemClipboard::copyTextToClipboard (code);
+            copy.flashText (TXT ("복사됨"), copiedMs);
+        };
+        copy.onStateChange = [this] { if (onWidthChange) onWidthChange(); };
     }
+    static constexpr int copiedMs = 2000;
+    std::function<void()> onWidthChange;   // 버튼 글자가 바뀌어 idealWidth 가 달라짐
     void setCode (const juce::String& c) { code = c; resized(); repaint(); }
     int idealWidth() const
     {
@@ -855,6 +862,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     addChildComponent (*privateTag);
     codeBox = std::make_unique<CodeBox>();
     addChildComponent (*codeBox);
+    codeBox->onWidthChange = [this] { resized(); };
     addAndMakeVisible (settings);
     addAndMakeVisible (leave);
     addChildComponent (gear);
@@ -1074,15 +1082,11 @@ void JamScreen::sendChat()
     using R = core::ChatChannel::SendResult;
     const auto text = chatInput.getText();
     const auto r = jam.chat().sendText (text);
-    if (r == R::sent || r == R::failed)
+    if (r == R::sent || r == R::failed || r == R::localOnly)   // localOnly: 받을 사람이 없어 내 목록에만
     {
         chatInput.setText ({});
         chatNote = {};
         chatAtBottom = true;
-    }
-    else if (r == R::alone)
-    {
-        chatNote = TXT ("다른 멤버가 들어오면 보낼 수 있어요");
     }
     resized();
     repaint();

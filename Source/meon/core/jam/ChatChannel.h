@@ -1,7 +1,8 @@
 // MEON core - 합주 채팅 (버그 #8, REMAKE_PLAN 6.2). 멤버끼리 직접(엔진 채팅) + 길이 제한 + 전달 확인.
 //   보낼 때: tags "id:<ID>" 를 싣는다. 받은 쪽은 화면에 보이고 "ack:<ID>" (본문 없음)를 돌려보낸다.
 //   3초 안에 그 순간의 멤버(나 제외) 전원의 확인이 없으면 실패 표시 → 다시 보내기.
-//   혼자 있는 방에서는 보내지 않는다 (alone).
+//   혼자이거나 연결된 상대가 아무도 없으면(가짜 멤버만 있는 방 포함) 보내지 않고 내 목록에만 보인다 (localOnly).
+//   나중에 들어온 사람에게는 보이지 않는다 (기록을 저장하지 않는다).
 //   가짜 기간에만: tags "profile" 로 닉네임·파트를 주고받는다 (서버가 멤버 정보를 주기 전까지).
 // 시각·보내기는 인자로 받는다 (테스트).
 #pragma once
@@ -29,7 +30,7 @@ public:
         int attempt = 0;
     };
 
-    enum class SendResult { sent, empty, tooLong, alone, failed };
+    enum class SendResult { sent, empty, tooLong, localOnly, failed };
 
     struct Listener
     {
@@ -54,6 +55,8 @@ public:
 
     /** 지금 방 멤버 (나 제외) — 확인을 기다릴 대상 */
     void setOthers (const juce::StringArray& users) { others = users; }
+    /** 멤버 중 한 명이라도 오디오 연결이 된 적이 있는지 (연결됨·소리 끊김). 아무도 없으면 보내지 않는다 */
+    void setAnyoneConnected (bool b) { anyoneConnected = b; }
 
     /** UTF-8 바이트 수 */
     static int byteLength (const juce::String& s) { return (int) s.getNumBytesAsUTF8(); }
@@ -63,7 +66,6 @@ public:
         const auto text = raw.trim();
         if (text.isEmpty()) return SendResult::empty;
         if (byteLength (text) > maxBytes) return SendResult::tooLong;
-        if (others.isEmpty()) return SendResult::alone;
 
         Message m;
         m.kind = Message::Kind::mine;
@@ -71,6 +73,13 @@ public:
         m.fromUser = myUser;
         m.text = text;
         m.time = scheduler.nowMs();
+        if (others.isEmpty() || ! anyoneConnected)
+        {
+            // 받을 사람이 없다: 엔진으로 보내지 않고 내 목록에만 (확인·실패 표시 없음)
+            messages.push_back (m);
+            changed();
+            return SendResult::localOnly;
+        }
         m.delivery = Message::Delivery::sending;
         m.waitingFor = others;
         messages.push_back (m);
@@ -169,6 +178,7 @@ private:
     juce::ListenerList<Listener> listeners;
     juce::String groupName, myUser;
     juce::StringArray others;
+    bool anyoneConnected = true;
     std::vector<Message> messages;
     int unread = 0;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };

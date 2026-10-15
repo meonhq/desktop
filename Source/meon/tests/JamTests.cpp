@@ -182,7 +182,21 @@ public:
             bool engineOk = true;
             ChatChannel ch (clock, [&] (const EngineChat& c) { out.push_back (c); return engineOk; });
             ch.begin ("G", "u_a");
-            expect (ch.sendText ("hi") == ChatChannel::SendResult::alone);
+            // 혼자: 엔진으로 보내지 않고 내 목록에만 (확인·실패 표시 없음, 3초가 지나도 그대로)
+            expect (ch.sendText ("hi") == ChatChannel::SendResult::localOnly);
+            expect (out.empty());
+            expectEquals ((int) ch.getMessages().size(), 1);
+            expect (ch.getMessages().back().kind == ChatChannel::Message::Kind::mine && ch.getMessages().back().text == "hi");
+            expect (ch.getMessages().back().delivery == ChatChannel::Message::Delivery::none);
+            clock.advance (3000);
+            expect (ch.getMessages().back().delivery == ChatChannel::Message::Delivery::none);
+            // 멤버는 있지만 아무도 연결되지 않음 (가짜 멤버만 있는 방): 혼자와 같다
+            ch.setOthers ({ "u_fake" });
+            ch.setAnyoneConnected (false);
+            expect (ch.sendText ("solo") == ChatChannel::SendResult::localOnly);
+            expect (out.empty());
+            expectEquals ((int) ch.getMessages().size(), 2);
+            ch.setAnyoneConnected (true);
             ch.setOthers ({ "u_b", "u_c" });
             expect (ch.sendText ("   ") == ChatChannel::SendResult::empty);
             expect (ch.sendText (juce::String::repeatedString (juce::String::fromUTF8 ("가"), 334)) == ChatChannel::SendResult::tooLong);  // 1002 B
@@ -294,6 +308,12 @@ public:
             expect (jam.isInRoom());
             expect (engine.allowEnabled && engine.allowed.isEmpty());
 
+            // 혼자일 때 채팅: 내 목록에만 남고 엔진으로는 보내지 않는다
+            engine.sent.clear();
+            expect (jam.chat().sendText (juce::String::fromUTF8 ("혼자 연습")) == ChatChannel::SendResult::localOnly);
+            expect (engine.sent.empty());
+            expectEquals ((int) jam.chat().getMessages().size(), 1);
+
             // 상대가 들어오면: 허용 목록에 없어 엔진은 연결하지 않고, 가짜 서버가 멤버로 올린 뒤 허용 → 연결
             engine.peerArrives ("u_peer");
             expect (engine.peer ("u_peer") == nullptr);
@@ -307,6 +327,15 @@ public:
             bool found = false;
             for (auto& m : ms) if (m.userId == "u_peer") { found = true; expect (m.state == PeerState::State::connected); }
             expect (found);
+
+            // 연결된 상대가 생기면 평소처럼 보낸다 (내 메시지는 한 번만 보인다)
+            {
+                const auto before = jam.chat().getMessages().size();
+                engine.sent.clear();
+                expect (jam.chat().sendText ("hello") == ChatChannel::SendResult::sent);
+                expectEquals ((int) engine.sent.size(), 1);
+                expectEquals ((int) jam.chat().getMessages().size(), (int) before + 1);
+            }
 
             // 프로필 채팅으로 닉네임·파트·방장
             jam.chat().received ({ "Q7K2MX", "u_peer", "profile", juce::String::fromUTF8 (R"({"nickname":"민준","part":"guitar","host":true})") });

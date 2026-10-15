@@ -201,6 +201,16 @@ void JamSession::applyAllowed()
         if (peerStates.count (u) == 0) peerStates.emplace (u, PeerState (now));
     for (auto it = peerStates.begin(); it != peerStates.end();)
         it = others.contains (it->first) ? std::next (it) : peerStates.erase (it);
+    updateChatReach();
+}
+
+void JamSession::updateChatReach()
+{
+    // 채팅을 받을 사람: 오디오 연결이 된 멤버 (연결 중·연결 실패만 있으면 혼자와 같다. 가짜 멤버는 연결되지 않는다)
+    bool any = false;
+    for (auto& [user, ps] : peerStates)
+        any = any || ps.get() == PeerState::State::connected || ps.get() == PeerState::State::interrupted;
+    chatChannel.setAnyoneConnected (any);
 }
 
 //==============================================================================
@@ -395,6 +405,7 @@ void JamSession::tick()
                 break;
         }
     }
+    updateChatReach();
     if (needProfile) sendMyProfile();
 
     // 송신·입력 레벨 (5초 최댓값)
