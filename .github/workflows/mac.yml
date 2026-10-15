@@ -55,6 +55,20 @@ jobs:
       - name: 빌드
         run: cmake --build build --config Release --parallel 4 --target MEON_Standalone MEON_AU MEON_VST3
 
+      - name: 전송층 테스트 (HTTP·WebSocket·TLS)
+        # R11: macOS 의 HTTP(NSURLSession)와 WebSocket(IXWebSocket + mbedTLS, 키체인 루트 인증서)을 확인한다.
+        # 가짜 서버(scripts/meon_test_server.py)로 상태 코드·본문·닫는 코드를, 실제 인터넷으로 인증서 검증을 본다
+        if: env.RELEASE != 'true'
+        run: |
+          cmake --build build --config Release --parallel 4 --target MEON_Tests
+          python3 scripts/meon_test_server.py 18080 2> mock.log &
+          # 가짜 서버가 실제로 답할 때까지 기다린다 (러너에 따라 Python 이 뜨는 데 수십 초 걸릴 수 있다)
+          for i in $(seq 1 60); do curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo && break; sleep 1; done
+          curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo || { echo "::error::가짜 서버가 뜨지 않음"; cat mock.log; exit 1; }
+          T=build/MEON_Tests_artefacts/Release/MEON_Tests
+          MEON_TEST_MOCK=http://127.0.0.1:18080 "$T" Transport
+          MEON_TEST_TLS=1 "$T" TransportTls
+
       - name: macOS 26 아이콘 (Icon Composer)
         # images/icons/AppIcon.icon 을 Xcode 26 의 actool 로 Assets.car 로 만들어 앱에 넣고 CFBundleIconName 을 적는다.
         # macOS 26 은 이것을 쓰고(예전 .icns 만 있으면 회색 틀에 가둘 수 있다), 그 아래 버전은 지금처럼 Icon.icns 를 쓴다.

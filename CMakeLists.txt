@@ -100,6 +100,39 @@ add_subdirectory(deps/juce EXCLUDE_FROM_ALL )
 
 juce_add_modules(deps/ff_meters)
 
+# 진짜 서버 WebSocket (R11, Q23): IXWebSocket + mbedTLS. deps/README.md 에 버전.
+# 플러그인이 DAW 안에서 다른 TLS 라이브러리와 기호가 겹치지 않게 숨긴다
+file(GLOB MEON_MBEDTLS_SOURCES CONFIGURE_DEPENDS deps/mbedtls/library/*.c)
+add_library(meon_mbedtls STATIC ${MEON_MBEDTLS_SOURCES})
+target_include_directories(meon_mbedtls PUBLIC deps/mbedtls/include PRIVATE deps/mbedtls/library)
+set_target_properties(meon_mbedtls PROPERTIES C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON)
+if (WIN32)
+    target_link_libraries(meon_mbedtls PRIVATE bcrypt)
+endif()
+
+set(MEON_IXWEBSOCKET_SOURCES
+    IXCancellationRequest IXConnectionState IXDNSLookup IXExponentialBackoff IXHttp IXHttpClient IXNetSystem
+    IXSelectInterrupt IXSelectInterruptFactory IXSelectInterruptPipe IXSelectInterruptEvent IXSetThreadName
+    IXSocket IXSocketConnect IXSocketFactory IXSocketTLSOptions IXSocketMbedTLS IXStrCaseCompare
+    IXUrlParser IXUuid IXUserAgent IXWebSocket IXWebSocketCloseConstants IXWebSocketHandshake
+    IXWebSocketHttpHeaders IXWebSocketPerMessageDeflate IXWebSocketPerMessageDeflateCodec
+    IXWebSocketPerMessageDeflateOptions IXWebSocketTransport IXGzipCodec)
+list(TRANSFORM MEON_IXWEBSOCKET_SOURCES PREPEND deps/ixwebsocket/ixwebsocket/)
+list(TRANSFORM MEON_IXWEBSOCKET_SOURCES APPEND .cpp)
+add_library(meon_ixwebsocket STATIC ${MEON_IXWEBSOCKET_SOURCES})
+target_include_directories(meon_ixwebsocket PUBLIC deps/ixwebsocket)
+target_compile_definitions(meon_ixwebsocket PUBLIC IXWEBSOCKET_USE_TLS IXWEBSOCKET_USE_MBED_TLS
+                                            PRIVATE IXWEBSOCKET_USE_MBED_TLS_MIN_VERSION_3)
+target_compile_features(meon_ixwebsocket PUBLIC cxx_std_14)
+set_target_properties(meon_ixwebsocket PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(meon_ixwebsocket PUBLIC meon_mbedtls)
+if (WIN32)
+    target_link_libraries(meon_ixwebsocket PRIVATE ws2_32 shlwapi crypt32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(meon_ixwebsocket PRIVATE Threads::Threads)
+endif()
+
 # MEON core: 화면 없는 로직 (서버 API, 가짜 서버, 상태, 모델). 앱·플러그인과 단위 테스트가 같이 쓴다.
 set(MEON_CORE_SOURCES
     Source/meon/core/util/Scheduler.h
@@ -115,6 +148,15 @@ set(MEON_CORE_SOURCES
     Source/meon/core/api/fake/FakeMeonServer.h
     Source/meon/core/api/fake/FakeMeonServer.cpp
     Source/meon/core/api/fake/FakeWorld.cpp
+    Source/meon/core/api/net/ServerConfig.h
+    Source/meon/core/api/net/ServerConfig.cpp
+    Source/meon/core/api/net/Deliver.h
+    Source/meon/core/api/net/HttpTransport.h
+    Source/meon/core/api/net/HttpTransport.cpp
+    Source/meon/core/api/net/WsTransport.h
+    Source/meon/core/api/net/WsTransport.cpp
+    Source/meon/core/api/net/SystemCerts.h
+    Source/meon/core/api/net/SystemCerts.cpp
     Source/meon/core/state/AppStore.h
     Source/meon/core/state/AppStore.cpp
     Source/meon/core/auth/TokenStore.h
@@ -642,7 +684,8 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             juce::juce_audio_plugin_client
             
             ff_meters
-            
+            meon_ixwebsocket
+
             ${target_name}_SBData
             MEON_Fixtures
 
@@ -698,6 +741,8 @@ if (MEON_TESTS)
         Source/meon/tests/RoomTests.cpp
         Source/meon/tests/ScriptSoakTests.cpp
         Source/meon/tests/AppLogTests.cpp
+        Source/meon/tests/TransportTests.cpp
+        Source/meon/tests/ContractTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
@@ -718,6 +763,7 @@ if (MEON_TESTS)
         juce::juce_dsp
         juce::juce_cryptography
         MEON_Fixtures
+        meon_ixwebsocket
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
     if (APPLE)

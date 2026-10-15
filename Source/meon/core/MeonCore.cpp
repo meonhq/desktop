@@ -1,6 +1,8 @@
 #include "MeonCore.h"
 #include "MeonFixtures.h"
 #include "log/AppLog.h"
+#include "api/net/HttpTransport.h"
+#include "api/net/WsTransport.h"
 
 #ifndef MEON_GIT_COMMIT
  #define MEON_GIT_COMMIT "unknown"
@@ -28,10 +30,48 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
         logEnvironment (options);
     }
 
+    AppLog::write ("app", LOGTXT ("서버: ") + options.server.describe());
+
+    RestTransport* rest = nullptr;
+    RealtimeTransport* realtimeLink = nullptr;
+    if (options.server.isFake())
+    {
+        if (! options.fakeAooGiven)
+        {
+            options.fake.aooHost = options.server.aooHost;
+            options.fake.aooPort = options.server.aooPort;
+        }
+        createFake();
+        rest = fake.get();
+        realtimeLink = fake.get();
+    }
+    else
+    {
+        restTransport = std::make_unique<HttpTransport> (options.server.restBase);
+        realtimeTransport = std::make_unique<WsTransport> (options.server.wsUrl);
+        rest = restTransport.get();
+        realtimeLink = realtimeTransport.get();
+    }
+
+    meonApi = std::make_unique<MeonApi> (*rest, options.build);
+    rt = std::make_unique<Realtime> (*realtimeLink, sched, options.build);
+    rt->addListener (&appStore);
+    // 로그인 토큰은 서버마다 다른 항목에 둔다 (가짜·로컬·운영 토큰이 섞이지 않게)
+    tokenStore = TokenStore::createDefault (options.server.tokenItem);
+    if (options.resetFakeState && options.server.isFake()) tokenStore->clear();
+    authController = std::make_unique<AuthController> (*meonApi, *rt, appStore, *tokenStore, sched);
+    homeController = std::make_unique<HomeController> (*meonApi, *rt, appStore, sched);
+    roomController = std::make_unique<RoomController> (*meonApi, appStore);
+    accountController = std::make_unique<AccountController> (*meonApi, appStore, *authController);
+    authController->addListener (this);
+}
+
+void MeonCore::createFake()
+{
     fake = std::make_unique<FakeMeonServer> (sched, options.fake);
     fake->loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
 
-    // 가짜 계정(이 설치의 계정 ID·AOO 비밀번호·refresh 토큰)은 설정 폴더의 파일에 둔다. 진짜 서버 단계에서 지운다
+    // 가짜 계정(이 설치의 계정 ID·AOO 비밀번호·refresh 토큰)은 설정 폴더의 파일에 둔다 (개발 옵션 --server=fake 전용)
     fakeStateFile = options.dataFolder.getChildFile ("MEONFakeServer.json");
     if (options.resetFakeState)
     {
@@ -59,18 +99,6 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
             AppLog::write ("fake", LOGTXT ("가짜 서버 상태 저장이 다시 됨"));
         fakeStateWriteFailed = ! ok;
     };
-
-    meonApi = std::make_unique<MeonApi> (*fake, options.build);
-    rt = std::make_unique<Realtime> (*fake, sched, options.build);
-    rt->addListener (&appStore);
-    // 가짜 기간에는 진짜 토큰과 섞이지 않게 항목 이름을 따로 쓴다
-    tokenStore = TokenStore::createDefault ("fake-refresh-token");
-    if (options.resetFakeState) tokenStore->clear();
-    authController = std::make_unique<AuthController> (*meonApi, *rt, appStore, *tokenStore, sched);
-    homeController = std::make_unique<HomeController> (*meonApi, *rt, appStore, sched);
-    roomController = std::make_unique<RoomController> (*meonApi, appStore);
-    accountController = std::make_unique<AccountController> (*meonApi, appStore, *authController);
-    authController->addListener (this);
 }
 
 void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
@@ -96,8 +124,9 @@ void MeonCore::authStepChanged (AuthController::Step s)
         appStore.setMyRtt (ms);
         meonApi->reportRtt (ms, [] (Result<Done>) {});
     });
-    // 가짜 기간: 지금 쓰는 AOO 서버 (진짜 서버 단계에서는 마지막 Connection 이나 config 의 주소)
-    rtt->start (options.fake.aooHost, options.fake.aooPort);
+    // 방에 들어가기 전에는 서버 설정의 AOO 주소 (방에 들어간 뒤 Connection 의 주소로 바꾸는 것은 R11 PR3)
+    rtt->start (options.server.isFake() ? options.fake.aooHost : options.server.aooHost,
+                options.server.isFake() ? options.fake.aooPort : options.server.aooPort);
 }
 
 MeonCore::~MeonCore()
@@ -115,7 +144,9 @@ MeonCore::~MeonCore()
     rt->disconnect();
     rt.reset();
     meonApi.reset();
-    fake->onStateChanged = nullptr;
+    realtimeTransport.reset();
+    restTransport.reset();
+    if (fake != nullptr) fake->onStateChanged = nullptr;
     fake.reset();
     if (options.logFile != juce::File()) AppLog::close();
 }
@@ -135,6 +166,7 @@ void MeonCore::applyDevOptions (Options& o, const juce::StringPairArray& dev)
     if (keys.contains ("fake-script"))  o.fake.scripts = dev["fake-script"] != "0";
     if (keys.contains ("fake-aoo"))
     {
+        o.fakeAooGiven = true;
         const auto v = dev["fake-aoo"];
         o.fake.aooHost = v.upToLastOccurrenceOf (":", false, false);
         if (v.containsChar (':')) o.fake.aooPort = v.fromLastOccurrenceOf (":", false, false).getIntValue();

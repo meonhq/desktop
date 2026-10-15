@@ -42,7 +42,13 @@ jobs:
         run: cmake --build build --parallel --target MEON_Tests MEON_Standalone
 
       - name: 단위 테스트
-        run: build/MEON_Tests_artefacts/RelWithDebInfo/MEON_Tests
+        # 전송층 테스트(Transport)는 가짜 HTTP·WebSocket 서버(scripts/meon_test_server.py)에 붙는다
+        run: |
+          python3 scripts/meon_test_server.py 18080 2> mock.log &
+          # 가짜 서버가 실제로 답할 때까지 기다린다 (러너에 따라 Python 이 뜨는 데 수십 초 걸릴 수 있다)
+          for i in $(seq 1 60); do curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo && break; sleep 1; done
+          curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo || { echo "::error::가짜 서버가 뜨지 않음"; cat mock.log; exit 1; }
+          MEON_TEST_MOCK=http://127.0.0.1:18080 build/MEON_Tests_artefacts/RelWithDebInfo/MEON_Tests
 
       - name: 화면 스냅숏
         continue-on-error: true

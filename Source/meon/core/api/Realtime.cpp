@@ -236,9 +236,10 @@ void Realtime::transportMessage (const var& msg)
     listeners.call ([&e] (Listener& l) { l.event (e); });
 }
 
-void Realtime::transportClosed()
+void Realtime::transportClosed (int code)
 {
     transportOpen = false;
+    lastCloseCode = code;
     scheduler.cancel (heartbeatTask);
     heartbeatTask = 0;
     if (! wanted)
@@ -247,7 +248,7 @@ void Realtime::transportClosed()
         return;
     }
     setLink (link == Link::connecting ? Link::connecting : Link::reconnecting);
-    AppLog::write ("realtime", LOGTXT ("연결이 닫힘 → ") + juce::String (backoffMs / 1000.0, 0) + LOGTXT ("초 뒤 다시 연결"));
+    AppLog::write ("realtime", LOGTXT ("연결이 닫힘 (코드 ") + juce::String (code) + LOGTXT (") → ") + juce::String (backoffMs / 1000.0, 0) + LOGTXT ("초 뒤 다시 연결"));
     scheduleReconnect();
 }
 
