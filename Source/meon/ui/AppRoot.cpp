@@ -15,6 +15,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     addChildComponent (*home);
     core.store().addListener (this);
+    core.connection().addListener (this);
     core.room().onActionFailed = [this] (core::ErrorCode code)
     {
         const auto text = msg::hostActionFailure (code);
@@ -32,6 +33,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 AppRoot::~AppRoot()
 {
     core.store().removeListener (this);
+    core.connection().removeListener (this);
     core.room().onActionFailed = nullptr;
     core.home().onInviteFailed = nullptr;
     core.home().setHomeVisible (false);
@@ -115,6 +117,7 @@ void AppRoot::notice (const core::Notice& n)
         case K::kicked:     addInfoToast (TXT ("방에서 내보내졌어요"), n.roomTitle); break;
         case K::roomClosed: addInfoToast (TXT ("방장이 방을 닫았어요"), n.roomTitle); break;
         case K::movedToOtherRoom: addInfoToast (TXT ("다른 기기에서 들어간 방으로 연결됐어요"), n.roomTitle); break;
+        case K::roomLostWhileDisconnected: addInfoToast (TXT ("연결이 오래 끊겨서 방에서 나왔어요"), n.roomTitle); break;
         default: break;   // 초대는 store.invites 로, 승인 수락은 currentRoom 으로 처리된다
     }
 }
@@ -179,15 +182,20 @@ void AppRoot::syncInviteToasts()
     }
 }
 
-void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub)
+void AppRoot::connectionRestored()
+{
+    addInfoToast (TXT ("다시 연결됐어요"), {}, 3000);
+}
+
+void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub, int showMs)
 {
     auto* t = toasts.insert (0, new Toast (title, sub));
     juce::Component::SafePointer<Toast> sp (t);
     t->onClose = [this, sp] { if (sp != nullptr) removeToast (sp.getComponent()); };
     addAndMakeVisible (t);
-    // 6초 뒤 자동으로 닫힘
+    // showMs 뒤 자동으로 닫힘 (기본 6초)
     juce::Component::SafePointer<AppRoot> safe (this);
-    juce::Timer::callAfterDelay (6000, [safe, sp]
+    juce::Timer::callAfterDelay (showMs, [safe, sp]
     {
         if (safe != nullptr && sp != nullptr) safe->removeToast (sp.getComponent());
     });

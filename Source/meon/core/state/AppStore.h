@@ -49,7 +49,8 @@ struct Notice
         roomClosed,      // room.closed: 홈 + "방장이 방을 닫았어요"
         joinAccepted,    // join_request.accepted: 바로 합주 화면
         inviteReceived,  // invite.received: 토스트
-        movedToOtherRoom // 다시 연결했더니(hello) 다른 방에 있음: 같은 계정의 다른 기기가 들어간 방. 송출 정지로 들어가고 토스트
+        movedToOtherRoom, // 다시 연결했더니(hello) 다른 방에 있음: 같은 계정의 다른 기기가 들어간 방. 송출 정지로 들어가고 토스트
+        roomLostWhileDisconnected // 끊겼다 다시 연결했더니(hello) 방이 없음: 끊긴 채 30초가 지나 서버가 방에서 내보냄. 홈 + 토스트
     };
     Kind kind;
     juce::String roomId, roomTitle;
@@ -110,6 +111,7 @@ private:
     AppState s;
     juce::ListenerList<Listener> listeners;
     juce::String roomLeftOnQuit;
+    bool helloAfterReconnect = false;   // 끊겼다 다시 붙은 뒤 첫 hello (linkChanged: reconnecting → online)
 
     void changed (StateKey k) { listeners.call ([k] (Listener& l) { l.stateChanged (k); }); }
     void notify (const Notice& n) { listeners.call ([&n] (Listener& l) { l.notice (n); }); }

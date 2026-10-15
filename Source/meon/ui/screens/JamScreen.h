@@ -22,6 +22,7 @@ class JamScreen : public juce::Component,
                   private core::AppStore::Listener,
                   private core::JamSession::Listener,
                   private core::ChatChannel::Listener,
+                  private core::ConnectionWatch::Listener,
                   private juce::Timer
 {
 public:
@@ -118,6 +119,7 @@ private:
     void refreshChat();
 
     void stateChanged (core::StateKey) override;
+    void connectionShownChanged (bool) override;
     void jamPhaseChanged (core::JamSession::Phase) override { rebuildMembers(); }
     void jamMembersChanged() override { rebuildMembers(); refreshChat(); }
     void jamStatsChanged() override;

@@ -10,7 +10,8 @@ namespace meon::ui
 {
 
 class AppRoot : public juce::Component,
-                private core::AppStore::Listener
+                private core::AppStore::Listener,
+                private core::ConnectionWatch::Listener
 {
 public:
     AppRoot (core::MeonCore&, HomeScreen::UpdateHooks);
@@ -22,7 +23,7 @@ public:
     HomeScreen* getHome() { return home.get(); }
     void showJoinFailure (const core::ApiError&);
     void showJoinFailure (core::HomeController::JoinFailure);
-    void addInfoToast (const juce::String& title, const juce::String& sub);
+    void addInfoToast (const juce::String& title, const juce::String& sub, int showMs = 6000);
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -46,6 +47,7 @@ private:
 
     void stateChanged (core::StateKey) override;
     void notice (const core::Notice&) override;
+    void connectionRestored() override;   // "다시 연결됐어요"
 };
 
 } // namespace meon::ui

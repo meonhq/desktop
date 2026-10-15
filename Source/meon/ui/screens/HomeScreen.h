@@ -18,6 +18,7 @@ namespace meon::ui
 
 class HomeScreen : public juce::Component,
                    private core::AppStore::Listener,
+                   private core::ConnectionWatch::Listener,
                    private juce::Timer
 {
 public:
@@ -124,6 +125,7 @@ private:
     juce::String deviceText() const;
 
     void stateChanged (core::StateKey) override;
+    void connectionShownChanged (bool) override;
     void timerCallback() override;
 };
 

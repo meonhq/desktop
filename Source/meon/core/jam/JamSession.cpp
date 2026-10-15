@@ -120,7 +120,8 @@ void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
     myId = connection.aooUsername;
     peerStates.clear();
     mix.clear();
-    serverLost = false;
+    serverLost = serverUnreachable = peersSilent = false;
+    serverLinkMaybeChanged();
     needRejoin = false;
     reconnectAttempts = 0;
     reconnectDelayMs = 0;
@@ -194,8 +195,11 @@ void JamSession::exit (const String& reason)
     scheduler.cancel (tickTask);
     scheduler.cancel (retryTask);
     scheduler.cancel (reconnectTask);
-    tickTask = retryTask = reconnectTask = 0;
+    scheduler.cancel (reachTask);
+    tickTask = retryTask = reconnectTask = reachTask = 0;
     needRejoin = false;
+    serverLost = serverUnreachable = peersSilent = false;
+    serverLinkMaybeChanged();
     if (connection.groupName.isNotEmpty()) engine.leaveGroup (connection.groupName);
     engine.disconnect();
     engine.setAllowedPeers ({}, true);   // 방 밖: 허용 목록을 빈 채로 켜 둔다 (E5: 서버에 없는 동안 모르는 상대의 연결 요청을 받지 않게)
@@ -285,6 +289,7 @@ void JamSession::engineConnected (bool ok, const String& message)
         AppLog::write ("jam", LOGTXT ("합주 서버에 다시 연결됨 (") + String (reconnectAttempts) + LOGTXT ("번 시도)"));
     }
     serverLost = false;
+    serverLinkMaybeChanged();
     scheduler.cancel (reconnectTask);
     reconnectTask = 0;
     reconnectDelayMs = 0;
@@ -310,10 +315,64 @@ void JamSession::engineDisconnected (const String& message)
         reconnectAttempts = 0;
         if (sessionLog.isActive()) sessionLog.addEvent ("serverLost", message);
         AppLog::write ("jam", LOGTXT ("합주 서버 연결 끊김: ") + message);
+        serverLinkMaybeChanged();
     }
     // 방 안의 소리는 직접 연결이라 계속 들린다. 서버에는 같은 Connection 으로 다시 붙고 그룹에도 다시 들어간다
     needRejoin = true;
     if (reconnectTask == 0) scheduleReconnect();
+}
+
+void JamSession::updatePeersSilent (bool silentNow)
+{
+    if (silentNow == peersSilent) return;
+    peersSilent = silentNow;
+    if (silentNow)
+    {
+        AppLog::write ("jam", LOGTXT ("상대 소리가 모두 끊김 → 합주 서버·서버 연결 확인"));
+        if (options.peersAllInterrupted) options.peersAllInterrupted();
+        checkReach();
+        return;
+    }
+    scheduler.cancel (reachTask);
+    reachTask = 0;
+    if (serverUnreachable)
+    {
+        serverUnreachable = false;
+        AppLog::write ("jam", LOGTXT ("상대 소리가 다시 들림 → 합주 서버 연결 끊김 표시를 내림"));
+    }
+    serverLinkMaybeChanged();
+}
+
+void JamSession::checkReach()
+{
+    if (! options.checkReachable || reachChecking || ! peersSilent || connection.aooHost.isEmpty()) return;
+    reachChecking = true;
+    std::weak_ptr<bool> weak = alive;
+    const auto room = currentRoomId;
+    options.checkReachable (connection.aooHost, connection.aooPort, [this, weak, room] (bool reachable)
+    {
+        if (weak.expired()) return;
+        reachChecking = false;
+        if (! peersSilent || room != currentRoomId) return;
+        if (serverUnreachable != ! reachable)
+        {
+            serverUnreachable = ! reachable;
+            AppLog::write ("jam", reachable ? LOGTXT ("합주 서버에 닿음") : LOGTXT ("합주 서버에 닿지 않음 (인터넷 끊김으로 봄)"));
+            if (sessionLog.isActive()) sessionLog.addEvent (reachable ? "serverReachable" : "serverUnreachable", connection.aooHost);
+        }
+        serverLinkMaybeChanged();
+        // 상대 소리가 끊겨 있는 동안 계속 확인한다 (다시 닿으면 표시를 내린다)
+        scheduler.cancel (reachTask);
+        reachTask = scheduler.post (reachCheckEveryMs, [this, weak] { if (! weak.expired()) { reachTask = 0; checkReach(); } });
+    });
+}
+
+void JamSession::serverLinkMaybeChanged()
+{
+    const bool down = isJamServerDown();
+    if (down == lastServerDown) return;
+    lastServerDown = down;
+    listeners.call ([] (Listener& l) { l.jamServerLinkChanged(); });
 }
 
 void JamSession::scheduleReconnect()
@@ -515,6 +574,17 @@ void JamSession::tick()
         }
     }
     if (needProfile) sendMyProfile();
+
+    // 상대가 있는데 모두 소리가 끊겼다 (연결된 상대가 하나도 없음): 내 인터넷이 끊겼을 수 있다
+    {
+        int interrupted = 0, connected = 0;
+        for (auto& [user, ps] : peerStates)
+        {
+            if (ps.get() == PeerState::State::interrupted) ++interrupted;
+            if (ps.get() == PeerState::State::connected) ++connected;
+        }
+        updatePeersSilent (phase == Phase::inRoom && interrupted > 0 && connected == 0);
+    }
 
     // 송신·입력 레벨 (5초 최댓값)
     float inPeak = 0.0f, sendPeak = 0.0f;

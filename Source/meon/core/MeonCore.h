@@ -18,12 +18,14 @@
 #include "home/HomeController.h"
 #include "room/RoomController.h"
 #include "account/AccountController.h"
+#include "state/ConnectionWatch.h"
 
 namespace meon::core
 {
 
 class MeonCore : private AuthController::Listener,
-                 private AppStore::Listener
+                 private AppStore::Listener,
+                 private JamSession::Listener
 {
 public:
     struct Options
@@ -59,6 +61,8 @@ public:
     RoomController& room()              { return *roomController; }
     AccountController& account()        { return *accountController; }
     FakeMeonServer* fakeServer()        { return fake.get(); }   // 가짜 서버일 때만
+    /** 연결 끊김 표시 (홈·합주 화면 위의 줄, "다시 연결됐어요" 토스트) */
+    ConnectionWatch& connection()       { return connWatch; }
     const ServerConfig& server() const  { return options.server; }
 
     /** 프로세서가 엔진을 붙인다 (합주). 붙인 뒤에야 jam() 이 생긴다 */
@@ -69,6 +73,7 @@ public:
 private:
     Options options;
     RealScheduler sched;
+    ConnectionWatch connWatch { sched };
     std::unique_ptr<FakeMeonServer> fake;
     std::unique_ptr<RestTransport> restTransport;           // 진짜 서버일 때
     std::unique_ptr<RealtimeTransport> realtimeTransport;
@@ -96,7 +101,10 @@ private:
     void leaveOnQuit();      // 소멸자 (정상 종료)
 
     void authStepChanged (AuthController::Step) override;
-    void stateChanged (StateKey) override;   // 방에 들어가고 나갈 때 RTT 측정 대상을 바꾼다
+    void stateChanged (StateKey) override;   // 방에 들어가고 나갈 때 RTT 측정 대상을 바꾼다. 연결 끊김 표시
+    void notice (const Notice&) override;
+    void jamServerLinkChanged() override;
+    void updateConnection();
     RttReporter::Target defaultRttTarget() const;
     void createFake();
 

@@ -565,6 +565,92 @@ public:
             o.logFolder.deleteRecursively();
         }
 
+        beginTest ("Connection: jam server down = engine says lost, or every partner silent and the AOO server unreachable (checks the realtime link too)");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-conn");
+            int realtimeChecks = 0;
+            juce::StringArray probed;
+            std::vector<std::function<void (bool)>> pending;
+            o.peersAllInterrupted = [&] { ++realtimeChecks; };
+            o.checkReachable = [&] (const juce::String& h, int p, std::function<void (bool)> done)
+            {
+                probed.add (h + ":" + juce::String (p));
+                pending.push_back (std::move (done));
+            };
+            JamSession jam (engine, store, clock, o);
+            struct LinkLog : JamSession::Listener { int changes = 0; void jamServerLinkChanged() override { ++changes; } } log;
+            jam.addListener (&log);
+
+            RoomDetail room;
+            room.id = "r_c";
+            room.hostId = "u_me";
+            room.connection.aooHost = "127.0.0.1";
+            room.connection.aooPort = 10999;
+            room.connection.groupName = "g";
+            room.connection.aooUsername = "u_me";
+            room.connection.members = { "u_me", "u_b" };
+            store.setCurrentRoom (room);
+            engine.finishConnect();
+            engine.finishJoin();
+            engine.peerArrives ("u_b");
+            // 상대 소리가 들어오는 동안
+            auto flow = [&] (int ms)
+            {
+                for (int t = 0; t < ms; t += 200)
+                {
+                    if (auto* p = engine.peer ("u_b")) p->packetsReceived += 10;
+                    clock.advance (200);
+                }
+            };
+            flow (2000);
+            expect (! jam.isJamServerDown() && realtimeChecks == 0 && pending.empty());
+
+            // 엔진이 합주 서버 끊김을 알림 → 다시 붙음
+            engine.serverLost();
+            expect (jam.isJamServerDown());
+            expectEquals (log.changes, 1);
+            clock.advance (1100);
+            engine.finishConnect();
+            expect (! jam.isJamServerDown());
+            expectEquals (log.changes, 2);
+            flow (1000);
+
+            // 상대 소리가 모두 끊김 (내 와이파이?) → 서버 실시간 연결과 합주 서버를 확인한다
+            clock.advance (3500);
+            expectEquals (realtimeChecks, 1);
+            expectEquals ((int) pending.size(), 1);
+            expectEquals (probed[0], juce::String ("127.0.0.1:10999"));
+            expect (! jam.isJamServerDown(), "확인 결과가 오기 전에는 그대로");
+            { auto done = pending.back(); pending.clear(); done (false); }
+            expect (jam.isJamServerDown(), "합주 서버에 닿지 않으면 끊김");
+            expectEquals (log.changes, 3);
+            clock.advance (JamSession::reachCheckEveryMs + 100);
+            expectEquals ((int) pending.size(), 1, "끊겨 있는 동안 5초마다 다시 확인");
+            { auto done = pending.back(); pending.clear(); done (false); }
+
+            // 상대 소리가 다시 들어오면 바로 내린다
+            flow (1000);
+            expect (! jam.isJamServerDown());
+            expectEquals (log.changes, 4);
+            flow (20000);
+            expect (pending.empty(), "소리가 들리는 동안은 확인하지 않는다");
+
+            // 상대만 끊겼다 (합주 서버에는 닿음): 내 연결은 정상
+            clock.advance (3500);
+            expectEquals ((int) pending.size(), 1);
+            { auto done = pending.back(); pending.clear(); done (true); }
+            expect (! jam.isJamServerDown(), "상대 쪽 문제는 내 끊김으로 보지 않는다");
+
+            store.setCurrentRoom (std::nullopt);
+            expect (! jam.isJamServerDown());
+            jam.removeListener (&log);
+            o.logFolder.deleteRecursively();
+        }
+
         beginTest ("Home monitor only on the signed-in home screen: start, logout, 4000, forced update, back home");
         {
             using S = AuthController::Step;

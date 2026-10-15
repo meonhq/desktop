@@ -452,6 +452,8 @@ void MeonEditor::applyHomePreview()
         {
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
+            if (safe != nullptr && p == "jam:disc")      // 연결 끊김 줄 (서버 실시간 연결이 끊긴 지 2초)
+                if (auto* fake = safe->core.fakeServer()) fake->devDropLink (60);
             if (safe == nullptr || p != "jam:host") return;
             if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();   // 입장 요청 하나
         });

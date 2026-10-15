@@ -169,4 +169,8 @@ private:
     bool ellipsis = true;
 };
 
+/** 연결 끊김 줄: 홈·합주 화면에서 상단 바 아래와 패널 사이 여백(높이 metric::padX)에 그린다.
+    화면 배치를 밀지 않고(버튼 위치 그대로) 다른 요소를 가리지 않는다. area 는 그 여백 전체 (폭 = 화면 폭) */
+void paintDisconnectedStrip (juce::Graphics&, juce::Rectangle<int> area);
+
 } // namespace meon::ui

@@ -8,7 +8,6 @@ namespace meon::ui
 namespace
 {
     constexpr int headerLineY = metric::headerH;
-    constexpr int bannerH = 37;
     constexpr int bottomCardH = 48 + 1 + 43;
     constexpr int bubbleMaxW = 220;
 
@@ -918,6 +917,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     addAndMakeVisible (*filePlayer);
 
     core.store().addListener (this);
+    core.connection().addListener (this);
     jam.addListener (this);
     jam.chat().addListener (this);
     refreshHeader();
@@ -934,6 +934,7 @@ JamScreen::~JamScreen()
     jam.chat().removeListener (this);
     jam.removeListener (this);
     core.store().removeListener (this);
+    core.connection().removeListener (this);
 }
 
 juce::String JamScreen::memberName (const juce::String& userId) const
@@ -946,7 +947,12 @@ juce::String JamScreen::memberName (const juce::String& userId) const
 
 bool JamScreen::showBanner() const
 {
-    return core.store().state().link == core::Realtime::Link::reconnecting;
+    return core.connection().isShown();   // 서버 실시간 연결이나 합주 서버(AOO)가 끊긴 지 2초 (MeonCore::connection)
+}
+
+void JamScreen::connectionShownChanged (bool)
+{
+    repaint (0, headerLineY + 1, getWidth(), metric::padX);
 }
 
 //==============================================================================
@@ -1084,7 +1090,7 @@ void JamScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
     // 상단 바(·연결 끊김 배너) 아래 작업 영역 (패널들을 감싸는 곳)
-    const int canvasTop = headerLineY + 1 + (showBanner() ? bannerH : 0);
+    const int canvasTop = headerLineY + 1;
     g.setColour (col::surfaceCanvas);
     g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
     const float logoW = meon::logoWidth (metric::logoDrawH);
@@ -1094,23 +1100,9 @@ void JamScreen::paint (juce::Graphics& g)
     g.setColour (col::line);
     g.fillRect (0, headerLineY, getWidth(), 1);
 
+    // 연결 끊김: 상단 바 아래, 패널 위 여백 (배치를 밀지 않는다)
     if (showBanner())
-    {
-        const int y = headerLineY + 1;
-        g.setColour (col::accentSoft);
-        g.fillRect (0, y, getWidth(), bannerH - 1);
-        g.setColour (juce::Colour (0xFFF0DE8Au));
-        g.fillRect (0, y + bannerH - 1, getWidth(), 1);
-        const auto f1 = font (500, 13.0f);
-        const auto t1 = TXT ("서버 연결 끊김 · 재연결 중");
-        const int w1 = (int) std::ceil (textWidth (f1, t1)) + 1;
-        g.setColour (col::ink);
-        g.setFont (f1);
-        g.drawText (t1, metric::padX, y, w1, bannerH - 1, juce::Justification::centredLeft, false);
-        g.setColour (col::inkSub);
-        g.setFont (font (400, 12.0f));
-        g.drawText (TXT ("합주 소리는 계속 들려요"), metric::padX + w1 + 9, y, getWidth() - w1 - 50, bannerH - 1, juce::Justification::centredLeft, true);
-    }
+        paintDisconnectedStrip (g, { 0, headerLineY + 1, getWidth(), metric::padX });
 }
 
 void JamScreen::resized()
@@ -1148,7 +1140,7 @@ void JamScreen::resized()
         }
         gear.setBounds (gx, (metric::headerH - 24) / 2, 24, 24);
     }
-    area.removeFromTop (headerLineY + 1 + (showBanner() ? bannerH : 0));
+    area.removeFromTop (headerLineY + 1);
     area.reduce (metric::padX, metric::padX);
 
     // 오른쪽: 채팅 · 친구 · 파일
