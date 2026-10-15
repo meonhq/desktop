@@ -488,6 +488,18 @@ public:
             copyInfo = true;
         }
 
+       #if MEON_BUILD_ID != 0
+        // MEON E6 (REMAKE_PLAN 8.2): 실제 번호 빌드는 옛 SonoBus 명령줄 연결(-c -g -p -n -q -l)을 쓰지 않는다.
+        // MEON 이 붙는 AOO 주소는 서버가 준 Connection 의 aoo_host 뿐이다 (API 2.8)
+        if (copyInfo || arglist.containsOption(headlessSpec) || arglist.containsOption(loadSetupSpec)) {
+            std::cerr << "Meon: SonoBus connection options are not supported" << std::endl;
+        }
+        arglist.removeOptionIfFound(headlessSpec);
+        arglist.removeValueForOption(loadSetupSpec);
+        doInitialConnect = copyInfo = false;
+        cmdlineConnInfo = AooServerConnectionInfo();
+       #endif
+
         auto setupfile = arglist.removeValueForOption(loadSetupSpec);
         if (setupfile.isNotEmpty()) {
             loadSetupFilename = setupfile;
