@@ -194,23 +194,19 @@ void JamSession::applyAllowed()
         if (m != myId) others.add (m);
     // 엔진 수정 E1: 멤버 목록 밖의 상대와는 연결하지 않는다 (빠진 상대는 엔진이 끊는다)
     engine.setAllowedPeers (others, true);
-    chatChannel.setOthers (others);
+
+    // 채팅 받을 사람: 가짜 서버의 각본 멤버는 실제 앱이 아니라 빼고 센다 (가짜 코드를 지울 때 같이 지운다, REMAKE_PLAN 1.5)
+    juce::StringArray chatOthers;
+    for (auto& u : others)
+        if (options.fake == nullptr || ! options.fake->isScriptedUser (u))
+            chatOthers.add (u);
+    chatChannel.setOthers (chatOthers);
 
     const auto now = scheduler.nowMs();
     for (auto& u : others)
         if (peerStates.count (u) == 0) peerStates.emplace (u, PeerState (now));
     for (auto it = peerStates.begin(); it != peerStates.end();)
         it = others.contains (it->first) ? std::next (it) : peerStates.erase (it);
-    updateChatReach();
-}
-
-void JamSession::updateChatReach()
-{
-    // 채팅을 받을 사람: 오디오 연결이 된 멤버 (연결 중·연결 실패만 있으면 혼자와 같다. 가짜 멤버는 연결되지 않는다)
-    bool any = false;
-    for (auto& [user, ps] : peerStates)
-        any = any || ps.get() == PeerState::State::connected || ps.get() == PeerState::State::interrupted;
-    chatChannel.setAnyoneConnected (any);
 }
 
 //==============================================================================
@@ -405,7 +401,6 @@ void JamSession::tick()
                 break;
         }
     }
-    updateChatReach();
     if (needProfile) sendMyProfile();
 
     // 송신·입력 레벨 (5초 최댓값)

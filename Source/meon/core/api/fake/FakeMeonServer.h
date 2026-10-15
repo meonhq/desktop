@@ -74,6 +74,10 @@ public:
     void remotePeerJoined (const juce::String& userId, const juce::String& nickname, const juce::String& part, bool isHost);
     void remotePeerLeft (const juce::String& userId);
 
+    /** 각본 사용자인지 (가짜 서버가 만든 멤버). 실제 AOO 상대(remotePeerJoined)·내 계정은 false.
+        혼자일 때 채팅 판정에 쓴다 (JamSession::applyAllowed) */
+    bool isScriptedUser (const juce::String& userId) const;
+
     /** 방 코드 → AOO 그룹 비밀번호 (두 컴퓨터가 같은 값을 계산) */
     static juce::String groupPasswordFor (const juce::String& groupName);
 
@@ -108,6 +112,7 @@ private:
         MeSettings settings;
         juce::int64 createdAt = 0;
         bool local = false;          // 이 설치에서 만든 계정 (저장 대상)
+        bool scripted = false;       // 각본 사용자 (fixtures/world.json). 실제 앱이 아니라 채팅을 받지 못한다
         bool online = false;         // 가짜 사용자: 각본이 정한다. 내 계정: 실시간 연결이 있을 때
         juce::int64 lastSeenAt = 0;
         bool deleted = false;

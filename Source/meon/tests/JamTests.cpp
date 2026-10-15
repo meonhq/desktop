@@ -190,13 +190,6 @@ public:
             expect (ch.getMessages().back().delivery == ChatChannel::Message::Delivery::none);
             clock.advance (3000);
             expect (ch.getMessages().back().delivery == ChatChannel::Message::Delivery::none);
-            // 멤버는 있지만 아무도 연결되지 않음 (가짜 멤버만 있는 방): 혼자와 같다
-            ch.setOthers ({ "u_fake" });
-            ch.setAnyoneConnected (false);
-            expect (ch.sendText ("solo") == ChatChannel::SendResult::localOnly);
-            expect (out.empty());
-            expectEquals ((int) ch.getMessages().size(), 2);
-            ch.setAnyoneConnected (true);
             ch.setOthers ({ "u_b", "u_c" });
             expect (ch.sendText ("   ") == ChatChannel::SendResult::empty);
             expect (ch.sendText (juce::String::repeatedString (juce::String::fromUTF8 ("가"), 334)) == ChatChannel::SendResult::tooLong);  // 1002 B
@@ -226,6 +219,75 @@ public:
 
             engineOk = false;
             expect (ch.sendText ("x") == ChatChannel::SendResult::failed);
+        }
+
+        beginTest ("JamSession chat: alone / scripted fake members only -> local, real member (even not connected) -> ack or fail");
+        {
+            ManualScheduler clock;
+            FakeMeonServer::Options fo;
+            fo.latencyMs = 0;
+            fo.scripts = false;
+            FakeMeonServer server { clock, fo };
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            MeonApi api { server, 0 };
+            Realtime rt { server, clock, 0 };
+            AppStore store;
+            rt.addListener (&store);
+            auto run = [&] (auto&& fn) { fn(); clock.advance (50); };
+            run ([&] { api.signup ("solo@example.com", "solo_keys", "abcd123!", true, [] (auto) {}); });
+            run ([&] { api.verifyEmail (server.getLastMailedCode(), [] (auto) {}); });
+            MePatch p; p.nickname = juce::String ("Solo"); p.part = juce::String ("keys");
+            run ([&] { api.patchMe (p, [&] (Result<Me> r) { store.setMe (r.get()); }); });
+            rt.connect ([&] { return api.getTokens().accessToken; });
+            clock.advance (100);
+
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-chat");
+            o.fake = &server;
+            JamSession jam (engine, store, clock, o);
+
+            // 가짜 각본 멤버만 있는 공개 방 (u_f_doyun, u_f_eunseo): 혼자와 같다
+            expect (server.isScriptedUser ("u_f_doyun") && ! server.isScriptedUser (server.meId()));
+            run ([&] { api.joinRoom ("r_f_3", [&] (Result<JoinResult> r) { store.setCurrentRoom (r.get().room); }); });
+            engine.finishConnect();
+            engine.finishJoin();
+            expect (jam.isInRoom());
+            expect (engine.allowed.contains ("u_f_doyun"));   // 엔진 허용 목록에는 그대로 (오디오 규칙은 바꾸지 않는다)
+            engine.sent.clear();
+            expect (jam.chat().sendText ("fake only") == ChatChannel::SendResult::localOnly);
+            expect (engine.sent.empty());
+            clock.advance (3500);
+            expect (jam.chat().getMessages().back().delivery == ChatChannel::Message::Delivery::none);
+
+            // 실제 상대(다른 컴퓨터의 앱)가 들어옴: 아직 연결 중이어도 예전처럼 보내고, 확인이 없으면 3초 뒤 실패 → 다시 보내기
+            server.remotePeerJoined ("u_realpeer", juce::String::fromUTF8 ("실제"), "bass", false);
+            clock.advance (50);
+            expect (engine.allowed.contains ("u_realpeer"));
+            engine.sent.clear();
+            expect (jam.chat().sendText ("to real") == ChatChannel::SendResult::sent);
+            expectEquals ((int) engine.sent.size(), 1);
+            const auto id = jam.chat().getMessages().back().id;
+            expect (jam.chat().getMessages().back().waitingFor == juce::StringArray { "u_realpeer" });   // 가짜 멤버는 기다리지 않는다
+            clock.advance (3100);
+            expect (jam.chat().getMessages().back().delivery == ChatChannel::Message::Delivery::failed);
+            // 다시 보내기 → 상대가 받으면 확인 (내 메시지는 한 번만)
+            const auto count = jam.chat().getMessages().size();
+            jam.chat().resend (id);
+            jam.chat().received ({ engine.group, "u_realpeer", "ack:" + id, {} });
+            expect (jam.chat().getMessages().back().delivery == ChatChannel::Message::Delivery::delivered);
+            expectEquals ((int) jam.chat().getMessages().size(), (int) count);
+
+            // 실제 상대가 연결 실패(15초)여도 예전처럼 보내고 3초 뒤 실패
+            clock.advance (PeerState::joinTimeoutMs + 1000);
+            for (auto& m : jam.members()) if (m.userId == "u_realpeer") expect (m.state == PeerState::State::failed);
+            expect (jam.chat().sendText ("still real") == ChatChannel::SendResult::sent);
+            clock.advance (3100);
+            expect (jam.chat().getMessages().back().delivery == ChatChannel::Message::Delivery::failed);
+
+            store.setCurrentRoom (std::nullopt);
+            rt.removeListener (&store);
+            o.logFolder.deleteRecursively();
         }
 
         beginTest ("JamSession: hear myself before entering (setting 28), send mute, plugin");
