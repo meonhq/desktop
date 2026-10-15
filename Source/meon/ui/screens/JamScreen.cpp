@@ -47,18 +47,40 @@ namespace
 }
 
 //==============================================================================
-/** 무음 경고 줄 (노란 면 #FFF8D6, 위 구분선): "입력 신호가 없어요 · 설정에서 입력 채널을 확인해 주세요" + 설정 열기 */
+/** 장치 경고 줄 (노란 면 #FFF8D6, 위 구분선): "입력 신호가 없어요 · 설정에서 입력 채널을 확인해 주세요" + 설정 열기.
+    내 오디오 카드(입력)와 모니터 카드(출력)에 하나씩 */
 struct JamScreen::SilenceRow : juce::Component
 {
     SilenceRow() { addAndMakeVisible (open); }
-    bool missing = false;   // true: 입력 장치가 없음, false: 장치는 있는데 소리가 안 들어옴 (5초 −60 dBFS)
+    enum class Kind
+    {
+        inputSilent,    // 입력 장치는 있는데 소리가 안 들어옴 (5초 −60 dBFS)
+        inputMissing,   // 입력 장치가 없음
+        outputMissing   // 출력 장치가 동작하지 않음 (JamSession::isOutputMissing)
+    };
+    Kind kind = Kind::inputSilent;
 
     // 넓으면 한 줄 (제목 · 설명 · 버튼, 높이 37). 설명이 다 안 들어가면 설명을 제목 아래로 내린다 (플러그인 900px 등)
     static constexpr int oneLineH = 37, padY = 10, titleH = 17, descLineH = 16;
-    juce::String title() const { return missing ? TXT ("입력 장치가 없어요") : TXT ("입력 신호가 없어요"); }
+    juce::String title() const
+    {
+        switch (kind)
+        {
+            case Kind::inputMissing:  return TXT ("입력 장치가 없어요");
+            case Kind::outputMissing: return TXT ("출력 장치가 없어요");
+            case Kind::inputSilent:   break;
+        }
+        return TXT ("입력 신호가 없어요");
+    }
     juce::String desc() const
     {
-        return missing ? TXT ("마이크나 오디오 인터페이스를 연결해 주세요") : TXT ("설정에서 입력 채널을 확인해 주세요");
+        switch (kind)
+        {
+            case Kind::inputMissing:  return TXT ("마이크나 오디오 인터페이스를 연결해 주세요");
+            case Kind::outputMissing: return TXT ("스피커나 헤드폰을 연결해 주세요");
+            case Kind::inputSilent:   break;
+        }
+        return TXT ("설정에서 입력 채널을 확인해 주세요");
     }
     static juce::Font titleFont() { return font (500, 13.0f); }
     static juce::Font descFont()  { return font (400, 12.0f); }
@@ -109,6 +131,11 @@ struct JamScreen::SilenceRow : juce::Component
 int JamScreen::silenceRowH (int width) const
 {
     return jam.hasInputWarning() ? silenceRow->heightFor (width) : 0;
+}
+
+int JamScreen::outputRowH (int width) const
+{
+    return jam.isOutputMissing() ? outputRow->heightFor (width) : 0;
 }
 
 //==============================================================================
@@ -865,6 +892,9 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
         monCard.addAndMakeVisible (comp);
     silenceRow = std::make_unique<SilenceRow>();
     sendCard.addChildComponent (*silenceRow);
+    outputRow = std::make_unique<SilenceRow>();
+    outputRow->kind = SilenceRow::Kind::outputMissing;
+    monCard.addChildComponent (*outputRow);
     sendMute.setTooltip (TXT ("다른 사람에게 보내는 내 소리"));
     monMute.setTooltip (TXT ("내가 듣는 모든 소리"));
     sendGain.setTitle (TXT ("송출 레벨 · 더블클릭하면 0 dB"));
@@ -874,6 +904,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     sendGain.onChange = [this] (float db) { jam.setSendGainDb (db); };
     master.onChange = [this] (float db) { jam.setMasterDb (db); };
     silenceRow->open.onPress = [this] { if (onOpenAudioSettings) onOpenAudioSettings(); };
+    outputRow->open.onPress = [this] { if (onOpenAudioSettings) onOpenAudioSettings(); };
     // 송출 정지 중에는 보내는 신호가 0 이므로 입력 레벨을 회색으로 보여 준다 (refreshAudio)
     inputMeter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()),
                                 [this] (int ch) { return jam.isSendMuted() ? jam.inputLevel (ch) : jam.sendLevel (ch); });
@@ -1076,8 +1107,9 @@ void JamScreen::timerCallback()
     // 초대 카운트다운·파일 위치·남은 글자
     for (auto* r : friendList->rows) r->refresh();
     if (jam.hasFile()) filePlayer->refresh();
-    const bool warn = jam.hasInputWarning();
-    if (silenceRow->isVisible() != warn || silenceRow->missing != jam.isInputMissing()) resized();
+    if (silenceRow->isVisible() != jam.hasInputWarning() || silenceRow->kind != (jam.isInputMissing() ? SilenceRow::Kind::inputMissing : SilenceRow::Kind::inputSilent)
+        || outputRow->isVisible() != jam.isOutputMissing())
+        resized();
 }
 
 //==============================================================================
@@ -1205,13 +1237,14 @@ void JamScreen::resized()
         else if (sendOpen)        { monW = juce::jmin (availW / 2, 84 + 36 + 120); sendW = availW - monW; }
         else if (monOpen)         { sendW = juce::jmin (availW / 2, 84 + 36 + 120); monW = availW - sendW; }
         else                      { sendW = monW = juce::jmin (availW / 2, 84 + 36 + 120); juce::ignoreUnused (closedW); }
-        silenceRow->missing = jam.isInputMissing();
+        silenceRow->kind = jam.isInputMissing() ? SilenceRow::Kind::inputMissing : SilenceRow::Kind::inputSilent;
         const int warnH = silenceRowH (sendW - 2);   // 카드 테두리 안쪽 폭
-        auto bottom = area.removeFromBottom (bottomCardH + warnH);
+        const int outWarnH = outputRowH (monW - 2);
+        auto bottom = area.removeFromBottom (bottomCardH + juce::jmax (warnH, outWarnH));
         area.removeFromBottom (metric::padX);
-        sendCard.setBounds (bottom.removeFromLeft (sendW));
+        sendCard.setBounds (bottom.removeFromLeft (sendW).withHeight (bottomCardH + warnH));
         bottom.removeFromLeft (metric::gap);
-        monCard.setBounds (bottom.removeFromLeft (monW).withHeight (bottomCardH));
+        monCard.setBounds (bottom.removeFromLeft (monW).withHeight (bottomCardH + outWarnH));
         sendCard.setOpen (sendOpen);
         monCard.setOpen (monOpen);
 
@@ -1235,7 +1268,12 @@ void JamScreen::resized()
         silenceRow->setVisible (warn);
         silenceRow->repaint();
         if (warn) silenceRow->setBounds (sc.withHeight (warnH));
-        layoutRow (monCard.contentBounds().removeFromTop (43), monOpen, monMute, master, outputMeter, plugin);
+        auto mc = monCard.contentBounds();
+        layoutRow (mc.removeFromTop (43), monOpen, monMute, master, outputMeter, plugin);
+        const bool outWarn = jam.isOutputMissing();
+        outputRow->setVisible (outWarn);
+        outputRow->repaint();
+        if (outWarn) outputRow->setBounds (mc.withHeight (outWarnH));
 
         const int listH = memberList->rows.size() * rowH;
         membersCard.setBounds (area.withHeight (juce::jmin (area.getHeight(), listH + 2)));

@@ -496,6 +496,16 @@ int EngineLink::inputChannelCount() const
     return count;
 }
 
+bool EngineLink::outputAvailable() const
+{
+    if (plugin || ! deviceManager) return true;
+    auto* dm = deviceManager();
+    auto* dev = dm != nullptr ? dm->getCurrentAudioDevice() : nullptr;
+    return dev != nullptr
+        && dev->getActiveOutputChannels().countNumberOfSetBits() > 0
+        && dev->getCurrentSampleRate() > 0.0;
+}
+
 String EngineLink::inputChannelText() const
 {
     if (plugin) return String (processor.getMainBusNumInputChannels()) + " (bus)";

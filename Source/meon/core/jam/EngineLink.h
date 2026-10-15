@@ -52,6 +52,7 @@ public:
     void setBufferMode (BufferMode) override;
     void setInputChannels (int start, int count) override;
     int inputChannelCount() const override;
+    bool outputAvailable() const override;
     juce::String inputChannelText() const override;
     float inputLevel (int channel) const override;
     float sendLevel (int channel) const override;

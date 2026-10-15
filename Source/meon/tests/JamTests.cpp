@@ -80,6 +80,8 @@ namespace
         void setInputChannels (int, int c) override { inputChannels = c; }
         DeviceInfo deviceInfo() const override { return { "Windows Audio", {}, "LG HDR WQHD (HDMI)", 48000.0, 480 }; }   // 입력 장치 없음
         int inputChannelCount() const override { return inputChannels; }
+        bool outputOk = true;
+        bool outputAvailable() const override { return outputOk; }
         juce::String inputChannelText() const override { return "2"; }
         float inputLevel (int) const override { return inLevel; }
         float sendLevel (int) const override { return sendMuted ? 0.0f : inLevel; }
@@ -360,6 +362,17 @@ public:
             clock.advance (JamSession::tickMs);
             expect (! jam.hasInputWarning());
 
+            // 출력 장치 없음: 5초 이어지면 모니터 카드 안내, 장치가 열리면 바로 사라진다. 입력 경고와 따로 논다
+            expect (! jam.isOutputMissing());
+            engine.outputOk = false;
+            clock.advance (4000);
+            expect (! jam.isOutputMissing());
+            clock.advance (1600);
+            expect (jam.isOutputMissing() && ! jam.hasInputWarning());
+            engine.outputOk = true;
+            clock.advance (JamSession::tickMs);
+            expect (! jam.isOutputMissing());
+
             // 버그 18: 세션 로그의 audio 칸 (입력이 없으면 "없음"), 장치 없음 이벤트
             {
                 const auto logs = o.logFolder.findChildFiles (juce::File::findFiles, false, "meon-session-*.json");
@@ -373,14 +386,18 @@ public:
                     expectEquals (audio.getProperty ("outputDevice", {}).toString(), juce::String ("LG HDR WQHD (HDMI)"));
                     expectEquals ((int) audio.getProperty ("sampleRate", 0), 48000);
                     expectEquals ((int) audio.getProperty ("bufferSize", 0), 480);
-                    bool started = false, ended = false;
+                    bool started = false, ended = false, outStarted = false, outEnded = false;
                     if (auto* ev = root.getProperty ("events", {}).getArray())
                         for (auto& e : *ev)
                         {
-                            started = started || e.getProperty ("type", {}).toString() == "inputMissingStart";
-                            ended = ended || e.getProperty ("type", {}).toString() == "inputMissingEnd";
+                            const auto type = e.getProperty ("type", {}).toString();
+                            started = started || type == "inputMissingStart";
+                            ended = ended || type == "inputMissingEnd";
+                            outStarted = outStarted || type == "outputMissingStart";
+                            outEnded = outEnded || type == "outputMissingEnd";
                         }
                     expect (started && ended);
+                    expect (outStarted && outEnded);
                 }
             }
 
@@ -402,9 +419,18 @@ public:
             jam.setFilePlaying (true);
             expect (engine.filePlaying);
 
+            // 출력 장치가 없는 채로 방을 나오면 안내도 꺼진다 (방 밖에서는 켜지지 않는다)
+            engine.outputOk = false;
+            clock.advance (5600);
+            expect (jam.isOutputMissing());
+
             // 방에서 나오면 엔진도 나오고, 파일도 닫는다 (방 닫힘·추방도 같은 길: currentRoom 이 빈다)
             store.setCurrentRoom (std::nullopt);
             expect (jam.getPhase() == JamSession::Phase::idle);
+            expect (! jam.isOutputMissing());
+            clock.advance (5600);
+            expect (! jam.isOutputMissing());
+            engine.outputOk = true;
             expect (! engine.selfMon && jam.isSelfMonitor());   // 버그 22: 방을 나오면 꺼지고, 설정값은 그대로
             jam.setHomeMonitor (true);                          // 버그 28: 홈에서 듣기를 켜면 방 밖에서도
             expect (engine.selfMon && jam.isHomeMonitorAudible());
