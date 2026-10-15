@@ -801,7 +801,18 @@ bool JamSession::isSelfMonitorAudible() const
 {
     if (engine.isSendMuted()) return false;   // 송출 정지 중에는 홈에서도 방에서도 안 들린다 (버그 23)
     if (inRoomForAudio()) return prefs.selfMonitor;
-    return ! options.plugin && prefs.homeMonitor;   // 홈: 설정을 켠 사람만 (버그 22·28. 플러그인은 설정이 없어 늘 끔)
+    // 홈: 로그인을 마친 홈 화면에서, 설정을 켠 사람만 (버그 22·28. 플러그인은 설정이 없어 늘 끔).
+    // 로그인·가입·온보딩·강제 업데이트·4000 화면에서는 듣지 않는다 (HomeMonitorGate)
+    return homeVisible && ! options.plugin && prefs.homeMonitor;
+}
+
+void JamSession::setHomeVisible (bool visible)
+{
+    if (homeVisible == visible) return;
+    homeVisible = visible;
+    applyMonitor();
+    if (prefs.homeMonitor && ! options.plugin)
+        AppLog::write ("audio", visible ? LOGTXT ("홈 화면: 입장 전에도 내 소리 듣기 적용") : LOGTXT ("홈 화면이 아님: 입장 전 내 소리 듣기 멈춤 (설정값은 그대로)"));
 }
 
 void JamSession::setHomeMonitor (bool on)

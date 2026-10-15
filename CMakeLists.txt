@@ -182,6 +182,7 @@ set(MEON_CORE_SOURCES
     Source/meon/core/log/AppLog.h
     Source/meon/core/log/AppLog.cpp
     Source/meon/core/jam/RttReporter.h
+    Source/meon/core/jam/HomeMonitorGate.h
     Source/meon/core/MeonCore.h
     Source/meon/core/MeonCore.cpp
     Source/meon/core/model/Parts.h

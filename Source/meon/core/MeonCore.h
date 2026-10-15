@@ -14,6 +14,7 @@
 #include "util/Scheduler.h"
 #include "jam/JamSession.h"
 #include "jam/RttReporter.h"
+#include "jam/HomeMonitorGate.h"
 #include "home/HomeController.h"
 #include "room/RoomController.h"
 #include "account/AccountController.h"
@@ -85,6 +86,7 @@ private:
     bool fakeStateWriteFailed = false;
     std::unique_ptr<Engine> engineImpl;
     std::unique_ptr<JamSession> jamSession;
+    std::unique_ptr<HomeMonitorGate> homeMonitorGate;   // 홈 모니터링은 로그인을 마친 홈 화면에서만
     std::unique_ptr<RttReporter> rtt;
     juce::File leftOnQuitFile;   // 정상 종료 때 나가기가 서버에 닿지 않은 방 (다음 실행이 그 방에 돌아가지 않게)
 

@@ -148,11 +148,13 @@ void MeonCore::createFake()
 
 void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
 {
+    homeMonitorGate.reset();
     jamSession.reset();
     engineImpl = std::move (e);
     o.plugin = options.plugin;
     o.fake = fake.get();
     jamSession = std::make_unique<JamSession> (*engineImpl, appStore, sched, std::move (o));
+    homeMonitorGate = std::make_unique<HomeMonitorGate> (*authController, *jamSession);
 }
 
 void MeonCore::authStepChanged (AuthController::Step s)
@@ -193,6 +195,7 @@ MeonCore::~MeonCore()
     leaveOnQuit();
     appStore.onRoomLeftOnQuit = nullptr;
     rtt.reset();
+    homeMonitorGate.reset();
     jamSession.reset();
     engineImpl.reset();
     accountController.reset();

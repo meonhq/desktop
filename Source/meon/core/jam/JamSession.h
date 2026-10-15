@@ -108,6 +108,9 @@ public:
     /** 설정 › 오디오 "입장 전에도 내 소리 듣기" (앱만, 기본 끔). 크기는 마스터·내 행 볼륨·송출 레벨을 그대로 따른다 */
     bool isHomeMonitor() const { return prefs.homeMonitor; }
     void setHomeMonitor (bool);
+    /** 로그인을 마친 홈 화면이 보이는지 (HomeMonitorGate 가 로그인 단계를 보고 넣는다. 기본 false).
+        false 면 홈 모니터링 설정을 켜 둬도 들리지 않는다. 설정값은 그대로 둔다. 방 안의 셀프 모니터와는 무관 */
+    void setHomeVisible (bool);
     /** 홈에서 지금 내 소리가 들리는지 (홈 "내 오디오" 의 표시) */
     bool isHomeMonitorAudible() const { return ! inRoomForAudio() && isSelfMonitorAudible(); }
     float getSelfMonitorDb() const { return prefs.selfMonitorDb; }
@@ -222,6 +225,7 @@ private:
     juce::String nameOf (const juce::String& userId) const;
     void setPhase (Phase);
     void applyMonitor();
+    bool homeVisible = false;   // 로그인을 마친 홈 화면 (setHomeVisible)
     bool inRoomForAudio() const { return currentRoomId.isNotEmpty(); }   // 입장 처리 시작부터 나갈 때까지 (접속 중 포함)
 
     // AppStore::Listener
