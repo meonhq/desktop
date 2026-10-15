@@ -85,9 +85,7 @@ private:
     bool sendOpen = true, monOpen = true;
     struct SilenceRow;
     std::unique_ptr<SilenceRow> silenceRow;   // 입력 신호 없음 경고 (내 오디오 카드 안, 미터 아래)
-    std::unique_ptr<SilenceRow> outputRow;    // 출력 장치 없음 안내 (모니터 카드 안, 미터 아래)
     int silenceRowH (int width) const;   // 경고가 없으면 0. 좁으면 설명을 두 줄로 내려 높아진다
-    int outputRowH (int width) const;    // 안내가 없으면 0
 
     // 채팅
     Card chatCard;
