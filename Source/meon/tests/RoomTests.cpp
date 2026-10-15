@@ -84,11 +84,22 @@ public:
             for (auto& m : r.store.state().currentRoom->members) if (m.user.id == who) member = true;
             expect (member);
 
+            std::vector<ErrorCode> failures;
+            r.room.onActionFailed = [&] (ErrorCode c) { failures.push_back (c); };
             r.room.kick (who);
             r.wait();
             member = false;
             for (auto& m : r.store.state().currentRoom->members) if (m.user.id == who) member = true;
             expect (! member);
+            expect (failures.empty());
+
+            // 이미 나간 멤버를 다시 내보내기·방장 넘기기: target_not_in_room → 화면에 알린다 (R11 PR3)
+            r.room.kick (who);
+            r.wait();
+            r.room.transferHost (who);
+            r.wait();
+            expect (failures == std::vector<ErrorCode> { ErrorCode::targetNotInRoom, ErrorCode::targetNotInRoom });
+            r.room.onActionFailed = nullptr;
 
             r.room.closeRoom();
             r.wait();

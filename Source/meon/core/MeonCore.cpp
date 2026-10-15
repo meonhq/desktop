@@ -70,6 +70,7 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     roomController = std::make_unique<RoomController> (*meonApi, appStore);
     accountController = std::make_unique<AccountController> (*meonApi, appStore, *authController);
     authController->addListener (this);
+    appStore.addListener (this);
 }
 
 void MeonCore::createFake()
@@ -130,9 +131,22 @@ void MeonCore::authStepChanged (AuthController::Step s)
         appStore.setMyRtt (ms);
         meonApi->reportRtt (ms, [] (Result<Done>) {});
     });
-    // 방에 들어가기 전에는 서버 설정의 AOO 주소 (방에 들어간 뒤 Connection 의 주소로 바꾸는 것은 R11 PR3)
-    rtt->start (options.server.isFake() ? options.fake.aooHost : options.server.aooHost,
-                options.server.isFake() ? options.fake.aooPort : options.server.aooPort);
+    // 방에 있으면 그 방 Connection 의 AOO 서버, 아니면 서버 설정의 AOO 주소. 켤 때 한 번 재고 그 뒤 1분마다
+    const auto t = RttReporter::targetFor (appStore.state().currentRoom, defaultRttTarget());
+    rtt->start (t.host, t.port);
+}
+
+RttReporter::Target MeonCore::defaultRttTarget() const
+{
+    if (options.server.isFake()) return { options.fake.aooHost, options.fake.aooPort };
+    return { options.server.aooHost, options.server.aooPort };
+}
+
+void MeonCore::stateChanged (StateKey k)
+{
+    if (k != StateKey::currentRoom || rtt == nullptr) return;
+    const auto t = RttReporter::targetFor (appStore.state().currentRoom, defaultRttTarget());
+    if (! (rtt->target() == t)) rtt->setTarget (t);
 }
 
 MeonCore::~MeonCore()
@@ -145,6 +159,7 @@ MeonCore::~MeonCore()
     roomController.reset();
     homeController.reset();
     authController->removeListener (this);
+    appStore.removeListener (this);
     authController.reset();
     rt->removeListener (&appStore);
     rt->disconnect();

@@ -167,7 +167,7 @@ public:
         }
 
         //==========================================================================
-        beginTest ("4000 from the server: replaced step, room released locally, reconnect here");
+        beginTest ("4000 from the server: replaced step, room kept (no leave), reconnect here");
         {
             Rig r (0);
             r.signUpToHome ("dup_user");
@@ -181,7 +181,7 @@ public:
             expect (r.store.state().inRoom());
             r.server.devCloseLink (4000);
             expect (r.auth.step() == S::replaced);
-            expect (! r.store.state().inRoom(), "이 기기는 방에서 손을 뗀다 (합주 연결을 끊게)");
+            expect (r.store.state().inRoom(), "방은 그대로 (leave 를 부르지 않는다. 합주 연결만 JamSession 이 끊는다)");
             r.wait (60000);
             expect (r.rt.getLink() == Realtime::Link::replaced, "저절로 다시 붙지 않는다");
             r.auth.reconnectHere();

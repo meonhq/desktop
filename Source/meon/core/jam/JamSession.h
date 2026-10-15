@@ -195,9 +195,21 @@ private:
     juce::int64 lostAt = 0;
     int reconnectAttempts = 0;
     bool serverLost = false;
+    // AOO 서버 재접속 (R11 PR3): 엔진의 자동 재접속(최근 접속 목록)은 끄고 같은 Connection 으로 직접 다시 붙는다.
+    // 서버가 끊겨도 엔진은 그룹 이름을 지우지 않으므로, 다시 붙으면 그룹에도 꼭 다시 들어간다 (needRejoin)
+    int reconnectTask = 0, reconnectDelayMs = 0;
+    bool needRejoin = false;
+    void scheduleReconnect();
+    void reconnectEngine();
+    // 다른 기기가 들어간 방으로 옮겨졌을 때(hello) 이번 입장에만 건 송출 정지. 나갈 때 원래대로 (설정 파일은 그대로)
+    std::optional<bool> restoreSendMuted;
 
+public:
+    static constexpr int reconnectFirstMs = 1000, reconnectMaxMs = 30000;
+
+private:
     void savePrefs();
-    void enter (const RoomDetail&);
+    void enter (const RoomDetail&, bool movedFromOtherDevice = false);
     void exit (const juce::String& reason);
     void connectEngine();
     void joinGroup();

@@ -531,6 +531,11 @@ void Toast::paint (juce::Graphics& g)
     const int right = (action != nullptr ? action->getX() : close.getX()) - 9;
     g.setColour (col::ink);
     g.setFont (font (600, 13.0f));
+    if (sub.isEmpty())   // 보조 줄이 없으면 한 줄로 가운데
+    {
+        g.drawText (title, 18, 0, right - 18, getHeight(), juce::Justification::centredLeft, true);
+        return;
+    }
     g.drawText (title, 18, 12, right - 18, 17, juce::Justification::centredLeft, true);
     g.setColour (col::inkSub);
     g.setFont (font (400, 12.0f));

@@ -21,7 +21,8 @@
 namespace meon::core
 {
 
-class MeonCore : private AuthController::Listener
+class MeonCore : private AuthController::Listener,
+                 private AppStore::Listener
 {
 public:
     struct Options
@@ -87,6 +88,8 @@ private:
     std::unique_ptr<RttReporter> rtt;
 
     void authStepChanged (AuthController::Step) override;
+    void stateChanged (StateKey) override;   // 방에 들어가고 나갈 때 RTT 측정 대상을 바꾼다
+    RttReporter::Target defaultRttTarget() const;
     void createFake();
 
     JUCE_DECLARE_NON_COPYABLE (MeonCore)

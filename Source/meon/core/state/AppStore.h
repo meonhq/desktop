@@ -48,7 +48,8 @@ struct Notice
         kicked,          // room.kicked: 홈 + "방에서 내보내졌어요" (Q14)
         roomClosed,      // room.closed: 홈 + "방장이 방을 닫았어요"
         joinAccepted,    // join_request.accepted: 바로 합주 화면
-        inviteReceived   // invite.received: 토스트
+        inviteReceived,  // invite.received: 토스트
+        movedToOtherRoom // 다시 연결했더니(hello) 다른 방에 있음: 같은 계정의 다른 기기가 들어간 방. 송출 정지로 들어가고 토스트
     };
     Kind kind;
     juce::String roomId, roomTitle;

@@ -203,6 +203,13 @@ public:
             expect (HomeController::classify (ApiError::of (ErrorCode::clientOutdated)) == F::version);
             expect (HomeController::classify (ApiError::of (ErrorCode::hostAbsent)) == F::hostAbsent);
             expect (HomeController::classify (ApiError::of (ErrorCode::kicked)) == F::kicked);
+            // API 5.5 표 전체 (R11 PR3): 가득 참 / 방이 닫혔어요 / 연결 실패 / 426 은 강제 업데이트 화면(창은 띄우지 않음)
+            expect (HomeController::classify (ApiError::of (ErrorCode::roomFull)) == F::full);
+            for (auto c : { ErrorCode::roomClosed, ErrorCode::roomNotFound, ErrorCode::invalidCode })
+                expect (HomeController::classify (ApiError::of (c)) == F::closed);
+            for (auto c : { ErrorCode::network, ErrorCode::timeout, ErrorCode::internal })
+                expect (HomeController::classify (ApiError::of (c)) == F::server);
+            expect (HomeController::classify (ApiError::of (ErrorCode::alreadyInRoom)) == F::alreadyInRoom);
         }
 
         beginTest ("create private room enters it with a code; second create is already_in_room");

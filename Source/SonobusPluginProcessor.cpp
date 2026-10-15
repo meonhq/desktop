@@ -3554,7 +3554,8 @@ int32_t SonobusAudioProcessor::handleSourceEvents(const aoo_event ** events, int
                     if (peer) {
                         // we already have a peer for this, interesting
                         DBG("Already had remote peer for " <<   es->ipaddr << ":" << es->port << "  ourId: " << peer->ourId);
-                    } else if (!mIsConnectedToServer) {
+                    } else if (!mIsConnectedToServer && ![this] { const ScopedLock al (mAllowedPeersLock); return mAllowedPeersEnabled; }()) {
+                        // MEON E5: with the allow list (E1) on, unknown peers are refused below even when not logged in to the server
                         peer = doAddRemotePeerIfNecessary(es);
                     }
                     else {
