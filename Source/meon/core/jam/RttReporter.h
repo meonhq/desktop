@@ -1,8 +1,10 @@
 // MEON core - 내 AOO 서버 왕복 시간 (추가 반영 2, API 5.9). 앱을 켤 때 한 번, 그 뒤 홈이든 방이든 1분마다 재서 보고한다.
 // 측정: 서버에 TCP 로 접속하는 데 걸린 시간 = 왕복 1회. 3번 재서 가장 작은 값 (버그 #11: 주기 1분, 별도 스레드).
+// 대상: 방에 있으면 그 방 Connection 의 aoo_host:aoo_port, 아니면 서버 설정(ServerConfig)의 AOO 주소 (R11 PR3).
 #pragma once
 
 #include <JuceHeader.h>
+#include "../api/ApiTypes.h"
 
 namespace meon::core
 {
@@ -25,6 +27,35 @@ public:
         }
         if (! isThreadRunning()) startThread();
         else notify();
+    }
+
+    struct Target
+    {
+        juce::String host;
+        int port = 0;
+        bool operator== (const Target& o) const { return host == o.host && port == o.port; }
+    };
+
+    /** 잴 곳: 방에 있으면 그 방의 AOO 서버, 아니면 기본 (서버 설정의 AOO 주소) */
+    static Target targetFor (const std::optional<RoomDetail>& room, const Target& fallback)
+    {
+        if (room && room->connection.aooHost.isNotEmpty() && room->connection.aooPort > 0)
+            return { room->connection.aooHost, room->connection.aooPort };
+        return fallback;
+    }
+
+    /** 다음 측정부터 이 주소로 (바로 재지 않는다: 보고는 1분에 한 번, API 5.9 요청 제한 1분 2회) */
+    void setTarget (const Target& t)
+    {
+        const juce::ScopedLock sl (lock);
+        host = t.host;
+        port = t.port;
+    }
+
+    Target target() const
+    {
+        const juce::ScopedLock sl (lock);
+        return { host, port };
     }
 
     void stop()
@@ -57,7 +88,7 @@ public:
 
 private:
     std::function<void (int)> callback;
-    juce::CriticalSection lock;
+    mutable juce::CriticalSection lock;
     juce::String host;
     int port = 0;
 

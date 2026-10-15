@@ -48,7 +48,8 @@ struct Notice
         kicked,          // room.kicked: 홈 + "방에서 내보내졌어요" (Q14)
         roomClosed,      // room.closed: 홈 + "방장이 방을 닫았어요"
         joinAccepted,    // join_request.accepted: 바로 합주 화면
-        inviteReceived   // invite.received: 토스트
+        inviteReceived,  // invite.received: 토스트
+        movedToOtherRoom // 다시 연결했더니(hello) 다른 방에 있음: 같은 계정의 다른 기기가 들어간 방. 송출 정지로 들어가고 토스트
     };
     Kind kind;
     juce::String roomId, roomTitle;
@@ -91,6 +92,12 @@ public:
     /** 로그아웃·탈퇴: 모든 상태를 비운다 */
     void clear();
 
+    /** 지난 실행을 정상 종료하며 나간 방인데 나가기가 서버에 닿지 않았다 (MeonCore 가 켤 때 알려 준다).
+        다음 hello 의 current_room 이 이 방이면 들어가지 않고 onRoomLeftOnQuit 를 부른다 (부른 쪽이 나가기를 다시 보낸다).
+        첫 hello 에서 한 번만 본다 */
+    void setRoomLeftOnQuit (const juce::String& roomId) { roomLeftOnQuit = roomId; }
+    std::function<void (const juce::String& roomId)> onRoomLeftOnQuit;
+
     //==============================================================================
     // Realtime::Listener
     void linkChanged (Realtime::Link) override;
@@ -100,6 +107,7 @@ public:
 private:
     AppState s;
     juce::ListenerList<Listener> listeners;
+    juce::String roomLeftOnQuit;
 
     void changed (StateKey k) { listeners.call ([k] (Listener& l) { l.stateChanged (k); }); }
     void notify (const Notice& n) { listeners.call ([&n] (Listener& l) { l.notice (n); }); }

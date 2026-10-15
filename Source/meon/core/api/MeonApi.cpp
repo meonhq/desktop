@@ -354,6 +354,18 @@ void MeonApi::getRoom (const String& id, Callback<RoomDetail> cb)
 void MeonApi::joinRoom (const String& id, Callback<JoinResult> cb)     { callJoin ("/rooms/" + enc (id) + "/join", {}, cb); }
 void MeonApi::joinByCode (const String& code, Callback<JoinResult> cb) { callJoin ("/rooms/join-by-code", json::obj ({ { "code", code } }), cb); }
 void MeonApi::leaveRoom (const String& id, Callback<Done> cb)          { callDone ("POST", "/rooms/" + enc (id) + "/leave", {}, true, cb); }
+bool MeonApi::leaveRoomBlocking (const String& id, int timeoutMs)
+{
+    HttpRequest req;
+    req.method = "POST";
+    req.path = "/rooms/" + enc (id) + "/leave";
+    req.build = build;
+    req.accessToken = tokens.accessToken;
+    const auto r = transport.sendBlocking (req, timeoutMs);
+    AppLog::write ("api", LOGTXT ("종료: 방 나가기 ") + id + " → " + (r.status == 0 ? String (LOGTXT ("응답 없음")) : String (r.status)));
+    return isSuccess (r.status);
+}
+
 void MeonApi::reportRtt (int ms, Callback<Done> cb)                    { callDone ("POST", "/me/rtt", json::obj ({ { "aoo_rtt_ms", ms } }), true, cb); }
 
 void MeonApi::sendLatencyTelemetry (const String& roomId, int est, int mine, int host, int actual, Callback<Done> cb)

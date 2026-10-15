@@ -85,6 +85,19 @@ inline JoinFailText joinFailure (core::HomeController::JoinFailure f)
     return { TXT ("들어가지 못했어요"), TXT ("문제가 생겼어요. 다시 시도해 주세요") };
 }
 
+/** 방장 기능 실패 토스트 (R11 PR3, 2026-10-15 문구 승인) */
+inline juce::String hostActionFailure (core::ErrorCode c)
+{
+    using E = core::ErrorCode;
+    switch (c)
+    {
+        case E::targetNotInRoom:    return TXT ("이미 방에서 나간 멤버예요");
+        case E::roomFull:           return TXT ("방이 가득 차서 수락하지 못했어요");
+        case E::requestUnavailable: return TXT ("요청한 사람이 지금 들어올 수 없어요");
+        default:                    return {};
+    }
+}
+
 /** 친구 추가 결과 (API 7.2 result, 잠정 문구) */
 inline juce::String friendRequestResult (const juce::String& result, const juce::String& username)
 {

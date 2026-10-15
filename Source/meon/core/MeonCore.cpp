@@ -1,6 +1,7 @@
 #include "MeonCore.h"
 #include "MeonFixtures.h"
 #include "log/AppLog.h"
+#include "api/ApiJson.h"
 #include "api/net/HttpTransport.h"
 #include "api/net/WsTransport.h"
 
@@ -70,6 +71,44 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     roomController = std::make_unique<RoomController> (*meonApi, appStore);
     accountController = std::make_unique<AccountController> (*meonApi, appStore, *authController);
     authController->addListener (this);
+    appStore.addListener (this);
+    readLeftOnQuit();
+}
+
+void MeonCore::readLeftOnQuit()
+{
+    if (options.dataFolder == juce::File()) return;   // 단위 테스트
+    leftOnQuitFile = options.dataFolder.getChildFile ("MEONLeftOnQuit.json");
+    appStore.onRoomLeftOnQuit = [this] (const juce::String& roomId)
+    {
+        AppLog::write ("room", LOGTXT ("지난번 종료 때 나간 방이 남아 있어 들어가지 않고 다시 나가기: ") + roomId);
+        meonApi->leaveRoom (roomId, [] (Result<Done>) {});
+    };
+    if (! leftOnQuitFile.existsAsFile()) return;
+    const auto v = juce::JSON::parse (leftOnQuitFile);
+    leftOnQuitFile.deleteFile();   // 한 번만 쓴다 (같은 컴퓨터의 다른 MEON 이 먼저 켜졌으면 그쪽이 쓴다)
+    const auto roomId = v.getProperty ("room", "").toString();
+    const auto age = juce::Time::currentTimeMillis() - (juce::int64) v.getProperty ("at", 0);
+    if (roomId.isEmpty() || v.getProperty ("server", "").toString() != options.server.tokenItem || age < 0 || age > leftOnQuitValidMs)
+        return;
+    AppLog::write ("room", LOGTXT ("지난번 정상 종료 때 나가기가 서버에 닿지 않은 방: ") + roomId + LOGTXT (" (다시 들어가지 않음)"));
+    appStore.setRoomLeftOnQuit (roomId);
+}
+
+void MeonCore::leaveOnQuit()
+{
+    // 정상 종료(창 닫기, 메뉴 종료, 플러그인 제거·DAW 종료)에서만 여기를 지난다. 강제 종료·크래시는 지나지 않으므로
+    // 30초 안에 다시 켜면 hello 로 같은 방에 돌아간다 (서버의 끊김 유예, API 5.6)
+    if (homeController == nullptr) return;
+    const auto roomId = appStore.state().currentRoom ? appStore.state().currentRoom->id : juce::String();
+    using Q = HomeController::QuitLeave;
+    const auto r = homeController->leaveOnQuit (quitLeaveTimeoutMs);
+    if (r == Q::skipped)
+        AppLog::write ("room", LOGTXT ("종료: 다른 곳에서 접속 중이라 방 나가기를 보내지 않음"));
+    if (r != Q::failed || leftOnQuitFile == juce::File()) return;
+    const bool ok = leftOnQuitFile.replaceWithText (juce::JSON::toString (json::obj ({
+        { "server", options.server.tokenItem }, { "room", roomId }, { "at", juce::Time::currentTimeMillis() } })));
+    AppLog::write ("room", LOGTXT ("종료: 방 나가기가 서버에 닿지 않음 → 다음 실행 때 이 방에 돌아가지 않게 표시") + (ok ? juce::String() : juce::String (LOGTXT (" (표시 저장 실패)"))));
 }
 
 void MeonCore::createFake()
@@ -109,11 +148,13 @@ void MeonCore::createFake()
 
 void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
 {
+    homeMonitorGate.reset();
     jamSession.reset();
     engineImpl = std::move (e);
     o.plugin = options.plugin;
     o.fake = fake.get();
     jamSession = std::make_unique<JamSession> (*engineImpl, appStore, sched, std::move (o));
+    homeMonitorGate = std::make_unique<HomeMonitorGate> (*authController, *jamSession);
 }
 
 void MeonCore::authStepChanged (AuthController::Step s)
@@ -130,21 +171,38 @@ void MeonCore::authStepChanged (AuthController::Step s)
         appStore.setMyRtt (ms);
         meonApi->reportRtt (ms, [] (Result<Done>) {});
     });
-    // 방에 들어가기 전에는 서버 설정의 AOO 주소 (방에 들어간 뒤 Connection 의 주소로 바꾸는 것은 R11 PR3)
-    rtt->start (options.server.isFake() ? options.fake.aooHost : options.server.aooHost,
-                options.server.isFake() ? options.fake.aooPort : options.server.aooPort);
+    // 방에 있으면 그 방 Connection 의 AOO 서버, 아니면 서버 설정의 AOO 주소. 켤 때 한 번 재고 그 뒤 1분마다
+    const auto t = RttReporter::targetFor (appStore.state().currentRoom, defaultRttTarget());
+    rtt->start (t.host, t.port);
+}
+
+RttReporter::Target MeonCore::defaultRttTarget() const
+{
+    if (options.server.isFake()) return { options.fake.aooHost, options.fake.aooPort };
+    return { options.server.aooHost, options.server.aooPort };
+}
+
+void MeonCore::stateChanged (StateKey k)
+{
+    if (k != StateKey::currentRoom || rtt == nullptr) return;
+    const auto t = RttReporter::targetFor (appStore.state().currentRoom, defaultRttTarget());
+    if (! (rtt->target() == t)) rtt->setTarget (t);
 }
 
 MeonCore::~MeonCore()
 {
     AppLog::write ("app", LOGTXT ("종료 중"));
+    leaveOnQuit();
+    appStore.onRoomLeftOnQuit = nullptr;
     rtt.reset();
+    homeMonitorGate.reset();
     jamSession.reset();
     engineImpl.reset();
     accountController.reset();
     roomController.reset();
     homeController.reset();
     authController->removeListener (this);
+    appStore.removeListener (this);
     authController.reset();
     rt->removeListener (&appStore);
     rt->disconnect();

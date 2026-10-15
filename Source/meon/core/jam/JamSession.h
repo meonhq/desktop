@@ -108,6 +108,9 @@ public:
     /** 설정 › 오디오 "입장 전에도 내 소리 듣기" (앱만, 기본 끔). 크기는 마스터·내 행 볼륨·송출 레벨을 그대로 따른다 */
     bool isHomeMonitor() const { return prefs.homeMonitor; }
     void setHomeMonitor (bool);
+    /** 로그인을 마친 홈 화면이 보이는지 (HomeMonitorGate 가 로그인 단계를 보고 넣는다. 기본 false).
+        false 면 홈 모니터링 설정을 켜 둬도 들리지 않는다. 설정값은 그대로 둔다. 방 안의 셀프 모니터와는 무관 */
+    void setHomeVisible (bool);
     /** 홈에서 지금 내 소리가 들리는지 (홈 "내 오디오" 의 표시) */
     bool isHomeMonitorAudible() const { return ! inRoomForAudio() && isSelfMonitorAudible(); }
     float getSelfMonitorDb() const { return prefs.selfMonitorDb; }
@@ -195,9 +198,21 @@ private:
     juce::int64 lostAt = 0;
     int reconnectAttempts = 0;
     bool serverLost = false;
+    // AOO 서버 재접속 (R11 PR3): 엔진의 자동 재접속(최근 접속 목록)은 끄고 같은 Connection 으로 직접 다시 붙는다.
+    // 서버가 끊겨도 엔진은 그룹 이름을 지우지 않으므로, 다시 붙으면 그룹에도 꼭 다시 들어간다 (needRejoin)
+    int reconnectTask = 0, reconnectDelayMs = 0;
+    bool needRejoin = false;
+    void scheduleReconnect();
+    void reconnectEngine();
+    // 다른 기기가 들어간 방으로 옮겨졌을 때(hello) 이번 입장에만 건 송출 정지. 나갈 때 원래대로 (설정 파일은 그대로)
+    std::optional<bool> restoreSendMuted;
 
+public:
+    static constexpr int reconnectFirstMs = 1000, reconnectMaxMs = 30000;
+
+private:
     void savePrefs();
-    void enter (const RoomDetail&);
+    void enter (const RoomDetail&, bool movedFromOtherDevice = false);
     void exit (const juce::String& reason);
     void connectEngine();
     void joinGroup();
@@ -210,6 +225,7 @@ private:
     juce::String nameOf (const juce::String& userId) const;
     void setPhase (Phase);
     void applyMonitor();
+    bool homeVisible = false;   // 로그인을 마친 홈 화면 (setHomeVisible)
     bool inRoomForAudio() const { return currentRoomId.isNotEmpty(); }   // 입장 처리 시작부터 나갈 때까지 (접속 중 포함)
 
     // AppStore::Listener

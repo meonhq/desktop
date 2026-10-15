@@ -150,6 +150,136 @@ public:
         return queue.runUntil ([&] { return c.log.find (k) != nullptr; }, timeoutMs);
     }
 
+    /** API 5장·6장·10.6 방 계약. a = 방장, b·c = 멤버 (셋 다 로그인·WS 연결된 상태로 부른다. 끝나면 아무도 방에 없다) */
+    void roomContract (Client& a, Client& b, Client& c)
+    {
+        using K = RealtimeEvent::Kind;
+        auto clearLogs = [&] { for (auto* x : { &a, &b, &c }) x->log.events.clear(); };
+
+        beginTest ("rooms v0.5: public instant join, rooms.* events, room_full, already_in_room, idempotent join");
+        clearLogs();
+        b.rt.subscribePublicRooms (true);
+        queue.runUntil ([] { return false; }, 300);
+        CreateRoom pub;
+        pub.type = "public";
+        pub.entryMode = juce::String ("instant");
+        pub.title = "contract public";
+        pub.capacity = 2;
+        auto r1 = must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.createRoom (pub, cb); }), "POST /rooms (public)");
+        expect (! r1.inviteCode.has_value() || r1.inviteCode->isEmpty(), "공개 방은 초대 코드 없음");
+        expect (waitEvent (b, K::roomsAdded), "rooms.added (구독 중)");
+        auto joined = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { b.api.joinRoom (r1.id, cb); }), "POST /rooms/{id}/join");
+        expect (joined.room.has_value() && joined.room->connection.aooUsername == b.me.id);
+        expect (waitEvent (a, K::roomUpdated), "room.updated");
+        if (auto* e = a.log.find (K::roomUpdated))
+            expect (e->roomDetail && e->roomDetail->connection.members.contains (b.me.id), "connection.members 갱신");
+        expect (waitEvent (b, K::roomsUpdated), "rooms.updated (인원 변경)");
+        b.rt.subscribePublicRooms (false);
+        mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinRoom (r1.id, cb); }), ErrorCode::roomFull, "정원 초과");
+        auto again = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { b.api.joinRoom (r1.id, cb); }), "같은 방에 다시 입장 (멱등)");
+        expect (again.room.has_value() && again.room->id == r1.id);
+        mustFail (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.createRoom (pub, cb); }), ErrorCode::alreadyInRoom, "방에 있는 채로 방 만들기");
+        mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinByCode ("ZZZZZZ", cb); }), ErrorCode::invalidCode, "없는 코드");
+
+        beginTest ("rooms v0.5: reconnect → hello.current_room");
+        b.rt.disconnect();
+        b.log.hellos.clear();
+        connect (b);
+        if (! b.log.hellos.empty())
+            expect (b.log.hellos.back().currentRoom && b.log.hellos.back().currentRoom->id == r1.id
+                        && b.log.hellos.back().currentRoom->connection.groupName == r1.connection.groupName,
+                    "다시 연결하면 hello 의 current_room 이 지금 방 (같은 Connection)");
+
+        beginTest ("rooms v0.5: host absent seat, capacity_below_members, target_not_in_room, kicked, room.closed");
+        RoomPatch cap3;
+        cap3.capacity = 3;
+        must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.patchRoom (r1.id, cap3, cb); }), "정원 3");
+        must (wait<Done> ([&] (Callback<Done> cb) { a.api.leaveRoom (r1.id, cb); }), "방장이 나감 (host_present false)");
+        auto absent = must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { b.api.getRoom (r1.id, cb); }), "GET (방장 없음)");
+        expect (! absent.hostPresent && absent.hostId == a.me.id, "방장 권한은 남고 자리만 예약");
+        must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinRoom (r1.id, cb); }), "방장 자리를 비워 두고도 남는 자리로 입장");
+        must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { a.api.joinRoom (r1.id, cb); }), "방장은 예약된 자리로 돌아옴");
+        RoomPatch cap2;
+        cap2.capacity = 2;
+        mustFail (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.patchRoom (r1.id, cap2, cb); }), ErrorCode::capacityBelowMembers, "인원보다 적은 정원");
+        mustFail (wait<Done> ([&] (Callback<Done> cb) { a.api.kick (r1.id, "u_not_here", cb); }), ErrorCode::targetNotInRoom, "방에 없는 사람 내보내기");
+        mustFail (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.transferHost (r1.id, "u_not_here", cb); }), ErrorCode::targetNotInRoom, "방에 없는 사람에게 방장");
+        clearLogs();
+        must (wait<Done> ([&] (Callback<Done> cb) { a.api.kick (r1.id, c.me.id, cb); }), "kick");
+        expect (waitEvent (c, K::roomKicked), "room.kicked");
+        mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinRoom (r1.id, cb); }), ErrorCode::kicked, "추방된 방 다시 입장");
+        clearLogs();
+        must (wait<Done> ([&] (Callback<Done> cb) { a.api.closeRoom (r1.id, cb); }), "close");
+        expect (waitEvent (b, K::roomClosed), "room.closed (멤버)");
+        if (auto* e = b.log.find (K::roomClosed)) expectEquals (e->roomId, r1.id);
+        mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { b.api.joinRoom (r1.id, cb); }), ErrorCode::roomClosed, "닫힌 방 입장 410");
+
+        beginTest ("rooms v0.5: approval → 202 request_until, join_request.received/accepted, removed, host_absent");
+        CreateRoom appr;
+        appr.type = "public";
+        appr.entryMode = juce::String ("approval");
+        appr.title = "contract approval";
+        appr.capacity = 4;
+        auto r2 = must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.createRoom (appr, cb); }), "POST /rooms (approval)");
+        clearLogs();
+        auto req = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { b.api.joinRoom (r2.id, cb); }), "승인 요청");
+        expect (req.requested() && req.requestUntil && req.requestUntil->isNotEmpty(), "202 + request_until");
+        expect (waitEvent (a, K::joinRequestReceived), "join_request.received");
+        auto req2 = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { b.api.joinRoom (r2.id, cb); }), "같은 방 다시 요청");
+        expect (req2.requested() && req2.requestUntil == req.requestUntil, "같은 request_until (새로 만들지 않음)");
+        auto list = must (wait<std::vector<JoinRequest>> ([&] (Callback<std::vector<JoinRequest>> cb) { a.api.listJoinRequests (r2.id, cb); }), "GET join-requests");
+        expectEquals ((int) list.size(), 1);
+        if (! list.empty())
+        {
+            auto acc = must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.acceptJoinRequest (r2.id, list[0].id, cb); }), "accept");
+            expect (acc.connection.members.contains (b.me.id));
+            expect (waitEvent (b, K::joinRequestAccepted), "join_request.accepted (신청자 → 바로 합주 화면)");
+            if (auto* e = b.log.find (K::joinRequestAccepted))
+                expect (e->roomDetail && e->roomDetail->id == r2.id && e->roomDetail->connection.aooUsername == b.me.id);
+        }
+        // 대기 중인 요청은 방장이 입장 방식을 바로 입장으로 바꾸면 지워지고, 방장에게만 join_request.removed (API 5.7)
+        // (같은 방에 5분 안에 다시 요청하면 새로 만들지 않으므로 사람마다 방마다 한 번씩만 요청한다)
+        clearLogs();
+        auto creq = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinRoom (r2.id, cb); }), "c 승인 요청");
+        expect (creq.requested());
+        expect (waitEvent (a, K::joinRequestReceived), "join_request.received (c)");
+        RoomPatch instant;
+        instant.setEntryMode = true;
+        instant.entryMode = juce::String ("instant");
+        must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.patchRoom (r2.id, instant, cb); }), "승인 → 바로 입장");
+        expect (waitEvent (a, K::joinRequestRemoved), "join_request.removed");
+        must (wait<Done> ([&] (Callback<Done> cb) { a.api.leaveRoom (r2.id, cb); }), "a 나감");
+        must (wait<Done> ([&] (Callback<Done> cb) { b.api.leaveRoom (r2.id, cb); }), "b 나감 (마지막 사람 → 방 삭제)");
+        mustFail (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { a.api.getRoom (r2.id, cb); }), ErrorCode::roomClosed, "마지막 사람이 나간 방은 410");
+
+        // 방장이 없는 승인 방은 요청을 받지 않는다 (host_absent). 방장이 돌아오면 받고, 오프라인 신청자 수락은 request_unavailable
+        auto r4 = must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { b.api.createRoom (appr, cb); }), "b 승인 방");
+        clearLogs();
+        must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { a.api.joinRoom (r4.id, cb); }), "a 승인 요청");
+        expect (waitEvent (b, K::joinRequestReceived), "join_request.received (a)");
+        auto la = must (wait<std::vector<JoinRequest>> ([&] (Callback<std::vector<JoinRequest>> cb) { b.api.listJoinRequests (r4.id, cb); }), "GET join-requests (a)");
+        if (! la.empty())
+            must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { b.api.acceptJoinRequest (r4.id, la[0].id, cb); }), "a 수락");
+        must (wait<Done> ([&] (Callback<Done> cb) { b.api.leaveRoom (r4.id, cb); }), "방장 b 가 나감");
+        mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinRoom (r4.id, cb); }), ErrorCode::hostAbsent, "방장 없는 승인 방에 요청");
+        must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { b.api.joinRoom (r4.id, cb); }), "방장 복귀");
+        clearLogs();
+        auto creq2 = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinRoom (r4.id, cb); }), "c 승인 요청 (방장 복귀 뒤)");
+        expect (creq2.requested());
+        expect (waitEvent (b, K::joinRequestReceived), "join_request.received (c)");
+        auto lc = must (wait<std::vector<JoinRequest>> ([&] (Callback<std::vector<JoinRequest>> cb) { b.api.listJoinRequests (r4.id, cb); }), "GET join-requests (c)");
+        c.rt.disconnect();
+        queue.runUntil ([] { return false; }, 500);
+        if (! lc.empty())
+        {
+            auto unavailable = wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { b.api.acceptJoinRequest (r4.id, lc[0].id, cb); });
+            mustFail (unavailable, ErrorCode::requestUnavailable, "오프라인 신청자 수락");
+        }
+        connect (c);
+        must (wait<Done> ([&] (Callback<Done> cb) { a.api.leaveRoom (r4.id, cb); }), "a 나감");
+        must (wait<Done> ([&] (Callback<Done> cb) { b.api.leaveRoom (r4.id, cb); }), "b 나감");
+    }
+
     void runTest() override
     {
         server = env ("MEON_TEST_SERVER");
@@ -253,6 +383,12 @@ public:
         mustFail (closed, ErrorCode::roomClosed, "닫힌 방 조회 410");
         must (wait<Done> ([&] (Callback<Done> cb) { a->api.leaveRoom (room.id, cb); }), "멤버가 아닌 방 leave 204");
 
+        //==========================================================================
+        // R11 PR3: 방 API v0.5 (공개 방 바로 입장·승인 요청, 오류 코드, 방 이벤트, 재연결 hello)
+        auto c = signedUp ("ct_c", "Cee", "bass");
+        connect (*c);
+        roomContract (*a, *b, *c);
+
         beginTest ("blocks, notifications, rtt, tokens");
         must (wait<std::vector<Block>> ([&] (Callback<std::vector<Block>> cb) { a->api.listBlocks (cb); }), "GET /blocks");
         must (wait<bool> ([&] (Callback<bool> cb) { a->api.notificationState (cb); }), "GET /notifications/state");
@@ -269,8 +405,7 @@ public:
         //==========================================================================
         beginTest ("close codes: second login takes over (4000), logout closes (4001)");
         {
-            auto c = signedUp ("ct_c", "Cee", "bass");
-            connect (*c);
+            if (c->rt.getLink() != Realtime::Link::online) connect (*c);
             Client again (*this, server);
             auto auth = must (wait<AuthResult> ([&] (Callback<AuthResult> cb) { again.api.login (c->email, "Check-1234", cb); }), "login (다른 곳)");
             juce::ignoreUnused (auth);

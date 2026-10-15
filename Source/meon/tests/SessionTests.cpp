@@ -3,6 +3,7 @@
 //   강제 업데이트 (API 13장): min_build·426·client_outdated → outdated 단계, 로그인은 남김, 합주 중이면 나갈 때까지 기다림
 //   refresh 를 다른 프로세스와 나눠 쓰기 (RefreshCoordinator)
 #include "../core/auth/AuthController.h"
+#include "../core/home/HomeController.h"
 #include "../core/api/ApiJson.h"
 #include "../core/api/fake/FakeMeonServer.h"
 #include "MeonFixtures.h"
@@ -167,7 +168,7 @@ public:
         }
 
         //==========================================================================
-        beginTest ("4000 from the server: replaced step, room released locally, reconnect here");
+        beginTest ("4000 from the server: replaced step, room kept (no leave), reconnect here");
         {
             Rig r (0);
             r.signUpToHome ("dup_user");
@@ -181,7 +182,7 @@ public:
             expect (r.store.state().inRoom());
             r.server.devCloseLink (4000);
             expect (r.auth.step() == S::replaced);
-            expect (! r.store.state().inRoom(), "이 기기는 방에서 손을 뗀다 (합주 연결을 끊게)");
+            expect (r.store.state().inRoom(), "방은 그대로 (leave 를 부르지 않는다. 합주 연결만 JamSession 이 끊는다)");
             r.wait (60000);
             expect (r.rt.getLink() == Realtime::Link::replaced, "저절로 다시 붙지 않는다");
             r.auth.reconnectHere();
@@ -189,6 +190,109 @@ public:
             expect (r.auth.step() == S::ready);
             expect (r.rt.getLink() == Realtime::Link::online);
             expect (r.store.state().inRoom(), "다시 연결하면 hello 로 방에 돌아온다");
+        }
+
+        beginTest ("Normal quit calls leave (no return); crash returns by hello; 4000 skips leave");
+        {
+            Rig r (0);
+            r.signUpToHome ("quit_user");
+            r.wait();
+            HomeController home (r.api, r.rt, r.store, r.clock);
+            CreateRoom cr;
+            cr.type = "private";
+            cr.title = "x";
+            home.createRoom (cr, [] (Result<RoomDetail>) {});
+            r.wait();
+            expect (r.store.state().inRoom());
+            const auto roomId = r.store.state().currentRoom->id;
+
+            // 다시 켠 앱: 새 상태(AppStore)로 다시 연결해 hello 를 받는다
+            auto restart = [&] (AppStore& fresh)
+            {
+                r.rt.disconnect();
+                r.wait();
+                r.rt.addListener (&fresh);
+                r.rt.connect ([&] { return r.api.getTokens().accessToken; });
+                r.wait();
+                r.rt.removeListener (&fresh);
+            };
+
+            // 강제 종료·크래시: 나가기 없이 연결만 끊긴다 → 30초 안에 다시 켜면 hello 로 같은 방
+            {
+                AppStore fresh;
+                restart (fresh);
+                expect (fresh.state().inRoom() && fresh.state().currentRoom->id == roomId, "크래시 뒤 다시 켜면 같은 방");
+            }
+
+            // 4000 으로 끊긴 동안 정상 종료: 다른 기기가 방에 남아야 하므로 나가기를 보내지 않는다
+            r.server.devCloseLink (4000);
+            expect (r.rt.getLink() == Realtime::Link::replaced);
+            expect (home.leaveOnQuit (1000) == HomeController::QuitLeave::skipped);
+            {
+                AppStore fresh;
+                restart (fresh);
+                expect (fresh.state().inRoom(), "4000 뒤 종료는 방을 그대로 둔다");
+            }
+            r.wait();
+            expect (r.store.state().inRoom());
+
+            // 정상 종료: 나가기를 보내고 응답을 기다린다 → 다시 켜도 방으로 돌아가지 않는다
+            expect (home.leaveOnQuit (1000) == HomeController::QuitLeave::left);
+            {
+                AppStore fresh;
+                restart (fresh);
+                expect (! fresh.state().inRoom(), "정상 종료 뒤 다시 켜면 홈");
+            }
+
+            // 방 밖이면 아무것도 보내지 않는다
+            AppStore empty;
+            HomeController idle (r.api, r.rt, empty, r.clock);
+            expect (idle.leaveOnQuit (1000) == HomeController::QuitLeave::notInRoom);
+        }
+
+        beginTest ("Normal quit: leave not delivered -> next start does not re-enter that room (once)");
+        {
+            // 응답 없음 (기본 sendBlocking) → failed
+            StubRest rest;
+            MeonApi api (rest, 0);
+            ManualScheduler clock;
+            StubLink link;
+            Realtime rt (link, clock, 0);
+            AppStore store;
+            HomeController home (api, rt, store, clock);
+            RoomDetail room;
+            room.id = "r_left";
+            store.setCurrentRoom (room);
+            expect (home.leaveOnQuit (100) == HomeController::QuitLeave::failed);
+
+            // 다음 실행: 표시된 방이 hello 로 오면 들어가지 않고 다시 나가기를 부탁한다
+            AppStore next;
+            juce::StringArray releft;
+            next.onRoomLeftOnQuit = [&] (const juce::String& id) { releft.add (id); };
+            next.setRoomLeftOnQuit ("r_left");
+            JoinRequest jr;
+            jr.id = "jr_1";
+            Hello h;
+            h.me.id = "u_me";
+            h.currentRoom = room;
+            h.joinRequests = { jr };
+            next.hello (h);
+            expect (! next.state().inRoom(), "표시된 방에는 들어가지 않는다");
+            expect (next.state().joinRequests.empty());
+            expectEquals (releft.joinIntoString (","), juce::String ("r_left"));
+            // 한 번만 본다: 그 뒤의 hello 는 그대로 (다른 기기가 다시 들어간 경우 등)
+            next.hello (h);
+            expect (next.state().inRoom());
+            expectEquals (releft.size(), 1);
+
+            // 다른 방이면 그대로 들어간다
+            AppStore other;
+            other.setRoomLeftOnQuit ("r_left");
+            RoomDetail b;
+            b.id = "r_other";
+            h.currentRoom = b;
+            other.hello (h);
+            expect (other.state().inRoom() && other.state().currentRoom->id == "r_other");
         }
 
         beginTest ("4001 from the server: logged out, token cleared");

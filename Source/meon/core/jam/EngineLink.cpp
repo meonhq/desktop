@@ -266,7 +266,9 @@ void EngineLink::applyDefaults()
     // 송출 정지(paramMainSendMute)는 덮지 않는다 (버그 #1)
 
     processor.setAutoconnectToGroupPeers (true);
-    processor.setReconnectAfterServerLoss (true);
+    // 엔진의 자동 재접속(최근 접속 목록)은 끈다. 목록은 엔진 상태와 함께 DAW 프로젝트·설정 파일에 저장되므로
+    // AOO 비밀번호를 넣지 않는다. 재접속은 JamSession 이 같은 Connection 으로 직접 한다 (R11 PR3)
+    processor.setReconnectAfterServerLoss (false);
     processor.setWatchPublicGroups (false);
 
     processor.getInputMeterSource().setMaxHoldMS (meterHoldMs);

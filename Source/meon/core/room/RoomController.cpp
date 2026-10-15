@@ -65,6 +65,7 @@ void RoomController::transferHost (const juce::String& userId, Callback<RoomDeta
     {
         if (weak.expired()) return;
         if (r.ok() && id == currentId()) store.setCurrentRoom (r.get());
+        if (! r.ok() && r.code() == ErrorCode::targetNotInRoom && onActionFailed) onActionFailed (r.code());
         if (cb) cb (std::move (r));
     });
 }
@@ -74,9 +75,10 @@ void RoomController::kick (const juce::String& userId, Callback<Done> cb)
     const auto id = currentId();
     if (id.isEmpty()) return;
     std::weak_ptr<bool> weak = alive;
-    api.kick (id, userId, [weak, cb] (Result<Done> r)
+    api.kick (id, userId, [this, weak, cb] (Result<Done> r)
     {
         if (weak.expired()) return;
+        if (! r.ok() && r.code() == ErrorCode::targetNotInRoom && onActionFailed) onActionFailed (r.code());
         if (cb) cb (std::move (r));
     });
 }
@@ -107,10 +109,15 @@ void RoomController::acceptJoinRequest (const juce::String& requestId, Callback<
             store.removeJoinRequest (requestId);
             store.setCurrentRoom (r.get());
         }
-        else if (! r.ok() && r.code() == ErrorCode::requestUnavailable)
+        else if (! r.ok() && (r.code() == ErrorCode::requestUnavailable || r.code() == ErrorCode::notFound))
         {
-            store.removeJoinRequest (requestId);   // 신청자가 다른 방에 들어갔거나 오프라인 (요청 삭제됨)
+            // request_unavailable: 신청자가 다른 방에 들어갔거나 오프라인 (요청 삭제됨).
+            // not_found: 그사이 만료·취소된 요청 (API 5.7). 목록에서만 조용히 지운다
+            store.removeJoinRequest (requestId);
         }
+        // room_full 이면 요청은 남는다 (API 5.7)
+        if (! r.ok() && (r.code() == ErrorCode::requestUnavailable || r.code() == ErrorCode::roomFull) && onActionFailed)
+            onActionFailed (r.code());
         if (cb) cb (std::move (r));
     });
 }

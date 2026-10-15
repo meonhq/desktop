@@ -22,7 +22,11 @@ void SessionLog::begin (const juce::String& roomCode, const juce::String& userNa
         end ("restart");
 
     folder.createDirectory();
-    file = folder.getChildFile ("meon-session-" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S") + ".json");
+    // 같은 초에 세션이 또 시작되면 (다른 방으로 옮김 등) 앞 세션 파일을 덮지 않게 번호를 붙인다
+    const auto stamp = "meon-session-" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
+    file = folder.getChildFile (stamp + ".json");
+    for (int n = 2; file.existsAsFile(); ++n)
+        file = folder.getChildFile (stamp + "-" + juce::String (n) + ".json");
 
     root = makeObject ({
         { "app", "MEON" },

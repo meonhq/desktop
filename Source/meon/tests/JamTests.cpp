@@ -1,5 +1,8 @@
 // 합주 로직: PeerState, SilenceDetector, ChatChannel, JamSession (가짜 엔진 + 가짜 서버)
 #include "../core/jam/JamSession.h"
+#include "../core/jam/RttReporter.h"
+#include "../core/jam/HomeMonitorGate.h"
+#include "../core/auth/TokenStore.h"
 #include "../core/api/MeonApi.h"
 #include "../core/api/Realtime.h"
 #include "MeonFixtures.h"
@@ -36,13 +39,23 @@ namespace
         void addListener (Listener* l) override { ls.add (l); }
         void removeListener (Listener* l) override { ls.remove (l); }
         void applyDefaults() override {}
-        bool connect (const juce::String&, int, const juce::String& u, const juce::String&) override { user = u; return true; }
+        int connects = 0, joins = 0;
+        juce::String lastHost, lastPassword, lastGroupPassword;
+        int lastPort = 0;
+        bool connect (const juce::String& h, int port, const juce::String& u, const juce::String& pw) override
+        {
+            ++connects; user = u; lastHost = h; lastPort = port; lastPassword = pw;
+            return true;
+        }
         void finishConnect() { connected = true; ls.call ([] (Listener& l) { l.engineConnected (true, {}); }); }
+        void failConnect()   { connected = false; ls.call ([] (Listener& l) { l.engineConnected (false, "refused"); }); }
+        /** 서버만 끊김: 실제 엔진처럼 그룹 이름은 지우지 않는다 (직접 연결된 상대도 남는다) */
+        void serverLost()    { connected = false; ls.call ([] (Listener& l) { l.engineDisconnected ("lost"); }); }
         void disconnect() override { connected = false; group = {}; peerList.clear(); }
         bool isConnected() const override { return connected; }
         juce::String connectedUser() const override { return user; }
         juce::String joinedGroup() const override { return group; }
-        bool joinGroup (const juce::String& g, const juce::String&) override { group = g; return true; }
+        bool joinGroup (const juce::String& g, const juce::String& pw) override { ++joins; group = g; lastGroupPassword = pw; return true; }
         void finishJoin() { const auto g = group; ls.call ([g] (Listener& l) { l.engineGroupJoined (true, g, {}); }); }
         void leaveGroup (const juce::String&) override { group = {}; }
         void setAllowedPeers (const juce::StringArray& u, bool e) override
@@ -99,6 +112,21 @@ public:
 
     void runTest() override
     {
+        beginTest ("RTT target: room's Connection while in a room, otherwise the server config's AOO address (R11 PR3)");
+        {
+            const RttReporter::Target fallback { "aoo.meon.co.kr", 10999 };
+            expect (RttReporter::targetFor (std::nullopt, fallback) == fallback);
+            RoomDetail room;
+            room.connection.aooHost = "aoo2.meon.co.kr";
+            room.connection.aooPort = 11000;
+            expect (RttReporter::targetFor (room, fallback) == RttReporter::Target { "aoo2.meon.co.kr", 11000 });
+            room.connection.aooHost = {};   // 접속 정보가 비어 있으면 기본
+            expect (RttReporter::targetFor (room, fallback) == fallback);
+            RttReporter rtt ([] (int) {});
+            rtt.setTarget ({ "a", 1 });   // 스레드를 시작하지 않고 대상만 바꾼다 (바로 재지 않는다)
+            expect (rtt.target() == RttReporter::Target { "a", 1 });
+        }
+
         beginTest ("PeerState: connect, 3s interrupt, resume, dropCount, 15s fail");
         {
             PeerState ps (0);
@@ -290,6 +318,290 @@ public:
             o.logFolder.deleteRecursively();
         }
 
+        beginTest ("R11 PR3: 4000 cuts only AOO, hello overwrite (same / other room / null), AOO server reconnect");
+        {
+            ManualScheduler clock;
+            FakeMeonServer::Options fo;
+            fo.latencyMs = 0;
+            fo.scripts = false;
+            FakeMeonServer server { clock, fo };
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            MeonApi api { server, 0 };
+            Realtime rt { server, clock, 0 };
+            AppStore store;
+            rt.addListener (&store);
+            struct Notices : AppStore::Listener
+            {
+                std::vector<Notice::Kind> got;
+                void notice (const Notice& n) override { got.push_back (n.kind); }
+            } notices;
+            store.addListener (&notices);
+            auto run = [&] (auto&& fn) { fn(); clock.advance (50); };
+            run ([&] { api.signup ("re@example.com", "re_conn", "abcd123!", true, [] (auto) {}); });
+            run ([&] { api.verifyEmail (server.getLastMailedCode(), [] (auto) {}); });
+            MePatch p; p.nickname = juce::String ("Re"); p.part = juce::String ("bass");
+            run ([&] { api.patchMe (p, [&] (Result<Me> r) { store.setMe (r.get()); }); });
+            rt.connect ([&] { return api.getTokens().accessToken; });
+            clock.advance (100);
+
+            FakeEngine engine;
+            JamPrefs saved;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-pr3");
+            o.logFolder.deleteRecursively();
+            o.prefs.sendMuted = false;
+            o.savePrefs = [&] (const JamPrefs& x) { saved = x; };
+            JamSession jam (engine, store, clock, o);
+            expect (engine.allowEnabled && engine.allowed.isEmpty(), "켤 때부터 방 밖은 허용 목록이 빈 채로 켜져 있다 (E5)");
+
+            CreateRoom cr;
+            cr.type = "private";
+            cr.title = "pr3";
+            RoomDetail room;
+            run ([&] { api.createRoom (cr, [&] (Result<RoomDetail> r) { room = r.get(); store.setCurrentRoom (r.get()); }); });
+            // Connection 값을 그대로 엔진에 (API 2.8): AOO 이름은 계정 ID, 닉네임을 쓰지 않는다
+            expectEquals (engine.user, room.connection.aooUsername);
+            expectEquals (engine.user, server.meId());
+            expectEquals (engine.lastHost, room.connection.aooHost);
+            expectEquals (engine.lastPort, room.connection.aooPort);
+            expectEquals (engine.lastPassword, room.connection.aooUserPassword);
+            engine.finishConnect();
+            expectEquals (engine.lastGroupPassword, room.connection.groupPassword);
+            engine.finishJoin();
+            expect (jam.isInRoom());
+
+            auto hello = [&] (std::optional<RoomDetail> r)
+            {
+                Hello h;
+                h.me = *store.state().me;
+                h.config = store.state().config;
+                h.currentRoom = std::move (r);
+                store.hello (h);
+            };
+
+            // 1) WebSocket 만 끊겼다 다시 붙음: 같은 방이고 AOO 가 살아 있으면 건드리지 않는다
+            {
+                const int c0 = engine.connects, j0 = engine.joins;
+                store.linkChanged (Realtime::Link::reconnecting);
+                store.linkChanged (Realtime::Link::online);
+                hello (room);
+                expect (jam.isInRoom() && engine.connects == c0 && engine.joins == j0, "AOO 연결 유지");
+            }
+
+            // 2) 4000: leave 하지 않고(서버에서는 그대로 멤버) AOO 만 바로 끊는다. 다시 붙지 않는다
+            store.linkChanged (Realtime::Link::replaced);
+            expect (! engine.connected && engine.group.isEmpty(), "AOO 연결만 끊는다");
+            expect (store.state().inRoom(), "방은 그대로");
+            expect (server.isMember (room.id, server.meId()), "leave 를 부르지 않았다");
+            {
+                const int c0 = engine.connects;
+                clock.advance (60000);
+                expect (engine.connects == c0, "저절로 다시 붙지 않는다");
+            }
+            // "여기서 다시 연결" → hello 의 같은 방 → 같은 Connection 으로 다시 들어간다
+            store.linkChanged (Realtime::Link::online);
+            hello (room);
+            expectEquals (engine.lastPassword, room.connection.aooUserPassword);
+            engine.finishConnect();
+            engine.finishJoin();
+            expect (jam.isInRoom() && engine.group == room.connection.groupName);
+
+            // 3) AOO 서버만 끊김 (WebSocket 정상): 1·2·4초… 간격으로 같은 Connection 으로 다시 붙고, 그룹에도 다시 들어간다
+            {
+                const int c0 = engine.connects, j0 = engine.joins;
+                engine.serverLost();
+                expect (engine.group == room.connection.groupName, "엔진은 그룹 이름을 지우지 않는다");
+                clock.advance (JamSession::reconnectFirstMs);
+                expectEquals (engine.connects, c0 + 1);
+                engine.failConnect();
+                clock.advance (1999);
+                expectEquals (engine.connects, c0 + 1);
+                clock.advance (1);
+                expectEquals (engine.connects, c0 + 2, "두 번째는 2초 뒤");
+                engine.failConnect();
+                clock.advance (4000);
+                expectEquals (engine.connects, c0 + 3, "세 번째는 4초 뒤");
+                engine.finishConnect();
+                expectEquals (engine.joins, j0 + 1, "그룹 이름이 남아 있어도 다시 들어간다");
+                expect (jam.isInRoom());
+                clock.advance (120000);
+                expectEquals (engine.connects, c0 + 3, "붙은 뒤에는 더 시도하지 않는다");
+            }
+
+            // 4) hello 가 다른 방: 원래 방 AOO 를 끊고 그 방으로, 송출 정지(이번 입장만), 토스트
+            {
+                RoomDetail other = room;
+                other.id = "r_other_device";
+                other.title = "other";
+                other.connection.groupName = "G-other";
+                other.connection.groupPassword = "gp-other";
+                notices.got.clear();
+                expect (! engine.sendMuted);
+                hello (other);
+                expect (engine.sendMuted, "송출 정지로 들어간다");
+                // 원래 방에서 직접 끊은 연결의 끊김 알림이 새 방에 붙는 중에 늦게 와도 서버 끊김으로 보지 않는다
+                {
+                    const int c0 = engine.connects;
+                    engine.serverLost();
+                    clock.advance (5000);
+                    expectEquals (engine.connects, c0, "늦게 온 끊김 알림으로 다시 붙지 않는다");
+                }
+                expect (! saved.sendMuted, "저장된 송출 설정은 그대로");
+                expect (std::find (notices.got.begin(), notices.got.end(), Notice::Kind::movedToOtherRoom) != notices.got.end(), "토스트");
+                engine.finishConnect();
+                expectEquals (engine.lastGroupPassword, juce::String ("gp-other"));
+                engine.finishJoin();
+                expect (jam.isInRoom() && engine.group == "G-other");
+
+                // 5) hello 가 null: 끊긴 사이 추방·닫힘·삭제 → AOO 끊고 홈. 이번 입장에만 건 송출 정지는 풀린다
+                hello (std::nullopt);
+                expect (! store.state().inRoom() && jam.getPhase() == JamSession::Phase::idle);
+                expect (! engine.connected && engine.group.isEmpty());
+                expect (! engine.sendMuted, "원래 송출 상태로");
+            }
+
+            // 세션 로그: 서버 끊김은 상태가 바뀔 때만 (serverLost 1번 → serverReconnected 1번, 시도 횟수와 시간). 4000 은 "replaced"
+            {
+                int lost = 0, back = 0, replaced = 0;
+                juce::String backDetail;
+                for (auto& f : o.logFolder.findChildFiles (juce::File::findFiles, false, "meon-session-*.json"))
+                {
+                    const auto root = juce::JSON::parse (f);
+                    const auto events = root.getProperty ("events", {});
+                    if (auto* ev = events.getArray())
+                        for (auto& e : *ev)
+                        {
+                            const auto type = e.getProperty ("type", {}).toString();
+                            if (type == "serverLost") ++lost;
+                            if (type == "serverReconnected") { ++back; backDetail = e.getProperty ("detail", {}).toString(); }
+                            if (type == "leave" && e.getProperty ("detail", {}).toString() == "replaced") ++replaced;
+                        }
+                }
+                expectEquals (lost, 1);
+                expectEquals (back, 1);
+                expect (backDetail.startsWith ("3 attempts, 7.0 s"), backDetail);
+                expectEquals (replaced, 1);
+            }
+
+            rt.removeListener (&store);
+            store.removeListener (&notices);
+            o.logFolder.deleteRecursively();
+        }
+
+        beginTest ("Home monitor only on the signed-in home screen: start, logout, 4000, forced update, back home");
+        {
+            using S = AuthController::Step;
+            ManualScheduler clock;
+            FakeMeonServer server (clock, [] { FakeMeonServer::Options f; f.latencyMs = 10; f.scripts = false; return f; }());
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            MeonApi api (server, 50);
+            Realtime rt (server, clock, 50);
+            AppStore store;
+            rt.addListener (&store);
+            MemoryTokenStore tokens;
+            AuthController auth (api, rt, store, tokens, clock);
+            FakeEngine engine;
+            JamPrefs saved;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-homegate");
+            o.prefs.homeMonitor = true;   // 저장값: 켬
+            o.savePrefs = [&] (const JamPrefs& x) { saved = x; };
+            JamSession jam (engine, store, clock, o);
+            HomeMonitorGate gate (auth, jam);
+            // 게이트보다 먼저 알림을 받는 쪽(ListenerList 는 나중에 등록한 쪽부터 부른다. 앱에서는 화면)이 알림 안에서
+            // 단계를 또 바꾸는 경우: "완료"에서 바로 홈으로 넘기는 개발 자동 진행 등
+            struct AutoDone : AuthController::Listener
+            {
+                AuthController& a; bool on = false;
+                explicit AutoDone (AuthController& x) : a (x) {}
+                void authStepChanged (AuthController::Step s) override { if (on && s == AuthController::Step::done) a.finishDone(); }
+            } autoDone (auth);
+            auth.addListener (&autoDone);
+            auto wait = [&] (int ms = 100) { clock.advance (ms); };
+
+            // 앱을 켠 직후 (로그인 상태 확인 중): 첫 화면이 정해지기 전
+            expect (auth.step() == S::loading);
+            expect (! engine.selfMon && ! jam.isHomeMonitorAudible(), "시작 직후에는 듣지 않는다");
+            auth.start();
+            expect (! engine.selfMon);
+            wait();
+            expect (auth.step() == S::login);
+            expect (! engine.selfMon, "로그인 화면");
+
+            // 가입·인증·온보딩 내내 꺼져 있다
+            auth.showSignup();
+            expect (! engine.selfMon, "회원가입");
+            auth.signup ("gate@example.com", "gate_user", "abcd123!", true, [] (Result<Done>) {});
+            wait();
+            expect (auth.step() == S::verify && ! engine.selfMon, "이메일 인증");
+            auth.verify (server.getLastMailedCode(), [] (Result<Done>) {});
+            wait();
+            expect (auth.step() == S::nickname && ! engine.selfMon, "닉네임");
+            auth.setNickname ("Gate", [] (Result<Done>) {});
+            wait();
+            expect (auth.step() == S::part && ! engine.selfMon, "파트");
+            auth.setPart ("keys", [] (Result<Done>) {});
+            wait();
+            expect (! engine.selfMon, "디스코드 안내");
+            auth.finishDiscord();
+            expect (auth.step() == S::done && ! engine.selfMon, "완료");
+            auth.finishDone();
+
+            // 홈: 저장값대로 켜진다
+            expect (auth.step() == S::ready);
+            expect (engine.selfMon && jam.isHomeMonitorAudible(), "홈에서는 저장값대로");
+
+            // 홈에서 로그아웃: 그 자리에서 꺼지고, 저장값은 그대로
+            auth.logout();
+            expect (auth.step() == S::login);
+            expect (! engine.selfMon && ! jam.isHomeMonitorAudible(), "로그아웃 즉시 꺼진다");
+            expect (jam.isHomeMonitor(), "저장된 설정값은 그대로");
+            wait();
+
+            // 다시 로그인해 홈으로 오면 저장값대로 다시 켜진다
+            auth.login ("gate@example.com", "abcd123!", [] (Result<Done>) {});
+            wait();
+            expect (auth.step() == S::done && ! engine.selfMon, "로그인 뒤 완료 화면에서는 아직 꺼져 있다");
+            auth.finishDone();
+            expect (auth.step() == S::ready);
+            expect (engine.selfMon, "다시 로그인해 홈으로 오면 저장값대로");
+
+            // 4000 (다른 곳에서 접속): 꺼진다 → 여기서 다시 연결해 홈이면 다시 켜진다
+            server.devCloseLink (4000);
+            expect (auth.step() == S::replaced);
+            expect (! engine.selfMon, "4000 화면");
+            auth.reconnectHere();
+            wait();
+            expect (auth.step() == S::ready && engine.selfMon);
+
+            // 완료 → 홈 이 다른 알림 안에서 이어져도(옛 "완료" 알림이 뒤늦게 와도) 홈에서는 켜져 있다
+            auth.logout();
+            expect (! engine.selfMon);
+            wait();
+            autoDone.on = true;
+            auth.login ("gate@example.com", "abcd123!", [] (Result<Done>) {});
+            wait();
+            expect (auth.step() == S::ready);
+            expect (engine.selfMon, "알림 안에서 홈으로 넘어가도 저장값대로");
+            autoDone.on = false;
+
+            // 강제 업데이트: 꺼진다
+            server.devSetConfig (60, 60);
+            wait();
+            expect (auth.step() == S::outdated);
+            expect (! engine.selfMon, "강제 업데이트 화면");
+            expect (jam.isHomeMonitor());
+
+            // 저장값을 꺼 두면 홈에서도 듣지 않는다 (기존 규칙)
+            jam.setHomeMonitor (false);
+            jam.setHomeVisible (true);
+            expect (! engine.selfMon);
+
+            auth.removeListener (&autoDone);
+            rt.removeListener (&store);
+            o.logFolder.deleteRecursively();
+        }
+
         beginTest ("JamSession: hear myself before entering (setting 28), send mute, plugin");
         {
             ManualScheduler clock;
@@ -303,6 +615,8 @@ public:
             o.savePrefs = [&] (const JamPrefs& x) { saved = x; };
             {
                 JamSession jam (engine, store, clock, o);
+                expect (! engine.selfMon, "홈 화면이 보이기 전에는 듣지 않는다");
+                jam.setHomeVisible (true);
                 expect (engine.selfMon && jam.isHomeMonitorAudible());     // 켜 두면 홈에서도 들린다
                 jam.setSendMuted (true);
                 expect (! engine.selfMon && ! jam.isHomeMonitorAudible()); // 송출 정지 중에는 홈에서도 안 들린다
@@ -317,6 +631,7 @@ public:
             o.plugin = true;
             {
                 JamSession jam (pluginEngine, store, clock, o);
+                jam.setHomeVisible (true);
                 expect (! pluginEngine.selfMon && ! jam.isHomeMonitorAudible());   // 플러그인에는 이 설정이 없다
             }
             o.logFolder.deleteRecursively();
@@ -523,10 +838,12 @@ public:
             expect (! jam.isOutputMissing());
             engine.outputOk = true;
             expect (! engine.selfMon && jam.isSelfMonitor());   // 버그 22: 방을 나오면 꺼지고, 설정값은 그대로
+            jam.setHomeVisible (true);                          // 로그인을 마친 홈 화면 (HomeMonitorGate)
             jam.setHomeMonitor (true);                          // 버그 28: 홈에서 듣기를 켜면 방 밖에서도
             expect (engine.selfMon && jam.isHomeMonitorAudible());
             jam.setHomeMonitor (false);
-            expect (! engine.connected && engine.group.isEmpty() && ! engine.allowEnabled);
+            expect (! engine.connected && engine.group.isEmpty());
+            expect (engine.allowEnabled && engine.allowed.isEmpty(), "방 밖: 허용 목록을 빈 채로 켜 둔다 (E5)");
             expect (! engine.file && ! engine.filePlaying && ! jam.hasFile());
             rt.removeListener (&store);
             o.logFolder.deleteRecursively();

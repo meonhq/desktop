@@ -27,6 +27,8 @@ JamSession::JamSession (Engine& e, AppStore& s, Scheduler& sc, Options o)
     applyMonitor();
 
     engine.setEarGuardLevel (prefs.earGuard);
+    // 방 밖에서는 아무와도 소리를 주고받지 않는다: 허용 목록을 빈 채로 켜 둔다 (E1·E5, API 2.8)
+    engine.setAllowedPeers ({}, true);
     schedulePoll();
 
     // 플러그인 창을 다시 연 게 아니라 프로세서 단위라서, 이미 방에 있으면 이어받는다
@@ -50,6 +52,7 @@ JamSession::~JamSession()
     *alive = false;
     scheduler.cancel (tickTask);
     scheduler.cancel (retryTask);
+    scheduler.cancel (reconnectTask);
     scheduler.cancel (pollTask);
     if (phase != Phase::idle) exit (options.plugin ? "pluginClosed" : "quit");
     chatChannel.removeListener (this);
@@ -76,32 +79,50 @@ void JamSession::stateChanged (StateKey k)
 {
     // 가짜 기간: 방 안에서 닉네임·파트를 바꾸면 다른 컴퓨터에도 바로 알린다 (버그 24. 예전에는 다시 연결될 때만 보냈다)
     if (k == StateKey::me && phase == Phase::inRoom) { sendMyProfile(); return; }
+    // 같은 계정이 다른 곳에서 접속했다 (4000): 방에서 나가지 않고(leave 를 부르지 않음) 합주(AOO) 연결만 바로 끊는다.
+    // 다시 연결하면 hello 의 current_room 이 같은 방이라 아래에서 같은 Connection 으로 다시 들어간다
+    if (k == StateKey::link)
+    {
+        if (store.state().link == Realtime::Link::replaced && phase != Phase::idle) exit ("replaced");
+        return;
+    }
     if (k != StateKey::currentRoom) return;
+    if (store.state().link == Realtime::Link::replaced) return;   // "다른 곳에서 접속했어요" 동안은 붙지 않는다
     const auto& room = store.state().currentRoom;
     if (! room)
     {
         if (phase != Phase::idle) exit ("left");
         return;
     }
-    if (phase == Phase::idle || room->id != currentRoomId)
+    if (phase == Phase::idle)
     {
-        if (phase != Phase::idle) exit ("switch");
         enter (*room);
+        return;
+    }
+    if (room->id != currentRoomId)
+    {
+        // 방 안에 있는데 다른 방이 왔다 = 다시 연결했더니(hello) 같은 계정의 다른 기기가 들어간 방 (서버는 그 방의 멤버로 본다).
+        // 원래 방의 AOO 를 끊고 그 방으로 들어간다. 이 기기 앞에 사람이 없을 수 있어 송출 정지로 (이번 입장만)
+        exit ("switch");
+        enter (*room, true);
         return;
     }
     roomUpdated (*room);
 }
 
-void JamSession::enter (const RoomDetail& room)
+void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
 {
-    AppLog::write ("jam", LOGTXT ("방 입장: ") + room.id + (room.type == "private" ? LOGTXT (" (비공개)") : ""));
+    AppLog::write ("jam", LOGTXT ("방 입장: ") + room.id + (room.type == "private" ? LOGTXT (" (비공개)") : "")
+                              + (movedFromOtherDevice ? LOGTXT (" (다른 기기가 들어간 방, 송출 정지)") : ""));
     currentRoomId = room.id;
     connection = room.connection;
     myId = connection.aooUsername;
     peerStates.clear();
     mix.clear();
     serverLost = false;
+    needRejoin = false;
     reconnectAttempts = 0;
+    reconnectDelayMs = 0;
 
     engine.applyDefaults();
     // 앱: 송출 정지는 설정 파일 값 (버그 #1). 플러그인: 프로젝트에 남은 엔진 값을 그대로 쓴다
@@ -113,6 +134,12 @@ void JamSession::enter (const RoomDetail& room)
     else
     {
         engine.setInputChannels (0, prefs.pluginSendChannels);   // 플러그인: 보내는 채널만 고정 (버그 #13)
+    }
+    restoreSendMuted.reset();
+    if (movedFromOtherDevice && ! engine.isSendMuted())
+    {
+        restoreSendMuted = false;   // 나갈 때 되돌린다. prefs 는 건드리지 않는다
+        engine.setSendMuted (true);
     }
     engine.setBufferMode (prefs.bufferMode);
     engine.setSendGainDb (prefs.sendGainDb);
@@ -143,7 +170,7 @@ void JamSession::connectEngine()
 void JamSession::joinGroup()
 {
     setPhase (Phase::joining);
-    if (engine.joinedGroup() == connection.groupName)
+    if (engine.joinedGroup() == connection.groupName && ! needRejoin)
     {
         engineGroupJoined (true, connection.groupName, {});
         return;
@@ -158,10 +185,17 @@ void JamSession::exit (const String& reason)
     closeFile();
     scheduler.cancel (tickTask);
     scheduler.cancel (retryTask);
-    tickTask = retryTask = 0;
+    scheduler.cancel (reconnectTask);
+    tickTask = retryTask = reconnectTask = 0;
+    needRejoin = false;
     if (connection.groupName.isNotEmpty()) engine.leaveGroup (connection.groupName);
     engine.disconnect();
-    engine.setAllowedPeers ({}, false);
+    engine.setAllowedPeers ({}, true);   // 방 밖: 허용 목록을 빈 채로 켜 둔다 (E5: 서버에 없는 동안 모르는 상대의 연결 요청을 받지 않게)
+    if (restoreSendMuted)
+    {
+        engine.setSendMuted (*restoreSendMuted);   // 이번 입장에만 건 송출 정지를 푼다
+        restoreSendMuted.reset();
+    }
     if (sessionLog.isActive())
     {
         sessionLog.addEvent ("leave", reason);
@@ -182,7 +216,10 @@ void JamSession::exit (const String& reason)
 
 void JamSession::roomUpdated (const RoomDetail& room)
 {
-    connection.members = room.connection.members;
+    // 접속 정보도 최신 값으로 (붙어 있는 연결은 건드리지 않는다. 다음 재접속부터 쓴다). 내 AOO 이름은 바꾸지 않는다
+    const auto username = connection.aooUsername;
+    connection = room.connection;
+    if (connection.aooUsername.isEmpty()) connection.aooUsername = username;
     applyAllowed();
     listeners.call ([] (Listener& l) { l.jamMembersChanged(); });
 }
@@ -215,38 +252,86 @@ void JamSession::applyAllowed()
 void JamSession::engineConnected (bool ok, const String& message)
 {
     if (phase == Phase::idle) return;
+    juce::ignoreUnused (message);
     if (! ok)
     {
+        if (serverLost)
+        {
+            scheduleReconnect();   // 1·2·4…30초 간격으로 다시
+            return;
+        }
         if (phase == Phase::connecting)
         {
             std::weak_ptr<bool> weak = alive;
             scheduler.cancel (retryTask);
             retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::connecting) connectEngine(); });
         }
-        if (serverLost) ++reconnectAttempts;
-        juce::ignoreUnused (message);
         return;
     }
-    if (serverLost && sessionLog.isActive())
+    if (serverLost)
     {
-        sessionLog.addEvent ("serverReconnected", String (reconnectAttempts) + " attempts, "
-                                                  + String ((scheduler.nowMs() - lostAt) / 1000.0, 1) + " s");
+        if (sessionLog.isActive())
+            sessionLog.addEvent ("serverReconnected", String (reconnectAttempts) + " attempts, "
+                                                      + String ((scheduler.nowMs() - lostAt) / 1000.0, 1) + " s");
+        AppLog::write ("jam", LOGTXT ("합주 서버에 다시 연결됨 (") + String (reconnectAttempts) + LOGTXT ("번 시도)"));
     }
     serverLost = false;
-    if (phase == Phase::connecting) joinGroup();
+    scheduler.cancel (reconnectTask);
+    reconnectTask = 0;
+    reconnectDelayMs = 0;
+    if (phase == Phase::connecting) { joinGroup(); return; }
+    if (needRejoin)
+    {
+        // 방 안에서 서버만 끊겼다가 다시 붙었다: 서버 쪽 그룹 자격도 사라졌으므로 같은 그룹에 다시 들어간다
+        // (엔진은 서버가 끊겨도 그룹 이름을 지우지 않아서 그대로 두면 들어간 것으로 보인다)
+        needRejoin = false;
+        engine.joinGroup (connection.groupName, connection.groupPassword);
+    }
 }
 
 void JamSession::engineDisconnected (const String& message)
 {
-    if (phase == Phase::idle) return;
+    // 처음 붙는 중(connecting)에 오는 끊김은 직전 방에서 직접 끊은 연결의 늦게 온 알림이다 (엔진 이벤트는 나중에 전달된다).
+    // 붙기 실패는 engineConnected(false) 로 온다
+    if (phase == Phase::idle || phase == Phase::connecting) return;
     if (! serverLost)
     {
         serverLost = true;
         lostAt = scheduler.nowMs();
         reconnectAttempts = 0;
         if (sessionLog.isActive()) sessionLog.addEvent ("serverLost", message);
+        AppLog::write ("jam", LOGTXT ("합주 서버 연결 끊김: ") + message);
     }
-    // 방 안에서는 엔진의 자동 재접속을 쓴다 (소리는 직접 연결이라 계속 들린다)
+    // 방 안의 소리는 직접 연결이라 계속 들린다. 서버에는 같은 Connection 으로 다시 붙고 그룹에도 다시 들어간다
+    needRejoin = true;
+    if (reconnectTask == 0) scheduleReconnect();
+}
+
+void JamSession::scheduleReconnect()
+{
+    reconnectDelayMs = reconnectDelayMs <= 0 ? reconnectFirstMs : juce::jmin (reconnectMaxMs, reconnectDelayMs * 2);
+    std::weak_ptr<bool> weak = alive;
+    scheduler.cancel (reconnectTask);
+    reconnectTask = scheduler.post (reconnectDelayMs, [this, weak]
+    {
+        if (weak.expired()) return;
+        reconnectTask = 0;
+        reconnectEngine();
+    });
+}
+
+void JamSession::reconnectEngine()
+{
+    if (phase == Phase::idle || ! serverLost) return;
+    if (engine.isConnected())
+    {
+        engineConnected (true, {});
+        return;
+    }
+    ++reconnectAttempts;
+    if (! engine.connect (connection.aooHost, connection.aooPort, connection.aooUsername, connection.aooUserPassword))
+        scheduleReconnect();
+    // 결과는 engineConnected 로 온다 (실패면 다음 간격으로)
 }
 
 void JamSession::engineGroupJoined (bool ok, const String& group, const String& message)
@@ -257,7 +342,11 @@ void JamSession::engineGroupJoined (bool ok, const String& group, const String& 
         if (sessionLog.isActive()) sessionLog.addEvent ("groupJoinFailed", message);
         std::weak_ptr<bool> weak = alive;
         scheduler.cancel (retryTask);
-        retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::joining) joinGroup(); });
+        if (phase == Phase::inRoom)   // 서버 재접속 뒤 그룹 재입장 실패: 다시
+            retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::inRoom && engine.isConnected())
+                                                                 engine.joinGroup (connection.groupName, connection.groupPassword); });
+        else
+            retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::joining) joinGroup(); });
         return;
     }
     if (phase == Phase::inRoom) return;   // 서버 재접속 뒤 다시 들어온 경우
@@ -629,6 +718,7 @@ void JamSession::setFilePlaying (bool play)
 void JamSession::setSendMuted (bool b)
 {
     engine.setSendMuted (b);
+    restoreSendMuted.reset();   // 사용자가 직접 바꾸면 그 값이 설정이 된다
     prefs.sendMuted = b;
     if (! options.plugin) savePrefs();
     applyMonitor();   // 송출 정지 중에는 셀프 모니터도 들리지 않게 (설정값은 그대로, 버그 23)
@@ -711,7 +801,18 @@ bool JamSession::isSelfMonitorAudible() const
 {
     if (engine.isSendMuted()) return false;   // 송출 정지 중에는 홈에서도 방에서도 안 들린다 (버그 23)
     if (inRoomForAudio()) return prefs.selfMonitor;
-    return ! options.plugin && prefs.homeMonitor;   // 홈: 설정을 켠 사람만 (버그 22·28. 플러그인은 설정이 없어 늘 끔)
+    // 홈: 로그인을 마친 홈 화면에서, 설정을 켠 사람만 (버그 22·28. 플러그인은 설정이 없어 늘 끔).
+    // 로그인·가입·온보딩·강제 업데이트·4000 화면에서는 듣지 않는다 (HomeMonitorGate)
+    return homeVisible && ! options.plugin && prefs.homeMonitor;
+}
+
+void JamSession::setHomeVisible (bool visible)
+{
+    if (homeVisible == visible) return;
+    homeVisible = visible;
+    applyMonitor();
+    if (prefs.homeMonitor && ! options.plugin)
+        AppLog::write ("audio", visible ? LOGTXT ("홈 화면: 입장 전에도 내 소리 듣기 적용") : LOGTXT ("홈 화면이 아님: 입장 전 내 소리 듣기 멈춤 (설정값은 그대로)"));
 }
 
 void JamSession::setHomeMonitor (bool on)

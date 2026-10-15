@@ -15,6 +15,11 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     addChildComponent (*home);
     core.store().addListener (this);
+    core.room().onActionFailed = [this] (core::ErrorCode code)
+    {
+        const auto text = msg::hostActionFailure (code);
+        if (text.isNotEmpty()) addInfoToast (text, {});
+    };
     updateScreen();
     syncInviteToasts();
 }
@@ -22,6 +27,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 AppRoot::~AppRoot()
 {
     core.store().removeListener (this);
+    core.room().onActionFailed = nullptr;
     core.home().setHomeVisible (false);
     toasts.clear();
     fail.reset();
@@ -102,6 +108,7 @@ void AppRoot::notice (const core::Notice& n)
     {
         case K::kicked:     addInfoToast (TXT ("방에서 내보내졌어요"), n.roomTitle); break;
         case K::roomClosed: addInfoToast (TXT ("방장이 방을 닫았어요"), n.roomTitle); break;
+        case K::movedToOtherRoom: addInfoToast (TXT ("다른 기기에서 들어간 방으로 연결됐어요"), n.roomTitle); break;
         default: break;   // 초대는 store.invites 로, 승인 수락은 currentRoom 으로 처리된다
     }
 }
@@ -210,6 +217,8 @@ void AppRoot::showJoinFailure (const core::ApiError& e)
 
 void AppRoot::showJoinFailure (core::HomeController::JoinFailure f)
 {
+    // 426: 입장 실패 창 대신 강제 업데이트 화면 (PR2). MeonApi 가 426 을 받으면 onClientOutdated 로 그 화면이 뜬다
+    if (f == core::HomeController::JoinFailure::version) return;
     fail = std::make_unique<JoinFailDialog>();
     fail->onClose = [this] { juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) safe->fail.reset(); }); };
     fail->onUpdate = [this]

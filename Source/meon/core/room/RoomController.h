@@ -26,6 +26,10 @@ public:
     /** 방금 내가 방을 닫아서 방에서 나왔는지 (한 번 읽으면 지운다). 화면은 "방을 닫았어요" 덮개를 띄운다 */
     bool takeClosedByMe() { const bool b = closedByMe; closedByMe = false; return b; }
 
+    /** 방장 기능이 화면에 알려야 할 이유로 실패했을 때 (R11 PR3): 내보내기·방장 넘기기 target_not_in_room,
+        요청 수락 room_full(요청은 남음)·request_unavailable(요청 삭제). 화면이 토스트로 알린다 */
+    std::function<void (ErrorCode)> onActionFailed;
+
 private:
     MeonApi& api;
     AppStore& store;
