@@ -444,7 +444,7 @@ void JamSession::tick()
 
 void JamSession::updateOutputMissing (juce::int64 now)
 {
-    // 입력 장치 없음(SilenceDetector)과 같은 규칙: 방 안에서 5초 이어지면 켜고, 장치가 열리거나 방을 나가면 바로 끈다
+    // 로그용 (화면 안내는 없음). 입력 장치 없음(SilenceDetector)과 같은 규칙: 방 안에서 5초 이어지면 켜고, 장치가 열리거나 방을 나가면 바로 끈다
     if (phase != Phase::inRoom || engine.outputAvailable())
     {
         outputMissingSince = -1;
@@ -452,7 +452,6 @@ void JamSession::updateOutputMissing (juce::int64 now)
         outputMissing = false;
         if (sessionLog.isActive())
             sessionLog.addEvent ("outputMissingEnd", String ((now - outputMissingAt) / 1000.0, 1) + " s");
-        listeners.call ([] (Listener& l) { l.jamSilenceChanged (false); });
         return;
     }
     if (outputMissing) return;
@@ -461,7 +460,6 @@ void JamSession::updateOutputMissing (juce::int64 now)
     outputMissing = true;
     outputMissingAt = now;
     if (sessionLog.isActive()) sessionLog.addEvent ("outputMissingStart", engine.audioDescription());
-    listeners.call ([] (Listener& l) { l.jamSilenceChanged (true); });
 }
 
 void JamSession::writeSample (juce::int64)

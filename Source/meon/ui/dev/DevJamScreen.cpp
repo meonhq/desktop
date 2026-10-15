@@ -310,7 +310,7 @@ void DevJamScreen::refresh()
     const bool muted = jam.isSendMuted();
     sendMute.setOn (muted);
     sendMute.setButtonText (muted ? TXT ("송출 재개") : TXT ("송출 정지"));
-    silence.setVisible (jam.hasInputWarning());
+    silence.setVisible (jam.isInputSilent());
     auto f = jam.log().getFile();
     logPath.setText (TXT ("세션 로그: ") + (f != juce::File() ? f.getFullPathName() : jam.log().getFolder().getFullPathName()));
     repaint();

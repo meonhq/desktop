@@ -61,7 +61,7 @@ public:
         virtual void jamPhaseChanged (Phase) {}
         virtual void jamMembersChanged() {}     // 목록·상태
         virtual void jamStatsChanged() {}       // 핑 등 (0.4초마다)
-        virtual void jamSilenceChanged (bool warning) { juce::ignoreUnused (warning); }   // 입력 경고·출력 장치 없음이 켜지거나 꺼짐
+        virtual void jamSilenceChanged (bool warning) { juce::ignoreUnused (warning); }   // 입력 경고(무음·장치 없음 판정)가 켜지거나 꺼짐
         virtual void jamFileChanged() {}        // 파일 열기·닫기·재생·정지
     };
 
@@ -139,9 +139,8 @@ public:
     float monitorLevel (int ch) const { return engine.monitorLevel (ch); }
     int sendChannelCount() const      { return engine.sendChannelCount(); }
     bool isInputSilent() const        { return silence.warningKind() == SilenceDetector::Kind::silent; }   // 장치는 있는데 소리가 없음
-    bool isInputMissing() const       { return silence.warningKind() == SilenceDetector::Kind::noInput; }  // 입력 장치(채널)가 없음
-    bool hasInputWarning() const      { return silence.isWarning(); }
-    /** 출력 장치 없음 (모니터 카드 안내): 방 안에서 출력 장치가 동작하지 않는 상태가 5초 이어지면 true, 장치가 열리면 바로 false */
+    bool isInputMissing() const       { return silence.warningKind() == SilenceDetector::Kind::noInput; }  // 입력 장치(채널)가 없음 (로그용, 화면 안내 없음)
+    /** 출력 장치 없음 (로그용, 화면 안내 없음): 방 안에서 출력 장치가 동작하지 않는 상태가 5초 이어지면 true, 장치가 열리면 바로 false */
     bool isOutputMissing() const      { return outputMissing; }
 
     // 파일 재생 (내 소리와 섞여 모두에게)

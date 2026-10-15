@@ -443,23 +443,23 @@ public:
             clock.advance (JamSession::tickMs);
             expect (! jam.isInputSilent());
 
-            // 버그 17 재현: 입력 장치가 없음 (채널 0, 레벨 −100 dB, 보내기 켜짐) → 5초 뒤 "입력 장치 없음"
+            // 입력 장치가 없음 (채널 0, 레벨 −100 dB, 보내기 켜짐) → 5초 뒤 로그용 inputMissing. 무음 경고(화면)는 뜨지 않는다
             engine.inLevel = 0.0f;
             engine.inputChannels = 0;
             clock.advance (5600);
-            expect (jam.isInputMissing() && ! jam.isInputSilent() && jam.hasInputWarning());
+            expect (jam.isInputMissing() && ! jam.isInputSilent());
             engine.inputChannels = 2;
             engine.inLevel = 0.1f;
             clock.advance (JamSession::tickMs);
-            expect (! jam.hasInputWarning());
+            expect (! jam.isInputMissing() && ! jam.isInputSilent());
 
-            // 출력 장치 없음: 5초 이어지면 모니터 카드 안내, 장치가 열리면 바로 사라진다. 입력 경고와 따로 논다
+            // 출력 장치 없음 (로그용): 5초 이어지면 켜지고, 장치가 열리면 바로 꺼진다. 입력 판정과 따로 논다
             expect (! jam.isOutputMissing());
             engine.outputOk = false;
             clock.advance (4000);
             expect (! jam.isOutputMissing());
             clock.advance (1600);
-            expect (jam.isOutputMissing() && ! jam.hasInputWarning());
+            expect (jam.isOutputMissing() && ! jam.isInputMissing() && ! jam.isInputSilent());
             engine.outputOk = true;
             clock.advance (JamSession::tickMs);
             expect (! jam.isOutputMissing());
@@ -510,7 +510,7 @@ public:
             jam.setFilePlaying (true);
             expect (engine.filePlaying);
 
-            // 출력 장치가 없는 채로 방을 나오면 안내도 꺼진다 (방 밖에서는 켜지지 않는다)
+            // 출력 장치가 없는 채로 방을 나오면 판정도 꺼진다 (방 밖에서는 켜지지 않는다)
             engine.outputOk = false;
             clock.advance (5600);
             expect (jam.isOutputMissing());

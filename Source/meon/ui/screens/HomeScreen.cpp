@@ -500,7 +500,7 @@ juce::String HomeScreen::deviceText() const
     auto& provider = meon::deviceManagerProvider();
     auto* dm = provider ? provider() : nullptr;
     auto* dev = dm != nullptr ? dm->getCurrentAudioDevice() : nullptr;
-    if (dev == nullptr) return TXT ("오디오 장치 없음");
+    if (dev == nullptr) return {};   // 장치 없음은 표시하지 않는다 (2026-10-15 사용자 결정)
     juce::String text = dev->getName();
     if (auto* jam = core.jam())
     {
@@ -946,9 +946,16 @@ void HomeScreen::resized()
         const int mw = juce::jlimit (84, 240, row.getWidth() / 3);
         inputMeter->setBounds (row.removeFromRight (mw).withSizeKeepingCentre (mw, metric::smallH));
         row.removeFromRight (12);
-        const int dw = juce::jmin (deviceName.getIdealWidth() + 2, row.getWidth() / 3);
-        deviceName.setBounds (row.removeFromLeft (dw));
-        row.removeFromLeft (12);
+        if (deviceName.getText().isNotEmpty())   // 장치가 없으면 비워 두고 자리도 잡지 않는다
+        {
+            const int dw = juce::jmin (deviceName.getIdealWidth() + 2, row.getWidth() / 3);
+            deviceName.setBounds (row.removeFromLeft (dw));
+            row.removeFromLeft (12);
+        }
+        else
+        {
+            deviceName.setBounds ({});
+        }
         const int bw = sendMute.getIdealWidth();
         sendMute.setBounds (row.removeFromLeft (bw).withSizeKeepingCentre (bw, metric::smallH));
         row.removeFromLeft (12);
