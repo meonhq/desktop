@@ -150,6 +150,278 @@ public:
         return queue.runUntil ([&] { return c.log.find (k) != nullptr; }, timeoutMs);
     }
 
+    /** c 의 이벤트 중 from 번째 뒤에 온 kind (pred 를 만족하는 것) */
+    const RealtimeEvent* newEvent (Client& c, RealtimeEvent::Kind k, size_t from, std::function<bool (const RealtimeEvent&)> pred = {})
+    {
+        for (size_t i = from; i < c.log.events.size(); ++i)
+            if (c.log.events[i].kind == k && (! pred || pred (c.log.events[i]))) return &c.log.events[i];
+        return nullptr;
+    }
+
+    bool waitNew (Client& c, RealtimeEvent::Kind k, size_t from, int timeoutMs = 10000, std::function<bool (const RealtimeEvent&)> pred = {})
+    {
+        return queue.runUntil ([&] { return newEvent (c, k, from, pred) != nullptr; }, timeoutMs);
+    }
+
+    void ensureOnline (Client& c)
+    {
+        if (c.rt.getLink() != Realtime::Link::online) connect (c);
+    }
+
+    std::optional<Friend> friendIn (const std::vector<Friend>& list, const juce::String& userId)
+    {
+        for (auto& f : list) if (f.user.id == userId) return f;
+        return std::nullopt;
+    }
+
+    std::vector<Friend> friendsOf (Client& c)
+    {
+        return must (wait<std::vector<Friend>> ([&] (Callback<std::vector<Friend>> cb) { c.api.listFriends (cb); }), "GET /friends");
+    }
+
+    juce::String requestFriend (Client& from, const Client& to)
+    {
+        return must (wait<juce::String> ([&] (Callback<juce::String> cb) { from.api.sendFriendRequest (to.username, cb); }), "POST /friends/requests");
+    }
+
+    RoomDetail makeRoom (Client& host, const juce::String& type, int capacity = 7)
+    {
+        CreateRoom cr;
+        cr.type = type;
+        if (type == "public") cr.entryMode = juce::String ("instant");
+        cr.title = "pr4 " + type;
+        cr.capacity = capacity;
+        return must (wait<RoomDetail> ([&] (Callback<RoomDetail> cb) { host.api.createRoom (cr, cb); }), "POST /rooms (" + type + ")");
+    }
+
+    /** API 2.10·7장·8장·9장·5.10 계약 (R11 PR4). a·b 는 친구, c 는 남. 셋 다 방 밖에서 시작해 방 밖에서 끝난다.
+        서버 제한 (11장): 방 만들기는 사용자당 10분 5회(앞의 테스트에서 a 3번, b 1번), 초대는 사용자당 1분 10회 → 나눠서 만든다 */
+    void socialContract (Client& a, Client& b, Client& c)
+    {
+        ensureOnline (a); ensureOnline (b); ensureOnline (c);
+        using K = RealtimeEvent::Kind;
+        auto isUpdate = [] (const juce::String& id, const char* status)
+        {
+            return [id, status] (const RealtimeEvent& e) { return e.friendInfo && e.friendInfo->user.id == id && e.friendInfo->status == juce::String (status); };
+        };
+
+        //==========================================================================
+        beginTest ("friend list: order, in_room with room / private hides it, joinable, can_invite, offline last_seen (2.10, 7.1)");
+        RoomDetail broom;   // b 의 비공개 방 (정원 2). 초대 오류·초대 흐름에 쓴다
+        {
+            // c ↔ b 친구 (c 가 요청, b 가 받은 요청 목록에서 수락)
+            auto mark = b.log.events.size();
+            expectEquals (requestFriend (c, b), juce::String ("sent"));
+            expect (waitNew (b, K::friendRequestReceived, mark), "friend_request.received");
+            auto reqs = must (wait<std::vector<FriendRequest>> ([&] (Callback<std::vector<FriendRequest>> cb) { b.api.listFriendRequests (cb); }), "GET /friends/requests");
+            juce::String reqId;
+            for (auto& r : reqs) if (r.from.id == c.me.id) reqId = r.id;
+            expect (reqId.isNotEmpty(), "받은 요청 목록에 c");
+            const auto markC = c.log.events.size();
+            must (wait<Done> ([&] (Callback<Done> cb) { b.api.acceptFriendRequest (reqId, cb); }), "accept");
+            expect (waitNew (c, K::friendAdded, markC), "friend.added (요청한 쪽)");
+
+            // a 가 공개 방에 들어가면 b 에게 friend.updated: in_room + room { id, title, joinable }
+            mark = b.log.events.size();
+            auto pub = makeRoom (a, "public");
+            expect (waitNew (b, K::friendUpdated, mark, 10000, isUpdate (a.me.id, "in_room")), "friend.updated (방 입장)");
+            auto list = friendsOf (b);
+            if (auto f = friendIn (list, a.me.id))
+            {
+                expectEquals (f->status, juce::String ("in_room"));
+                expect (f->room.has_value() && f->room->id == pub.id && f->room->joinable, "공개 방이면 room { id, joinable: true }");
+                expect (! f->canInvite, "방에 있는 친구는 초대할 수 없다");
+            }
+            if (auto f = friendIn (list, c.me.id))
+            {
+                expectEquals (f->status, juce::String ("online"));
+                expect (! f->room.has_value());
+                expect (! f->canInvite, "나(b)는 방에 없으므로 can_invite 는 false");
+            }
+            expect (list.size() >= 2 && list[0].user.id == a.me.id, "in_room 이 online 보다 앞");
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.leaveRoom (pub.id, cb); }), "leave");
+
+            // 비공개 방이면 room 은 null (위치 비공개)
+            mark = b.log.events.size();
+            auto priv = makeRoom (c, "private");
+            expect (waitNew (b, K::friendUpdated, mark, 10000, isUpdate (c.me.id, "in_room")), "friend.updated (비공개 방)");
+            if (auto f = friendIn (friendsOf (b), c.me.id))
+                expect (f->status == "in_room" && ! f->room.has_value(), "비공개 방이면 room: null");
+            must (wait<Done> ([&] (Callback<Done> cb) { c.api.leaveRoom (priv.id, cb); }), "leave");
+
+            // 방 안에 있으면 방 밖의 온라인 친구는 can_invite: true
+            broom = makeRoom (b, "private", 2);
+            if (auto f = friendIn (friendsOf (b), c.me.id)) expect (f->canInvite, "방 안에서 온라인·방 밖 친구는 can_invite");
+
+            // 연결이 끊기면 offline + last_seen_at
+            mark = b.log.events.size();
+            c.rt.disconnect();
+            expect (waitNew (b, K::friendUpdated, mark, 15000, isUpdate (c.me.id, "offline")), "friend.updated (offline)");
+            list = friendsOf (b);
+            if (auto f = friendIn (list, c.me.id))
+                expect (f->lastSeenAt.has_value() && ! f->canInvite, "offline 이면 last_seen_at, 초대 불가");
+            expect (! list.empty() && list.back().user.id == c.me.id, "offline 은 뒤");
+            connect (c);
+        }
+
+        //==========================================================================
+        beginTest ("friend request results, disguised sent, blocks, notification dot (7.2, 8, 9)");
+        {
+            expectEquals (requestFriend (a, a), juce::String ("self"));
+            {
+                Client ghost (*this, server);
+                ghost.username = "nobody_" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt (0x7fffffff)).substring (0, 6);
+                expectEquals (requestFriend (a, ghost), juce::String ("not_found"));
+            }
+            expectEquals (requestFriend (a, b), juce::String ("already_friends"));
+            expectEquals (requestFriend (c, a), juce::String ("sent"));
+            expectEquals (requestFriend (c, a), juce::String ("already_requested"));
+            auto markA = a.log.events.size(), markC = c.log.events.size();
+            expectEquals (requestFriend (a, c), juce::String ("accepted"), "상대가 먼저 요청해 둔 상태면 바로 친구");
+            expect (waitNew (a, K::friendAdded, markA) && waitNew (c, K::friendAdded, markC), "friend.added 양쪽");
+
+            // 친구는 차단할 수 없다
+            mustFail (wait<Done> ([&] (Callback<Done> cb) { a.api.block (c.me.id, cb); }), ErrorCode::isFriend, "친구 차단");
+
+            // 친구 삭제: 양쪽 목록에서 사라짐 (상대에게는 조용히 friend.removed)
+            markC = c.log.events.size();
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.removeFriend (c.me.id, cb); }), "DELETE /friends/{id}");
+            expect (waitNew (c, K::friendRemoved, markC), "friend.removed");
+            expect (! friendIn (friendsOf (a), c.me.id).has_value());
+            mustFail (wait<Done> ([&] (Callback<Done> cb) { a.api.removeFriend (c.me.id, cb); }), ErrorCode::notFound, "친구가 아닌 사람 삭제");
+
+            // 차단: 목록에 나오고, 차단당한 사람의 요청은 sent 로 위장된다 (상대에게 아무것도 안 감)
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.block (c.me.id, cb); }), "POST /blocks");
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.block (c.me.id, cb); }), "이미 차단한 사람도 204");
+            auto blocks = must (wait<std::vector<Block>> ([&] (Callback<std::vector<Block>> cb) { a.api.listBlocks (cb); }), "GET /blocks");
+            bool listed = false;
+            for (auto& bl : blocks) if (bl.user.id == c.me.id) listed = true;
+            expect (listed, "차단 목록에 c");
+            markA = a.log.events.size();
+            expectEquals (requestFriend (c, a), juce::String ("sent"), "차단당한 쪽에는 sent 로 위장");
+            queue.runUntil ([] { return false; }, 1500);
+            expect (newEvent (a, K::friendRequestReceived, markA) == nullptr, "차단한 쪽에는 요청이 보이지 않는다");
+            expectEquals (requestFriend (c, a), juce::String ("already_requested"), "숨은 기록: 다시 보내면 already_requested");
+            auto prof = must (wait<UserProfile> ([&] (Callback<UserProfile> cb) { c.api.getUser (a.me.id, cb); }), "GET /users/{id}");
+            expectEquals (prof.relation, juce::String ("request_sent"), "위장 유지: 내 화면에는 요청 보냄");
+            mustFail (wait<juce::String> ([&] (Callback<juce::String> cb) { a.api.sendFriendRequest (c.username, cb); }), ErrorCode::blockedByMe, "내가 차단한 사람에게 요청");
+
+            // 차단 해제: 숨은 기록은 지워진다 (진짜 요청으로 바뀌지 않음). 다시 보내면 진짜 요청
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.unblock (c.me.id, cb); }), "DELETE /blocks/{id}");
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.unblock (c.me.id, cb); }), "차단하지 않은 사람 해제도 204");
+            auto reqs = must (wait<std::vector<FriendRequest>> ([&] (Callback<std::vector<FriendRequest>> cb) { a.api.listFriendRequests (cb); }), "GET /friends/requests");
+            for (auto& r : reqs) expect (r.from.id != c.me.id, "숨은 기록은 진짜 요청이 되지 않는다");
+            markA = a.log.events.size();
+            expectEquals (requestFriend (c, a), juce::String ("sent"));
+            expect (waitNew (a, K::friendRequestReceived, markA), "차단을 푼 뒤의 요청은 보인다");
+
+            // 알림 점: 받은 요청이 있으면 has_unread, 읽으면 꺼짐 (9장)
+            expect (must (wait<bool> ([&] (Callback<bool> cb) { a.api.notificationState (cb); }), "GET /notifications/state"), "has_unread");
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.markNotificationsRead (cb); }), "POST /notifications/read");
+            expect (! must (wait<bool> ([&] (Callback<bool> cb) { a.api.notificationState (cb); }), "GET /notifications/state"), "읽으면 꺼짐");
+
+            // 거절 (보낸 사람에게 알리지 않는다)
+            reqs = must (wait<std::vector<FriendRequest>> ([&] (Callback<std::vector<FriendRequest>> cb) { a.api.listFriendRequests (cb); }), "GET /friends/requests");
+            for (auto& r : reqs)
+                if (r.from.id == c.me.id) must (wait<Done> ([&] (Callback<Done> cb) { a.api.declineFriendRequest (r.id, cb); }), "decline");
+
+            // 친구 요청을 받지 않는 사람(friend_requests: none)에게도 sent 로 위장
+            MePatch off;
+            off.friendRequests = juce::String ("none");
+            must (wait<Me> ([&] (Callback<Me> cb) { a.api.patchMe (off, cb); }), "PATCH /me friend_requests none");
+            markA = a.log.events.size();
+            expectEquals (requestFriend (c, a), juce::String ("sent"), "요청을 막아 둔 사람에게도 sent");
+            queue.runUntil ([] { return false; }, 1500);
+            expect (newEvent (a, K::friendRequestReceived, markA) == nullptr, "막아 둔 쪽에는 요청이 보이지 않는다");
+            MePatch on;
+            on.friendRequests = juce::String ("everyone");
+            must (wait<Me> ([&] (Callback<Me> cb) { a.api.patchMe (on, cb); }), "PATCH /me friend_requests everyone");
+        }
+
+        //==========================================================================
+        beginTest ("invite errors (7.7)");
+        {
+            // b 는 자기 방(정원 2)에 있다. a·c 는 방 밖. c 는 b 의 친구, a 와는 친구가 아니다
+            mustFail (wait<InviteSent> ([&] (Callback<InviteSent> cb) { c.api.sendInvite (b.me.id, cb); }), ErrorCode::notInRoom, "내가 방에 없음");
+            MePatch noInv;
+            noInv.roomInvites = juce::String ("none");
+            must (wait<Me> ([&] (Callback<Me> cb) { c.api.patchMe (noInv, cb); }), "PATCH /me room_invites none");
+            mustFail (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (c.me.id, cb); }), ErrorCode::notAccepting, "초대를 받지 않는 사람");
+            MePatch yesInv;
+            yesInv.roomInvites = juce::String ("friends");
+            must (wait<Me> ([&] (Callback<Me> cb) { c.api.patchMe (yesInv, cb); }), "PATCH /me room_invites friends");
+            c.rt.disconnect();
+            queue.runUntil ([] { return false; }, 1500);
+            mustFail (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (c.me.id, cb); }), ErrorCode::targetOffline, "오프라인 친구");
+            connect (c);
+
+            // c 가 코드로 들어오면 정원이 찬다 → b 가 a 를 초대하면 room_full. c 가 a 를 초대하면 not_friend
+            must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.joinByCode (broom.inviteCode.value_or (""), cb); }), "join-by-code");
+            mustFail (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (a.me.id, cb); }), ErrorCode::roomFull, "정원이 남지 않음");
+            mustFail (wait<InviteSent> ([&] (Callback<InviteSent> cb) { c.api.sendInvite (a.me.id, cb); }), ErrorCode::notFriend, "친구가 아님");
+            must (wait<Done> ([&] (Callback<Done> cb) { c.api.leaveRoom (broom.id, cb); }), "leave");
+        }
+
+        //==========================================================================
+        beginTest ("invites: 3-second delivery, cancel inside 3 s, already_delivered, dismiss -> already_invited (7.7-7.10)");
+        {
+            // 3초 안에 취소하면 상대에게 아무것도 가지 않는다
+            auto markA = a.log.events.size();
+            auto first = must (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (a.me.id, cb); }), "POST /invites");
+            expect (first.id.startsWith ("inv_") && first.deliverAt.isNotEmpty());
+            must (wait<Done> ([&] (Callback<Done> cb) { b.api.cancelInvite (first.id, cb); }), "DELETE /invites/{id} (3초 안)");
+            queue.runUntil ([] { return false; }, 4500);
+            expect (newEvent (a, K::inviteReceived, markA) == nullptr, "취소한 초대는 전달되지 않는다");
+
+            // 취소한 초대는 다시 보낼 수 있다. 3초 뒤에 전달된다
+            const auto sentAt = juce::Time::getMillisecondCounter();
+            auto second = must (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (a.me.id, cb); }), "다시 초대");
+            expect (waitNew (a, K::inviteReceived, markA, 10000), "invite.received");
+            const auto delay = (int) (juce::Time::getMillisecondCounter() - sentAt);
+            expect (delay >= 2500, "3초 뒤에 전달 (" + juce::String (delay) + " ms)");
+            if (auto* e = newEvent (a, K::inviteReceived, markA))
+                expect (e->invite && e->invite->id == second.id && e->invite->room.id == broom.id && e->invite->from.id == b.me.id);
+            mustFail (wait<Done> ([&] (Callback<Done> cb) { b.api.cancelInvite (second.id, cb); }), ErrorCode::alreadyDelivered, "전달된 뒤 취소");
+
+            // 무시: 204, 같은 방에서는 다시 초대받지 않는다. 끝난 초대 수락은 404
+            must (wait<Done> ([&] (Callback<Done> cb) { a.api.dismissInvite (second.id, cb); }), "POST /invites/{id}/dismiss");
+            mustFail (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (a.me.id, cb); }), ErrorCode::alreadyInvited, "무시한 초대가 있으면 다시 초대 불가");
+            mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { a.api.acceptInvite (second.id, cb); }), ErrorCode::notFound, "끝난 초대 수락 404");
+        }
+
+        beginTest ("invite expiry: when I enter any room, when the room closes; accept 200; latency telemetry 204 (7.9, 7.11, 5.10)");
+        {
+            // 받은 사람이 어느 방에든 들어가면 소멸
+            auto markC = c.log.events.size();
+            auto inv = must (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (c.me.id, cb); }), "POST /invites");
+            expect (waitNew (c, K::inviteReceived, markC, 10000), "invite.received");
+            auto own = makeRoom (c, "private");
+            expect (waitNew (c, K::inviteExpired, markC, 10000, [&] (const RealtimeEvent& e) { return e.inviteId == inv.id; }), "입장하면 invite.expired");
+            must (wait<Done> ([&] (Callback<Done> cb) { c.api.leaveRoom (own.id, cb); }), "leave");
+
+            // 방이 닫히면 소멸. 그 초대를 수락하면 410 room_closed
+            markC = c.log.events.size();
+            auto inv2 = must (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (c.me.id, cb); }), "소멸한 초대 뒤 다시 초대");
+            expect (waitNew (c, K::inviteReceived, markC, 10000), "invite.received");
+            must (wait<Done> ([&] (Callback<Done> cb) { b.api.closeRoom (broom.id, cb); }), "close");
+            expect (waitNew (c, K::inviteExpired, markC, 10000, [&] (const RealtimeEvent& e) { return e.inviteId == inv2.id; }), "방이 닫히면 invite.expired");
+            mustFail (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.acceptInvite (inv2.id, cb); }), ErrorCode::roomClosed, "닫힌 방 초대 수락 410");
+
+            // 수락 200: 바로 입장
+            auto r2 = makeRoom (b, "private");
+            markC = c.log.events.size();
+            auto inv3 = must (wait<InviteSent> ([&] (Callback<InviteSent> cb) { b.api.sendInvite (c.me.id, cb); }), "POST /invites");
+            expect (waitNew (c, K::inviteReceived, markC, 10000), "invite.received");
+            auto joined = must (wait<JoinResult> ([&] (Callback<JoinResult> cb) { c.api.acceptInvite (inv3.id, cb); }), "accept invite");
+            expect (joined.room.has_value() && joined.room->id == r2.id, "비공개 방 초대 수락은 바로 입장");
+
+            // 지연 보정 자료 (5.10): 방장(b)이 있는 방의 멤버(c)가 보낸다
+            must (wait<Done> ([&] (Callback<Done> cb) { c.api.sendLatencyTelemetry (r2.id, 14, 8, 12, 11, cb); }), "POST /telemetry/latency");
+            must (wait<Done> ([&] (Callback<Done> cb) { c.api.leaveRoom (r2.id, cb); }), "leave");
+            must (wait<Done> ([&] (Callback<Done> cb) { b.api.leaveRoom (r2.id, cb); }), "leave");
+        }
+    }
+
     /** API 5장·6장·10.6 방 계약. a = 방장, b·c = 멤버 (셋 다 로그인·WS 연결된 상태로 부른다. 끝나면 아무도 방에 없다) */
     void roomContract (Client& a, Client& b, Client& c)
     {
@@ -388,6 +660,9 @@ public:
         auto c = signedUp ("ct_c", "Cee", "bass");
         connect (*c);
         roomContract (*a, *b, *c);
+
+        // R11 PR4: 친구·차단·초대·알림·지연 보정 자료
+        socialContract (*a, *b, *c);
 
         beginTest ("blocks, notifications, rtt, tokens");
         must (wait<std::vector<Block>> ([&] (Callback<std::vector<Block>> cb) { a->api.listBlocks (cb); }), "GET /blocks");

@@ -20,6 +20,11 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
         const auto text = msg::hostActionFailure (code);
         if (text.isNotEmpty()) addInfoToast (text, {});
     };
+    core.home().onInviteFailed = [this] (core::ErrorCode code)
+    {
+        const auto text = msg::inviteFailure (code);
+        if (text.isNotEmpty()) addInfoToast (text, {});
+    };
     updateScreen();
     syncInviteToasts();
 }
@@ -28,6 +33,7 @@ AppRoot::~AppRoot()
 {
     core.store().removeListener (this);
     core.room().onActionFailed = nullptr;
+    core.home().onInviteFailed = nullptr;
     core.home().setHomeVisible (false);
     toasts.clear();
     fail.reset();
@@ -146,7 +152,11 @@ void AppRoot::syncInviteToasts()
                 if (safe == nullptr) return;
                 safe->core.home().acceptInvite (id, [safe] (core::Result<core::JoinResult> r)
                 {
-                    if (safe != nullptr && ! r.ok()) safe->showJoinFailure (r.err());
+                    if (safe == nullptr || r.ok()) return;
+                    // 방이 닫혔거나(410) 이미 끝난 초대(404)면 토스트로 알린다. 나머지는 입장 실패 모달 (7.9)
+                    const auto text = msg::inviteAcceptFailure (r.code());
+                    if (text.isNotEmpty()) safe->addInfoToast (text, {});
+                    else safe->showJoinFailure (r.err());
                 });
             });
         };

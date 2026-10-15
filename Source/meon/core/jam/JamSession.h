@@ -8,6 +8,7 @@
 
 #include "Engine.h"
 #include "PeerState.h"
+#include "LatencyProbe.h"
 #include "SilenceDetector.h"
 #include "ChatChannel.h"
 #include "../state/AppStore.h"
@@ -74,6 +75,8 @@ public:
         /** 다른 인스턴스(앱·플러그인)가 설정 파일의 귀 테러 방지 단계를 바꿨으면 그 값, 아니면 -1 (버그 #18, 1초마다) */
         std::function<int()> pollEarGuard;
         FakeMeonServer* fake = nullptr;           // 가짜 기간에만
+        /** 예상 지연 보정 자료를 보낸다 (POST /telemetry/latency, API 5.10). 입장 한 번에 많아야 한 번 */
+        std::function<void (const LatencyProbe::Report&)> sendLatency;
     };
 
     JamSession (Engine&, AppStore&, Scheduler&, Options);
@@ -226,6 +229,8 @@ private:
     void setPhase (Phase);
     void applyMonitor();
     bool homeVisible = false;   // 로그인을 마친 홈 화면 (setHomeVisible)
+    LatencyProbe latencyProbe;  // 예상 지연 보정 자료 (방장과의 실제 P2P 왕복 시간)
+    void updateLatencyProbe (juce::int64 now, const std::vector<EnginePeer>&);
     bool inRoomForAudio() const { return currentRoomId.isNotEmpty(); }   // 입장 처리 시작부터 나갈 때까지 (접속 중 포함)
 
     // AppStore::Listener

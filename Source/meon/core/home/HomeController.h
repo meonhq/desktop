@@ -25,6 +25,10 @@ public:
     void refreshRooms();
     /** 받은 친구 요청 목록 (hello 에는 없다). 로그인 뒤 한 번, 재연결마다 */
     void refreshFriendRequests();
+    /** 친구 목록 (GET /friends). 방에 들어가고 나올 때 (can_invite 가 내 방 여부를 본다) */
+    void refreshFriends();
+    /** 새 알림 점 (GET /notifications/state). 홈이 보일 때마다 */
+    void refreshNotificationState();
 
     //==============================================================================
     // 입장 (API 5.5, 5.7)
@@ -84,6 +88,9 @@ public:
         Phase phase = Phase::none;
         juce::int64 deliverAtMs = 0;
     };
+    static constexpr int inviteCancelWindowMs = 3000;   // "취소" 버튼이 보이는 시간 (7.7)
+    /** 초대 실패 (already_invited 는 "초대됨"으로 바뀌므로 오지 않는다). 화면이 토스트로 알린다 */
+    std::function<void (ErrorCode)> onInviteFailed;
     InviteState inviteState (const juce::String& userId) const;
     /** 실패하면 상태를 지우고 오류를 돌려준다 (already_invited 는 "초대됨") */
     void invite (const juce::String& userId, Callback<InviteSent> = {});
@@ -96,6 +103,7 @@ private:
     Scheduler& scheduler;
     bool homeVisible = false, friendRequestsLoaded = false;
     int roomsGeneration = 0;
+    int friendsGeneration = 0;
     struct InviteRec { InviteState state; juce::String inviteId; };
     std::map<juce::String, InviteRec> invites;
     std::set<juce::String> cancelOnArrival;   // 응답 전에 취소한 초대

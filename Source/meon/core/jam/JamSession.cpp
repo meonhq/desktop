@@ -1,5 +1,6 @@
 #include "JamSession.h"
 #include "../log/AppLog.h"
+#include "../model/RoomFilter.h"
 
 namespace meon::core
 {
@@ -146,6 +147,13 @@ void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
     applyMonitor();
     applyAllowed();
 
+    // 예상 지연 보정 자료: 입장 시점의 값으로 예상 지연을 계산해 두고, 방장과 연결되면 실제 왕복 시간을 잰다 (API 5.10)
+    {
+        const auto& st = store.state();
+        latencyProbe.begin (room.id, room.hostId, room.hostId == connection.aooUsername, room.hostPresent,
+                            latency::estimate (st.config.latencyCoefficient, st.myRttMs, room.hostRttMs), st.myRttMs, room.hostRttMs);
+    }
+
     connectEngine();
     scheduleTick();
 }
@@ -205,6 +213,7 @@ void JamSession::exit (const String& reason)
     outputMissing = false;
     outputMissingSince = -1;
     chatChannel.end();
+    latencyProbe.reset();
     peerStates.clear();
     mix.clear();
     currentRoomId = {};
@@ -432,6 +441,21 @@ void JamSession::sendMyProfile()
 //==============================================================================
 // 주기 (0.4초): 멤버 상태, 무음, 로그
 
+void JamSession::updateLatencyProbe (juce::int64 now, const std::vector<EnginePeer>& peers)
+{
+    if (! latencyProbe.isArmed() || phase != Phase::inRoom) return;
+    const EnginePeer* host = nullptr;
+    for (auto& p : peers)
+        if (p.user == latencyProbe.hostUser()) { host = &p; break; }
+    const auto r = latencyProbe.update (now, host != nullptr && host->connected, host != nullptr ? host->pingMs : 0.0f);
+    if (! r) return;
+    const auto detail = "estimated " + String (r->estimatedMs) + " ms (my " + String (r->myRttMs) + " + host " + String (r->hostRttMs)
+                        + "), actual " + String (r->actualP2pRttMs) + " ms";
+    AppLog::write ("jam", LOGTXT ("지연 보정 자료 보냄: ") + detail);
+    if (sessionLog.isActive()) sessionLog.addEvent ("latencyTelemetry", detail);
+    if (options.sendLatency) options.sendLatency (*r);
+}
+
 void JamSession::scheduleTick()
 {
     scheduler.cancel (tickTask);
@@ -520,6 +544,7 @@ void JamSession::tick()
     }
 
     updateOutputMissing (now);
+    updateLatencyProbe (now, enginePeers);
 
     if (phase == Phase::inRoom && now - lastSampleAt >= sampleMs)
     {

@@ -80,6 +80,8 @@ public:
     void setPublicRooms (std::vector<Room>);
     void upsertPublicRoom (const Room&);
     void setFriends (std::vector<Friend>);
+    /** 친구 목록 순서 (API 7.1). setFriends·friend.updated·friend.added 때마다 */
+    static void sortFriends (std::vector<Friend>&);
     void setFriendRequests (std::vector<FriendRequest>);
     void removeFriendRequest (const juce::String& requestId);
     void setHasUnread (bool);

@@ -153,6 +153,13 @@ void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
     engineImpl = std::move (e);
     o.plugin = options.plugin;
     o.fake = fake.get();
+    o.sendLatency = [this] (const LatencyProbe::Report& r)
+    {
+        meonApi->sendLatencyTelemetry (r.roomId, r.estimatedMs, r.myRttMs, r.hostRttMs, r.actualP2pRttMs, [] (Result<Done> res)
+        {
+            if (! res.ok()) AppLog::write ("api", LOGTXT ("지연 보정 자료 보내기 실패: ") + errorKey (res.code()));
+        });
+    };
     jamSession = std::make_unique<JamSession> (*engineImpl, appStore, sched, std::move (o));
     homeMonitorGate = std::make_unique<HomeMonitorGate> (*authController, *jamSession);
 }

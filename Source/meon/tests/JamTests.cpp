@@ -488,6 +488,83 @@ public:
             o.logFolder.deleteRecursively();
         }
 
+        beginTest ("Latency telemetry: once per entry, 10 s after the host connects, median; again on re-entry; not as host (R11 PR4)");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            Config cfg;
+            cfg.latencyCoefficient = 0.7;
+            store.setConfig (cfg);
+            store.setMyRtt (8);
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-telemetry");
+            std::vector<LatencyProbe::Report> sent;
+            o.sendLatency = [&] (const LatencyProbe::Report& r) { sent.push_back (r); };
+            JamSession jam (engine, store, clock, o);
+
+            RoomDetail room;
+            room.id = "r_t";
+            room.hostId = "u_host";
+            room.hostPresent = true;
+            room.hostRttMs = 12;
+            room.connection.aooHost = "127.0.0.1";
+            room.connection.aooPort = 10999;
+            room.connection.groupName = "g";
+            room.connection.aooUsername = "u_me";
+            room.connection.members = { "u_me", "u_host" };
+            auto enterAndConnect = [&]
+            {
+                store.setCurrentRoom (room);
+                engine.finishConnect();
+                engine.finishJoin();
+                expect (jam.isInRoom());
+                clock.advance (3000);   // 방장과 연결되기 전에는 재지 않는다
+                engine.peerArrives ("u_host");
+                engine.peer ("u_host")->pingMs = 11.0f;
+            };
+
+            enterAndConnect();
+            clock.advance (9000);
+            expect (sent.empty(), "10초가 차기 전에는 보내지 않는다");
+            clock.advance (2000);
+            expectEquals ((int) sent.size(), 1);
+            if (! sent.empty())
+            {
+                expectEquals (sent[0].roomId, juce::String ("r_t"));
+                expectEquals (sent[0].estimatedMs, 14);   // round (0.7 × (8 + 12))
+                expectEquals (sent[0].myRttMs, 8);
+                expectEquals (sent[0].hostRttMs, 12);
+                expectEquals (sent[0].actualP2pRttMs, 11);
+            }
+            clock.advance (60000);
+            expectEquals ((int) sent.size(), 1, "입장 한 번에 한 번만");
+
+            // 같은 방에 다시 들어가면 다시 잰다
+            store.setCurrentRoom (std::nullopt);
+            enterAndConnect();
+            clock.advance (11000);
+            expectEquals ((int) sent.size(), 2, "다시 들어가면 다시 보낸다");
+
+            // 10초가 차기 전에 나가면 보내지 않는다
+            store.setCurrentRoom (std::nullopt);
+            enterAndConnect();
+            clock.advance (4000);
+            store.setCurrentRoom (std::nullopt);
+            clock.advance (20000);
+            expectEquals ((int) sent.size(), 2, "다 재기 전에 나가면 보내지 않는다");
+
+            // 내가 방장이면 보내지 않는다
+            room.hostId = "u_me";
+            store.setCurrentRoom (room);
+            engine.finishConnect();
+            engine.finishJoin();
+            clock.advance (20000);
+            expectEquals ((int) sent.size(), 2, "방장은 보내지 않는다");
+            store.setCurrentRoom (std::nullopt);
+            o.logFolder.deleteRecursively();
+        }
+
         beginTest ("Home monitor only on the signed-in home screen: start, logout, 4000, forced update, back home");
         {
             using S = AuthController::Step;

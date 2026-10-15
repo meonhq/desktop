@@ -182,6 +182,7 @@ set(MEON_CORE_SOURCES
     Source/meon/core/log/AppLog.h
     Source/meon/core/log/AppLog.cpp
     Source/meon/core/jam/RttReporter.h
+    Source/meon/core/jam/LatencyProbe.h
     Source/meon/core/jam/HomeMonitorGate.h
     Source/meon/core/MeonCore.h
     Source/meon/core/MeonCore.cpp
@@ -746,6 +747,7 @@ if (MEON_TESTS)
         Source/meon/tests/TransportTests.cpp
         Source/meon/tests/ContractTests.cpp
         Source/meon/tests/SessionTests.cpp
+        Source/meon/tests/SocialTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
