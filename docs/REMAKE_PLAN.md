@@ -513,6 +513,7 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 | **E4** (사후 승인) | **셀프 모니터 전용 패닝**: `ChannelGroupParams::monitorPan` 추가. `ChannelGroup::processMonitor` 가 입력 패닝에 이 값을 더해(−1~1 로 자름) 모니터에만 쓴다. `SonobusAudioProcessor::setInputMonitorPan(changroup, pan)` 추가. `EngineLink::applyMonitorParams` 가 입력 그룹마다 이 값을 넣는다 | 합주 화면 내 줄의 패닝(= 셀프 모니터 패닝). 엔진의 입력 패닝(`pan`/`panStereo`)은 모니터와 송출에 같이 걸려서, 그대로 쓰면 스테레오로 보낼 때 남이 듣는 내 소리 위치도 바뀐다 | 약 15줄 (아래 근거) |
 | **E5** (승인, R11 PR3 에서 구현) | **서버에 로그인하지 않았을 때 모르는 상대의 연결 요청 거절**: `AOO_INVITE_EVENT`(더미 소스, `SPP.cpp` 3550 근처)는 AOO 서버에 로그인하지 않은 동안(홈, 서버 끊김 중) 어느 주소의 요청이든 받아 이름 없는 피어를 만든다. E1 허용 목록이 켜져 있으면 이 요청을 받지 않는다 | 이름 없는 피어는 E1 필터에 걸리지 않아(`setAllowedPeerNames` 가 이름 없는 피어를 건너뜀), 멤버가 아닌 상대와 소리가 오갈 수 있다 (API 2.8 위반) | 2줄 추가·1줄 삭제 (추가 중 1줄은 주석). 허용 목록이 꺼져 있으면 지금 동작과 같다 (아래 근거) |
 | **E6** (승인, R11 PR5 에서 구현. 2026-10-15 범위 축소) | **실제 번호 빌드에서 SonoBus 공개 서버(`aoo.sonobus.net`)로 붙는 길을 막는다**: 엔진에서 이 주소를 쓰는 곳은 `SonoStandaloneFilterApp.cpp` 의 옛 SonoBus 명령줄 연결 옵션(`-c/--connect`·`-g/--group`·`-p`·`-n`·`-q/--headless`·`-l/--load-setup`, `DEFAULT_SERVER_HOST`·`DEFAULT_SERVER_PORT` 사용) 뿐이다. 실제 번호 빌드(`MEON_BUILD_ID != 0`)에서는 이 옵션을 읽은 뒤 버리고 표준 오류에 한 줄 남긴다. 빌드 0 은 그대로이고, 빌드 0 의 가짜 서버가 주는 `aoo.sonobus.net:10998` (`Source/meon`, 1.5)도 남긴다 | 실제 번호 빌드의 MEON 은 운영 서버가 준 `aoo_host` 만 쓴다 (API 2.8). 옛 옵션은 MEON 화면과 무관하게 `aoo.sonobus.net` 에 붙을 수 있는 길이다 | 12줄 추가, 삭제 없음 (`#if`·`#endif` 2줄, 주석 2줄, 빈 줄 1줄 포함). 빌드 0 은 컴파일되는 코드가 같다 (아래 근거) |
+| **E7** (승인 2026-10-15, R11 PR5 에서 구현) | **엔진이 저장된 최근 연결 목록으로 스스로 AOO 서버에 접속하지 않게 한다**: `SonobusAudioProcessor::reconnectToMostRecent()` 가 바로 `false` 를 돌려준다. 빌드 0·실제 번호 빌드 모두 | 이 함수는 (1) 첫 상태 복원 때 `reconnectlast` 파라미터가 켜져 있으면, (2) AOO 서버가 끊겼을 때 `mReconnectAfterServerLoss` 가 켜져 있으면 불려, 최근 연결 목록 첫 항목(옛 설치에 남은 `aoo.sonobus.net` 일 수 있음)으로 접속한다. MEON 은 두 값을 켜지 않지만 상태 복원(앱 시작, DAW 프로젝트)이 다시 켤 수 있다. MEON 은 AOO 재접속을 직접 한다 (R11 PR3) | 4줄 추가, 삭제 없음 (주석 2줄, 빈 줄 1줄 포함) (아래 근거) |
 
 **E4 가 보내는 소리에 영향이 없는 근거** (줄 번호는 `remake` 의 eb7c371 기준)
 
@@ -538,7 +539,19 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 - `MEON_BUILD_ID` 는 앱 타깃의 컴파일 정의다 (`CMakeLists.txt` 590). 빌드 0 에서는 블록이 컴파일되지 않아 이전과 같은 코드다.
 - 보내는 소리·오디오 처리와 무관하다 (명령줄 해석만 바뀜). 플러그인은 이 파일을 쓰지 않는다.
 - 확인 (리눅스, 로컬 빌드): `MEON_BUILD_ID=7` 빌드에 `-q -g testgroup -c aoo.sonobus.net:10998 -n tester` 를 주면 위 한 줄을 찍고 창으로 뜨며, 25초 동안 네트워크 호출에 `aoo.sonobus.net`·10998 이 없다 (DNS 는 운영 API 주소뿐). 빌드 0 은 같은 옵션으로 이전처럼 헤드리스로 뜨고 `aoo.sonobus.net` 을 찾아 접속을 시도한다.
-- 엔진에 남은 다른 길 (E6 범위 밖, 2026-10-15 보고): 엔진의 `reconnectToMostRecent()`(`SPP.cpp` 8919)는 저장된 최근 연결 목록의 첫 항목으로 접속한다. 부르는 곳은 (1) 첫 상태 복원 때 `reconnectlast` 파라미터가 켜져 있으면(`SPP.cpp` 8859–8864), (2) AOO 서버가 끊겼을 때 `mReconnectAfterServerLoss` 가 켜져 있으면(`SPP.cpp` 4262, 8907). MEON 은 (2) 를 `EngineLink::applyDefaults`(`EngineLink.cpp` 271)에서 끄지만 상태 복원(`SPP.cpp` 8789)이 다시 켤 수 있고, (1) 은 MEON 이 건드리지 않는다. 최근 연결 목록은 옛 설치의 상태에 `aoo.sonobus.net` 이 남아 있을 수 있다.
+- 엔진에 남은 다른 길은 `reconnectToMostRecent()` 하나였고, E7 로 막았다.
+
+**E7 근거** (줄 번호는 R11 PR5 브랜치 기준)
+
+- 바꾼 곳: `Source/SonobusPluginProcessor.cpp` `reconnectToMostRecent()` 첫머리 8921–8924 (주석 2줄, `return false;`, 빈 줄). 그 아래 원래 코드는 그대로 두었다 (닿지 않음).
+- 엔진에서 AOO 서버에 접속하는 호출은 셋뿐이다: `EngineLink::connect`(`EngineLink.cpp` 284, MEON 이 Connection 의 `aoo_host` 로), `SonoStandaloneFilterApp.cpp` 655 (옛 명령줄, E6), 이 함수의 `connectToServer`. 이 함수를 부르는 곳은 둘이다.
+  - 첫 상태 복원(`setStateInformationWithOptions`, `SPP.cpp` 8859–8864): `reconnectlast` 파라미터가 켜져 있으면 부른다. 앱은 MEON 화면(`MeonCore`)이 만들어지기 전에 상태를 복원하므로 MEON 이 끌 틈이 없다.
+  - 서버 끊김 타이머(`ServerReconnectTimer::timerCallback`, `SPP.cpp` 8910): `AOONET_CLIENT_DISCONNECT_EVENT` 때 `mReconnectAfterServerLoss` 가 켜져 있으면(`SPP.cpp` 4262) 1초마다 부른다. MEON 은 이 값을 `EngineLink::applyDefaults`(`EngineLink.cpp` 271)에서 끄지만, 방에 있는 동안 상태 복원(`SPP.cpp` 8789, DAW 프로젝트)이 다시 켤 수 있다.
+- MEON 은 이 함수의 결과를 쓰지 않는다. AOO 재접속은 `JamSession` 이 방의 같은 Connection 으로 한다 (R11 PR3). 최근 연결 목록도 MEON 이 채우지 않는다.
+- 남는 차이: (2) 의 값이 켜진 채로 서버가 끊기면 엔진은 여전히 "서버 끊김 복구 중" 표시(`mRecoveringFromServerLoss`)를 세우고 타이머를 돈다. 그래서 MEON 이 다시 접속할 때 `connectToServer` 가 기존 피어를 지우지 않는다(`SPP.cpp` 1137). 이 값이 꺼져 있는 보통의 경우(MEON 기본)는 그대로다. 소리 처리와 보내는 소리에는 영향이 없다.
+- 확인 (리눅스, 빌드 0 로컬 빌드. 최근 연결 `127.0.0.1:10998` 을 넣은 저장 상태, 10998 에서 접속을 기록하는 리스너):
+  - 시작할 때 (`reconnectlast` 켬): E7 없는 빌드는 켜자마자 10998 에 접속했고, E7 빌드는 20초 동안 접속하지 않았다.
+  - 서버 끊김 (방 안에서 `mReconnectAfterServerLoss` 를 디버거로 켜고 로컬 aooserver 를 8초 멈춤): E7 없는 빌드는 1초마다 10998 에 15번 접속했고, E7 빌드는 한 번도 접속하지 않았다. 두 빌드 모두 MEON 재접속으로 방의 AOO 서버에 다시 붙었다 (4번째 시도).
 
 새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E4 는 고친 뒤 승인받았다 (2026-10-14).
 E 번호는 다시 쓰지 않는다. 하지 않기로 한 수정도 번호를 그대로 두고 "안 함" 으로 표시하며, 새 수정은 다음 번호를 받는다.

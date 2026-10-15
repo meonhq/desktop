@@ -8918,6 +8918,10 @@ void SonobusAudioProcessor::ServerReconnectTimer::timerCallback()
 
 bool SonobusAudioProcessor::reconnectToMostRecent()
 {
+    // MEON E7 (REMAKE_PLAN 8.2): MEON 은 AOO 재접속을 직접 한다 (JamSession). 엔진은 저장된 최근 연결 목록으로 스스로 접속하지 않는다.
+    // 첫 상태 복원의 reconnectlast 와 서버 끊김 타이머(mReconnectAfterServerLoss)가 모두 여기로 온다
+    return false;
+
     Array<AooServerConnectionInfo> recents;
     getRecentServerConnectionInfos(recents);
     
