@@ -473,7 +473,9 @@ public:
             auto acc = h.run<RoomDetail> ([&] (auto cb) { h.api.acceptJoinRequest (rid, first.id, cb); });
             expect (acc.ok());
             expectEquals (acc.get().memberCount, 2);
-            expectEquals ((int) h.store.state().joinRequests.size(), 1);   // 수락한 요청은 목록에서 빠진다
+            // 방장이 직접 수락한 요청에는 join_request.removed 가 오지 않는다 (API 5.7). 앱은 RoomController 가 목록에서 지운다
+            expectEquals ((int) h.store.state().joinRequests.size(), 2);
+            h.store.removeJoinRequest (first.id);
             auto acc2 = h.run<RoomDetail> ([&] (auto cb) { h.api.acceptJoinRequest (rid, second.id, cb); });
             expect (acc2.ok(), errorKey (acc2.code()));
             expectEquals (acc2.get().memberCount, 3);
@@ -614,5 +616,344 @@ public:
 };
 
 static FakeServerTests fakeServerTests;
+
+//==============================================================================
+// 진짜 서버 v0.5 와 같은 규칙인지 (R11 PR5). 본문·상태 코드를 직접 본다
+namespace
+{
+    struct Raw : RealtimeTransport::Sink
+    {
+        ManualScheduler clock;
+        FakeMeonServer server;
+        std::vector<juce::var> messages;
+        std::vector<int> closes;
+
+        explicit Raw (FakeMeonServer::Options o = testOptions()) : server (clock, o) { server.loadWorld (worldJson()); }
+
+        void transportOpened() override {}
+        void transportMessage (const juce::var& m) override { messages.push_back (m); }
+        void transportClosed (int code) override { closes.push_back (code); }
+
+        HttpResponse call (const juce::String& method, const juce::String& path, const juce::var& body = {}, const juce::String& token = {})
+        {
+            HttpRequest r;
+            r.method = method;
+            r.path = path;
+            r.body = body;
+            r.accessToken = token;
+            return server.handle (r);
+        }
+
+        struct Account { juce::String id, username, access, refresh; };
+
+        Account make (const juce::String& username)
+        {
+            auto s = call ("POST", "/auth/signup", json::obj ({ { "email", username + "@example.com" }, { "username", username },
+                                                                { "password", "abcd123!" }, { "agreed_terms", true } }));
+            Account a { s.body["me"]["id"].toString(), username, s.body["access_token"].toString(), s.body["refresh_token"].toString() };
+            call ("POST", "/auth/verify-email", json::obj ({ { "code", server.getLastMailedCode() } }), a.access);
+            call ("PATCH", "/me", json::obj ({ { "nickname", juce::String::fromUTF8 ("멤버") }, { "part", "keys" } }), a.access);
+            return a;
+        }
+
+        /** 이 계정으로 실시간 연결 (접속 중이 된다) */
+        void connect (const Account& a)
+        {
+            server.open (this);
+            clock.advance (20);
+            server.send (json::obj ({ { "type", "auth" }, { "access_token", a.access }, { "build", 0 } }));
+            clock.advance (20);
+        }
+
+        bool received (const juce::String& type) const
+        {
+            for (auto& m : messages)
+                if (m["type"].toString() == type) return true;
+            return false;
+        }
+
+        void befriend (const Account& a, const Account& b)
+        {
+            call ("POST", "/friends/requests", json::obj ({ { "username", b.username } }), a.access);
+            auto list = call ("GET", "/friends/requests", {}, b.access);
+            const auto id = list.body["requests"][0]["id"].toString();
+            call ("POST", "/friends/requests/" + id + "/accept", {}, b.access);
+        }
+
+        juce::String createRoom (const Account& a, const juce::String& type = "public")
+        {
+            auto body = json::obj ({ { "type", type }, { "title", "t" }, { "description", "" }, { "capacity", 5 } });
+            if (type == "public") body.getDynamicObject()->setProperty ("entry_mode", "instant");
+            return call ("POST", "/rooms", body, a.access).body["id"].toString();
+        }
+    };
+
+    juce::String errCode (const HttpResponse& r)  { return r.body["error"]["code"].toString(); }
+    juce::String errField (const HttpResponse& r) { return r.body["error"]["field"].toString(); }
+}
+
+class FakeServerV05Tests : public juce::UnitTest
+{
+public:
+    FakeServerV05Tests() : juce::UnitTest ("FakeServer matches server v0.5 (R11 PR5)", "Api") {}
+
+    void runTest() override
+    {
+        beginTest ("invites: dismissed blocks re-invite, closed room 410, dropped cancel 409, accepted ends (7.7-7.11)");
+        {
+            Raw x;
+            auto a = x.make ("user_a"), b = x.make ("user_b");
+            x.befriend (a, b);
+            x.connect (a);                       // a 는 접속 중 (초대를 받는 사람)
+            const auto room = x.createRoom (b);
+            auto inv = x.call ("POST", "/invites", json::obj ({ { "user_id", a.id } }), b.access);
+            expectEquals (inv.status, 201);
+            expectEquals (errCode (x.call ("POST", "/invites", json::obj ({ { "user_id", a.id } }), b.access)), juce::String ("already_invited"),
+                          "3초 대기 중");
+            x.clock.advance (FakeMeonServer::inviteDelayMs + 50);
+            expect (x.received ("invite.received"));
+            const auto id = inv.body["id"].toString();
+            expectEquals (x.call ("DELETE", "/invites/" + id, {}, b.access).status, 409, "전달된 뒤 취소는 already_delivered");
+            expectEquals (x.call ("POST", "/invites/" + id + "/dismiss", {}, a.access).status, 204);
+            expectEquals (errCode (x.call ("POST", "/invites/" + id + "/dismiss", {}, a.access)), juce::String ("not_found"), "끝난 초대");
+            expectEquals (errCode (x.call ("POST", "/invites", json::obj ({ { "user_id", a.id } }), b.access)), juce::String ("already_invited"),
+                          "무시한 초대가 있으면 같은 방에서 다시 초대할 수 없다");
+            expectEquals (x.server.pendingInviteCountFor (a.id), 0);
+
+            // 닫힌 방: 끝난 초대여도 410 (방 확인이 먼저)
+            expectEquals (x.call ("POST", "/rooms/" + room + "/close", {}, b.access).status, 204);
+            expectEquals (errCode (x.call ("POST", "/invites/" + id + "/accept", {}, a.access)), juce::String ("room_closed"));
+            expectEquals (errCode (x.call ("POST", "/invites/" + id + "/dismiss", {}, a.access)), juce::String ("room_closed"));
+
+            // 새 방: 전달 시점에 받는 사람이 방에 있으면 버려진다 → 취소는 409, 같은 사람에게 다시 초대할 수 있다
+            const auto room2 = x.createRoom (b);
+            const auto aRoom = x.createRoom (a, "private");
+            auto inv2 = x.call ("POST", "/invites", json::obj ({ { "user_id", a.id } }), b.access);
+            expectEquals (errCode (inv2), juce::String ("target_in_room"));
+            expectEquals (x.call ("POST", "/rooms/" + aRoom + "/leave", {}, a.access).status, 204);
+            inv2 = x.call ("POST", "/invites", json::obj ({ { "user_id", a.id } }), b.access);
+            expectEquals (inv2.status, 201);
+            x.createRoom (a, "private");         // 3초 안에 a 가 방에 들어감
+            x.clock.advance (FakeMeonServer::inviteDelayMs + 50);
+            expectEquals (errCode (x.call ("DELETE", "/invites/" + inv2.body["id"].toString(), {}, b.access)), juce::String ("already_delivered"));
+            expectEquals (x.server.pendingInviteCountFor (a.id), 0);
+            juce::ignoreUnused (room2);
+        }
+
+        beginTest ("invite accept ends the invite before entering: no invite.expired for it, not in hello again");
+        {
+            Raw x;
+            auto a = x.make ("user_a"), b = x.make ("user_b");
+            x.befriend (a, b);
+            x.connect (a);
+            const auto room = x.createRoom (b);
+            auto inv = x.call ("POST", "/invites", json::obj ({ { "user_id", a.id } }), b.access);
+            x.clock.advance (FakeMeonServer::inviteDelayMs + 50);
+            x.messages.clear();
+            expectEquals (x.call ("POST", "/invites/" + inv.body["id"].toString() + "/accept", {}, a.access).status, 200);
+            x.clock.advance (50);
+            expect (! x.received ("invite.expired"));
+            expect (x.server.isMember (room, a.id));
+            expectEquals (errCode (x.call ("POST", "/invites/" + inv.body["id"].toString() + "/accept", {}, a.access)), juce::String ("not_found"));
+        }
+
+        beginTest ("can_invite needs me in a room (2.4, 2.10)");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            x.connect (a);                       // 가짜 친구가 붙는다 (u_f_taeo: 온라인, 방에 없음)
+            auto canInvite = [&]
+            {
+                auto list = x.call ("GET", "/friends", {}, a.access).body["friends"];
+                for (int i = 0; i < list.size(); ++i)
+                    if (list[i]["user"]["id"].toString() == "u_f_taeo") return (bool) list[i]["can_invite"];
+                return false;
+            };
+            expect (! canInvite(), "내가 방에 없으면 false");
+            x.createRoom (a);
+            expect (canInvite(), "내가 방에 있으면 true");
+            expect ((bool) x.call ("GET", "/users/u_f_taeo", {}, a.access).body["can_invite"]);
+        }
+
+        beginTest ("errors: 404 not_found for non-friend delete and missing join request, 400 field names");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            expectEquals (errCode (x.call ("DELETE", "/friends/u_f_doyun", {}, a.access)), juce::String ("not_found"));
+            const auto room = x.createRoom (a);
+            expectEquals (errCode (x.call ("POST", "/rooms/" + room + "/join-requests/jr_none/accept", {}, a.access)), juce::String ("not_found"));
+            expectEquals (errCode (x.call ("POST", "/rooms/" + room + "/join-requests/jr_none/decline", {}, a.access)), juce::String ("not_found"));
+
+            // 5.10 텔레메트리: room_id 형식, 값 범위. 빠진 값은 0
+            auto tele = [&] (const juce::var& body) { return x.call ("POST", "/telemetry/latency", body, a.access); };
+            expectEquals (tele (json::obj ({ { "room_id", room }, { "estimated_ms", 40 } })).status, 204);
+            expectEquals (errField (tele (json::obj ({ { "room_id", "nope" } }))), juce::String ("room_id"));
+            expectEquals (errField (tele (json::obj ({ { "room_id", room }, { "my_rtt_ms", 10001 } }))), juce::String ("my_rtt_ms"));
+            expectEquals (errField (tele (json::obj ({ { "room_id", room }, { "actual_p2p_rtt_ms", -1 } }))), juce::String ("actual_p2p_rtt_ms"));
+            expectEquals (tele (json::obj ({ { "room_id", room }, { "host_rtt_ms", "12" } })).status, 400);
+
+            // 5.9 RTT
+            expectEquals (errField (x.call ("POST", "/me/rtt", json::obj ({ { "aoo_rtt_ms", juce::var() } }), a.access)), juce::String ("aoo_rtt_ms"));
+            expectEquals (errField (x.call ("POST", "/me/rtt", json::obj ({ { "aoo_rtt_ms", 10001 } }), a.access)), juce::String ("aoo_rtt_ms"));
+            expectEquals (x.call ("POST", "/me/rtt", json::obj ({ { "aoo_rtt_ms", 10000 } }), a.access).status, 204);
+
+            // 4.2 PATCH /me
+            expectEquals (errField (x.call ("PATCH", "/me", json::obj ({ { "username", "x" } }), a.access)), juce::String ("username"));
+            expectEquals (errField (x.call ("PATCH", "/me", json::obj ({ { "nickname", juce::var() } }), a.access)), juce::String ("nickname"));
+            expectEquals (errField (x.call ("PATCH", "/me", json::obj ({ { "settings", json::obj ({ { "room_invites", "all" } }) } }), a.access)),
+                          juce::String ("settings.room_invites"));
+
+            // 6장: 자기 자신에게 방장 넘기기, 빈 user_id
+            expectEquals (errField (x.call ("POST", "/rooms/" + room + "/transfer-host", json::obj ({ { "user_id", a.id } }), a.access)),
+                          juce::String ("user_id"));
+            expectEquals (errField (x.call ("POST", "/rooms/r_missing/kick", json::obj ({ { "user_id", "" } }), a.access)), juce::String ("user_id"),
+                          "user_id 를 방보다 먼저 본다");
+
+            // 5.6 퇴장은 언제나 204
+            expectEquals (x.call ("POST", "/rooms/r_f_1/leave", {}, a.access).status, 204, "멤버가 아님");
+            expectEquals (x.call ("POST", "/rooms/r_missing/leave", {}, a.access).status, 204, "없는 방");
+
+            // 5.3 방 만들기: capacity 빠짐, 비공개 방의 entry_mode: null, 제어 문자
+            expectEquals (errField (x.call ("POST", "/rooms", json::obj ({ { "type", "private" }, { "title", "t" } }), a.access)),
+                          juce::String ("capacity"));
+            expectEquals (errField (x.call ("POST", "/rooms", json::obj ({ { "type", "private" }, { "title", "t" }, { "capacity", 3 }, { "entry_mode", juce::var() } }), a.access)),
+                          juce::String ("entry_mode"));
+            expectEquals (errField (x.call ("POST", "/rooms", json::obj ({ { "type", "private" }, { "title", "a\tb" }, { "capacity", 3 } }), a.access)),
+                          juce::String ("title"));
+
+            // 8장 차단
+            expectEquals (errField (x.call ("POST", "/blocks", json::obj ({ { "user_id", a.id } }), a.access)), juce::String ("user_id"));
+            // 7.2 빈 아이디
+            expectEquals (errField (x.call ("POST", "/friends/requests", json::obj ({ { "username", " " } }), a.access)), juce::String ("username"));
+            // 3장
+            expectEquals (errField (x.call ("POST", "/auth/login", json::obj ({ { "email", "" }, { "password", "x" } }))), juce::String ("email"));
+            expectEquals (errField (x.call ("POST", "/auth/refresh", json::obj ({ { "refresh_token", "" } }))), juce::String ("refresh_token"));
+            expectEquals (x.call ("POST", "/auth/resend-verification", {}, a.access).status, 204, "인증한 계정은 아무것도 하지 않는다");
+            expectEquals (errField (x.call ("POST", "/me/email", json::obj ({ { "new_email", "USER_A@example.com" }, { "password", "abcd123!" } }), a.access)),
+                          juce::String ("new_email"), "지금 주소와 같음");
+            expectEquals (errField (x.call ("POST", "/auth/signup", json::obj ({ { "email", "a<b@example.com" }, { "username", "zz_zz" },
+                                                                               { "password", "abcd123!" }, { "agreed_terms", false } }))),
+                          juce::String ("email"), "email 을 agreed_terms 보다 먼저 본다");
+        }
+
+        beginTest ("sessions: refresh retires the old access token, logout ends one session, password change ends the others");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            auto login = x.call ("POST", "/auth/login", json::obj ({ { "email", "user_a@example.com" }, { "password", "abcd123!" } }));
+            const auto access2 = login.body["access_token"].toString(), refresh2 = login.body["refresh_token"].toString();
+
+            auto rot = x.call ("POST", "/auth/refresh", json::obj ({ { "refresh_token", a.refresh } }));
+            expectEquals (rot.status, 200);
+            expectEquals (x.call ("GET", "/me", {}, a.access).status, 401, "회전하면 옛 access 토큰은 바로 무효");
+            a.access = rot.body["access_token"].toString();
+            a.refresh = rot.body["refresh_token"].toString();
+            expectEquals (x.call ("GET", "/me", {}, a.access).status, 200);
+
+            expectEquals (x.call ("POST", "/auth/logout", json::obj ({ { "refresh_token", "rt_unknown" } }), a.access).status, 204);
+            expectEquals (x.call ("GET", "/me", {}, a.access).status, 200, "모르는 토큰으로 로그아웃하면 아무것도 하지 않는다");
+            expectEquals (x.call ("POST", "/auth/logout", json::obj ({ { "refresh_token", refresh2 } }), a.access).status, 204);
+            expectEquals (x.call ("GET", "/me", {}, access2).status, 401, "그 세션의 access 토큰도 무효");
+            expectEquals (x.call ("GET", "/me", {}, a.access).status, 200, "다른 세션은 그대로");
+
+            // 비밀번호 변경: 지금 세션만 남고 나머지는 폐기 (실시간 연결이 다른 세션이면 4001)
+            auto login3 = x.call ("POST", "/auth/login", json::obj ({ { "email", "user_a@example.com" }, { "password", "abcd123!" } }));
+            Raw::Account other { a.id, a.username, login3.body["access_token"].toString(), login3.body["refresh_token"].toString() };
+            x.connect (other);
+            expectEquals (x.call ("POST", "/me/password", json::obj ({ { "current_password", "abcd123!" }, { "new_password", "efgh456!" } }), a.access).status, 204);
+            x.clock.advance (50);
+            expect (! x.closes.empty() && x.closes.back() == 4001);
+            expectEquals (x.call ("GET", "/me", {}, other.access).status, 401);
+            expectEquals (x.call ("GET", "/me", {}, a.access).status, 200);
+        }
+
+        beginTest ("refresh: a token discarded by the grace reissue counts as reuse (all sessions end)");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            auto first = x.call ("POST", "/auth/refresh", json::obj ({ { "refresh_token", a.refresh } }));       // 응답을 못 받았다고 치자
+            auto again = x.call ("POST", "/auth/refresh", json::obj ({ { "refresh_token", a.refresh } }));       // 유예: 새로 발급
+            expectEquals (again.status, 200);
+            const auto discarded = first.body["refresh_token"].toString();
+            expectEquals (x.call ("POST", "/auth/refresh", json::obj ({ { "refresh_token", discarded } })).status, 401);
+            expectEquals (x.call ("POST", "/auth/refresh", json::obj ({ { "refresh_token", again.body["refresh_token"].toString() } })).status, 401,
+                          "도용으로 보고 모든 세션 폐기");
+        }
+
+        beginTest ("account deletion: email reserved, login cancels deletion; friends see friend.removed");
+        {
+            Raw x;
+            auto a = x.make ("user_a"), b = x.make ("user_b");
+            x.befriend (a, b);
+            x.connect (b);
+            x.messages.clear();
+            expectEquals (x.call ("DELETE", "/me", {}, a.access).status, 204);
+            x.clock.advance (50);
+            expect (x.received ("friend.removed"));
+            expectEquals (errCode (x.call ("POST", "/auth/signup", json::obj ({ { "email", "user_a@example.com" }, { "username", "other_a" },
+                                                                              { "password", "abcd123!" }, { "agreed_terms", true } }))),
+                          juce::String ("email_taken"), "유예 중에는 주소를 예약");
+            auto back = x.call ("POST", "/auth/login", json::obj ({ { "email", "user_a@example.com" }, { "password", "abcd123!" } }));
+            expectEquals (back.status, 200, "다시 로그인하면 탈퇴 취소");
+            auto friends = x.call ("GET", "/friends", {}, b.access).body["friends"];
+            bool found = false;
+            for (int i = 0; i < friends.size(); ++i)
+                found = found || friends[i]["user"]["id"].toString() == a.id;
+            expect (found, "친구 관계도 돌아온다");
+        }
+
+        beginTest ("disconnect: after 30 s the member leaves the room; a reconnect inside 30 s keeps it (PLAN 5.1)");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            x.connect (a);
+            const auto room = x.createRoom (a, "private");
+            x.server.devDropLink (5);
+            x.clock.advance (10000);
+            x.connect (a);
+            x.clock.advance (FakeMeonServer::disconnectGraceMs + 1000);
+            expect (x.server.isMember (room, a.id), "30초 안에 다시 붙음");
+            x.server.devDropLink (0);
+            x.clock.advance (FakeMeonServer::disconnectGraceMs + 1000);
+            expect (! x.server.isMember (room, a.id), "30초가 지나면 퇴장");
+            x.server.devCloseLink (4000);   // 이미 끊김: 아무 일 없음
+        }
+
+        beginTest ("join: re-request inside 5 min returns the old request_until even when another room was asked in between");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            auto r1 = x.call ("POST", "/rooms/r_f_2/join", {}, a.access);
+            expectEquals (r1.status, 202);
+            x.clock.advance (1000);
+            expectEquals (x.call ("POST", "/rooms/r_f_5/join", {}, a.access).status, 202);
+            x.clock.advance (1000);
+            auto again = x.call ("POST", "/rooms/r_f_2/join", {}, a.access);
+            expectEquals (again.status, 202);
+            expectEquals (again.body["request_until"].toString(), r1.body["request_until"].toString());
+            auto view = x.call ("GET", "/rooms/r_f_2", {}, a.access);
+            expectEquals (view.body["my_join_request_until"].toString(), r1.body["request_until"].toString(), "방마다 따로 남는다");
+        }
+
+        beginTest ("ws: first message must be auth; build missing is outdated");
+        {
+            Raw x;
+            auto a = x.make ("user_a");
+            x.server.open (&x);
+            x.clock.advance (20);
+            x.server.send (json::obj ({ { "type", "ping" } }));
+            x.clock.advance (50);
+            expect (x.received ("error") && ! x.closes.empty() && x.closes.back() == 1008);
+            x.messages.clear();
+            x.server.open (&x);
+            x.clock.advance (20);
+            x.server.send (json::obj ({ { "type", "auth" }, { "access_token", a.access } }));
+            x.clock.advance (50);
+            expect (! x.messages.empty() && x.messages.front()["code"].toString() == "client_outdated");
+        }
+    }
+};
+
+static FakeServerV05Tests fakeServerV05Tests;
 
 } // namespace meon::core

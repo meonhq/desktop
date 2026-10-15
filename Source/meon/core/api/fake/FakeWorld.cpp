@@ -168,6 +168,7 @@ void FakeMeonServer::scriptTick()
             if (! hasRoomFor (*r, uid)) break;
             r->members.push_back ({ uid, now() });
             roomChanged (*r);
+            friendChanged (uid);
             break;
         }
         case 1:   // 방장이 아닌 멤버가 나감
@@ -180,6 +181,7 @@ void FakeMeonServer::scriptTick()
                 const auto uid = m.userId;
                 removeMember (*r, uid);
                 roomChanged (*r);
+                friendChanged (uid);
                 break;
             }
             break;
@@ -271,6 +273,7 @@ void FakeMeonServer::devInviteMe()
                     u->online = true;
                     room.members.push_back ({ uid, now() });
                     roomChanged (room);
+                    friendChanged (uid);
                     r = &room;
                     break;
                 }
@@ -278,8 +281,8 @@ void FakeMeonServer::devInviteMe()
         if (r == nullptr) continue;
         bool already = false;
         for (auto& i : invites)
-            if (i.to == wsUser && i.from == uid) already = true;
-        if (already) continue;
+            if (i.to == wsUser && i.from == uid && i.ended.isEmpty()) already = true;
+        if (already || inviteExists (r->id, wsUser)) continue;   // 그 방에서 이미 받았거나 무시한 초대가 있으면 (API 7.7)
         InviteRec i { newId ("inv_"), uid, wsUser, r->id, now(), now() + inviteDelayMs, false };
         invites.push_back (i);
         std::weak_ptr<bool> weak = alive;
