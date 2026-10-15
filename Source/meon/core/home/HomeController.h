@@ -40,6 +40,13 @@ public:
     void createRoom (const CreateRoom&, Callback<RoomDetail>);
     /** 지금 방에서 나간다. 엔진은 store 를 따라 바로 나온다 */
     void leaveRoom();
+    /** 앱·플러그인을 정상 종료할 때 (MeonCore 소멸자): 방에 있으면 나가기를 보내고 응답을 기다린다 (최대 timeoutMs).
+        store 는 바꾸지 않는다 (엔진은 JamSession 소멸이 정리한다). 강제 종료·크래시는 여기를 지나지 않으므로
+        30초 안에 다시 켜면 hello 로 같은 방에 돌아간다 (API 5.6).
+        4000 으로 끊긴 동안(같은 계정을 다른 기기가 쓰는 중)은 보내지 않는다: 그 기기가 방에 남아야 한다.
+        failed = 서버에 닿지 않음 (응답 없음, 만료된 토큰 등). 부른 쪽이 표시를 남겨 다음 실행 때 그 방에 돌아가지 않게 한다 */
+    enum class QuitLeave { notInRoom, skipped, left, failed };
+    QuitLeave leaveOnQuit (int timeoutMs);
     /** 이 방에 보낸 승인 요청이 아직 유효한지 (request_until 전) */
     bool isRequestPending (const Room&) const;
     bool isRequestPending (const juce::String& roomId) const;   // 공개 방 목록에 없는 방도 (친구 목록에서 보낸 요청)

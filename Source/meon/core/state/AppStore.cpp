@@ -152,11 +152,18 @@ void AppStore::hello (const Hello& h)
     // 전체 상태를 통째로 덮어쓴다 (10.4). 끊긴 사이 놓친 추방·방 닫힘은 current_room 이 비어 있는 것으로 반영된다.
     // 방에 있었는데 다른 방이 오면: 끊긴 사이 같은 계정의 다른 기기가 들어간 방이다 (JamSession 이 송출 정지로 들어간다)
     const auto before = s.currentRoom ? s.currentRoom->id : String();
+    // 지난번에 정상 종료하며 나간 방이 아직 남아 있으면(나가기가 서버에 닿지 않음) 그 방에는 들어가지 않는다
+    String droppedRoom;
+    if (roomLeftOnQuit.isNotEmpty())
+    {
+        if (h.currentRoom && h.currentRoom->id == roomLeftOnQuit) droppedRoom = roomLeftOnQuit;
+        roomLeftOnQuit = {};
+    }
     s.me = h.me;
     s.config = h.config;
     s.configLoaded = true;
-    s.currentRoom = h.currentRoom;
-    s.joinRequests = h.joinRequests;
+    s.currentRoom = droppedRoom.isEmpty() ? h.currentRoom : std::nullopt;
+    s.joinRequests = droppedRoom.isEmpty() ? h.joinRequests : std::vector<JoinRequest>();
     s.friends = h.friends;
     s.hasUnreadNotifications = h.hasUnreadNotifications;
     s.invites = h.pendingInvites;
@@ -165,6 +172,7 @@ void AppStore::hello (const Hello& h)
         changed (k);
     if (before.isNotEmpty() && s.currentRoom && s.currentRoom->id != before)
         notify ({ Notice::Kind::movedToOtherRoom, s.currentRoom->id, s.currentRoom->title, {} });
+    if (droppedRoom.isNotEmpty() && onRoomLeftOnQuit) onRoomLeftOnQuit (droppedRoom);
 }
 
 void AppStore::event (const RealtimeEvent& e)

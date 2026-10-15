@@ -83,6 +83,9 @@ public:
     void joinRoom (const juce::String& roomId, Callback<JoinResult>);
     void joinByCode (const juce::String& code, Callback<JoinResult>);
     void leaveRoom (const juce::String& roomId, Callback<Done>);
+    /** 앱·플러그인을 정상 종료할 때: 나가기를 바로 보내고 응답을 기다린다 (최대 timeoutMs). 토큰을 갱신하지 않는다
+        (access 토큰이 만료됐으면 401 로 실패). 서버가 처리했으면 true (멤버가 아닌 방도 204, API 5.6) */
+    bool leaveRoomBlocking (const juce::String& roomId, int timeoutMs);
     void reportRtt (int aooRttMs, Callback<Done>);
     void sendLatencyTelemetry (const juce::String& roomId, int estimatedMs, int myRttMs, int hostRttMs, int actualP2pRttMs, Callback<Done>);
 

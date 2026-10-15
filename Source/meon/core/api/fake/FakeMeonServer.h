@@ -48,6 +48,7 @@ public:
     //==============================================================================
     // RestTransport
     void send (const HttpRequest&, std::function<void (HttpResponse)> done) override;
+    HttpResponse sendBlocking (const HttpRequest& r, int) override { return handle (r); }
     /** 지연 없이 바로 처리 (테스트용). 이벤트는 그대로 대기열로 간다 */
     HttpResponse handle (const HttpRequest&);
 

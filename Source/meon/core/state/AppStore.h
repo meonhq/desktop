@@ -92,6 +92,12 @@ public:
     /** 로그아웃·탈퇴: 모든 상태를 비운다 */
     void clear();
 
+    /** 지난 실행을 정상 종료하며 나간 방인데 나가기가 서버에 닿지 않았다 (MeonCore 가 켤 때 알려 준다).
+        다음 hello 의 current_room 이 이 방이면 들어가지 않고 onRoomLeftOnQuit 를 부른다 (부른 쪽이 나가기를 다시 보낸다).
+        첫 hello 에서 한 번만 본다 */
+    void setRoomLeftOnQuit (const juce::String& roomId) { roomLeftOnQuit = roomId; }
+    std::function<void (const juce::String& roomId)> onRoomLeftOnQuit;
+
     //==============================================================================
     // Realtime::Listener
     void linkChanged (Realtime::Link) override;
@@ -101,6 +107,7 @@ public:
 private:
     AppState s;
     juce::ListenerList<Listener> listeners;
+    juce::String roomLeftOnQuit;
 
     void changed (StateKey k) { listeners.call ([k] (Listener& l) { l.stateChanged (k); }); }
     void notify (const Notice& n) { listeners.call ([&n] (Listener& l) { l.notice (n); }); }

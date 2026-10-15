@@ -18,6 +18,7 @@ public:
     ~HttpTransport() override;
 
     void send (const HttpRequest&, std::function<void (HttpResponse)> done) override;
+    HttpResponse sendBlocking (const HttpRequest& r, int timeout) override { return perform (base, r, timeout); }
 
     /** 연결과 응답을 기다리는 최대 시간 */
     int timeoutMs = 15000;

@@ -214,9 +214,7 @@ void MeonEditor::closeSettings()
 //==============================================================================
 bool MeonEditor::requestedQuit()
 {
-    // 끄면 방에서 나간다 (서버에 나가기를 알리고 엔진을 정리한다)
-    if (core.store().state().inRoom())
-        core.home().leaveRoom();
+    // 끄면 방에서 나간다: MeonCore 가 없어질 때 서버에 나가기를 보내고 응답을 기다린다 (플러그인 제거와 같은 길)
     saveAll();
     return true;
 }

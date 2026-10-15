@@ -31,6 +31,9 @@ public:
     virtual ~RestTransport() = default;
     /** 메시지 스레드에서 부르고, 결과도 메시지 스레드로 온다 */
     virtual void send (const HttpRequest&, std::function<void (HttpResponse)> done) = 0;
+    /** 응답을 받을 때까지 기다린다 (최대 timeoutMs). 부른 스레드를 막으므로 종료할 때(방 나가기)만 쓴다.
+        기본: 보내지 못함 (status 0) */
+    virtual HttpResponse sendBlocking (const HttpRequest&, int timeoutMs) { juce::ignoreUnused (timeoutMs); return {}; }
 };
 
 class RealtimeTransport

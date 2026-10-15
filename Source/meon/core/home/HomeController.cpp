@@ -157,6 +157,14 @@ void HomeController::leaveRoom()
     api.leaveRoom (id, [] (Result<Done>) {});
 }
 
+HomeController::QuitLeave HomeController::leaveOnQuit (int timeoutMs)
+{
+    const auto& st = store.state();
+    if (! st.currentRoom) return QuitLeave::notInRoom;
+    if (st.link == Realtime::Link::replaced) return QuitLeave::skipped;
+    return api.leaveRoomBlocking (st.currentRoom->id, timeoutMs) ? QuitLeave::left : QuitLeave::failed;
+}
+
 bool HomeController::isRequestPending (const Room& r) const
 {
     if (r.myJoinRequestUntil && json::parseIsoTime (*r.myJoinRequestUntil) > scheduler.nowMs()) return true;

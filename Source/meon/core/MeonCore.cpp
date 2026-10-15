@@ -1,6 +1,7 @@
 #include "MeonCore.h"
 #include "MeonFixtures.h"
 #include "log/AppLog.h"
+#include "api/ApiJson.h"
 #include "api/net/HttpTransport.h"
 #include "api/net/WsTransport.h"
 
@@ -71,6 +72,43 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     accountController = std::make_unique<AccountController> (*meonApi, appStore, *authController);
     authController->addListener (this);
     appStore.addListener (this);
+    readLeftOnQuit();
+}
+
+void MeonCore::readLeftOnQuit()
+{
+    if (options.dataFolder == juce::File()) return;   // 단위 테스트
+    leftOnQuitFile = options.dataFolder.getChildFile ("MEONLeftOnQuit.json");
+    appStore.onRoomLeftOnQuit = [this] (const juce::String& roomId)
+    {
+        AppLog::write ("room", LOGTXT ("지난번 종료 때 나간 방이 남아 있어 들어가지 않고 다시 나가기: ") + roomId);
+        meonApi->leaveRoom (roomId, [] (Result<Done>) {});
+    };
+    if (! leftOnQuitFile.existsAsFile()) return;
+    const auto v = juce::JSON::parse (leftOnQuitFile);
+    leftOnQuitFile.deleteFile();   // 한 번만 쓴다 (같은 컴퓨터의 다른 MEON 이 먼저 켜졌으면 그쪽이 쓴다)
+    const auto roomId = v.getProperty ("room", "").toString();
+    const auto age = juce::Time::currentTimeMillis() - (juce::int64) v.getProperty ("at", 0);
+    if (roomId.isEmpty() || v.getProperty ("server", "").toString() != options.server.tokenItem || age < 0 || age > leftOnQuitValidMs)
+        return;
+    AppLog::write ("room", LOGTXT ("지난번 정상 종료 때 나가기가 서버에 닿지 않은 방: ") + roomId + LOGTXT (" (다시 들어가지 않음)"));
+    appStore.setRoomLeftOnQuit (roomId);
+}
+
+void MeonCore::leaveOnQuit()
+{
+    // 정상 종료(창 닫기, 메뉴 종료, 플러그인 제거·DAW 종료)에서만 여기를 지난다. 강제 종료·크래시는 지나지 않으므로
+    // 30초 안에 다시 켜면 hello 로 같은 방에 돌아간다 (서버의 끊김 유예, API 5.6)
+    if (homeController == nullptr) return;
+    const auto roomId = appStore.state().currentRoom ? appStore.state().currentRoom->id : juce::String();
+    using Q = HomeController::QuitLeave;
+    const auto r = homeController->leaveOnQuit (quitLeaveTimeoutMs);
+    if (r == Q::skipped)
+        AppLog::write ("room", LOGTXT ("종료: 다른 곳에서 접속 중이라 방 나가기를 보내지 않음"));
+    if (r != Q::failed || leftOnQuitFile == juce::File()) return;
+    const bool ok = leftOnQuitFile.replaceWithText (juce::JSON::toString (json::obj ({
+        { "server", options.server.tokenItem }, { "room", roomId }, { "at", juce::Time::currentTimeMillis() } })));
+    AppLog::write ("room", LOGTXT ("종료: 방 나가기가 서버에 닿지 않음 → 다음 실행 때 이 방에 돌아가지 않게 표시") + (ok ? juce::String() : juce::String (LOGTXT (" (표시 저장 실패)"))));
 }
 
 void MeonCore::createFake()
@@ -152,6 +190,8 @@ void MeonCore::stateChanged (StateKey k)
 MeonCore::~MeonCore()
 {
     AppLog::write ("app", LOGTXT ("종료 중"));
+    leaveOnQuit();
+    appStore.onRoomLeftOnQuit = nullptr;
     rtt.reset();
     jamSession.reset();
     engineImpl.reset();
