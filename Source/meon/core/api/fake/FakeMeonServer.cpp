@@ -1566,6 +1566,12 @@ void FakeMeonServer::remotePeerJoined (const String& userId, const String& nickn
     roomChanged (*r);
 }
 
+bool FakeMeonServer::isScriptedUser (const String& userId) const
+{
+    const auto* u = findUser (userId);
+    return u != nullptr && u->scripted;
+}
+
 void FakeMeonServer::remotePeerLeft (const String& userId)
 {
     auto* r = roomOf (userId);

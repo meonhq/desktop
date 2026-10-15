@@ -26,6 +26,7 @@ void FakeMeonServer::loadWorld (const var& world)
             u.part = w.getProperty ("part", "other").toString();
             u.verified = true;
             u.online = true;
+            u.scripted = true;
             u.createdAt = now() - 30LL * 24 * 3600 * 1000;
             if (w.hasProperty ("rtt_ms")) u.rttMs = (int) w.getProperty ("rtt_ms", 0);
             u.aooPassword = juce::Uuid().toString();

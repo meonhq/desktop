@@ -60,7 +60,7 @@ void Toggle::paint (juce::Graphics& g)
 //==============================================================================
 Choice::Choice (Style s, bool m, int w) : style (s), multi (m), fixedW (w)
 {
-    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    // 커서는 항목 위에서만 손가락 (mouseMove). 줄이 항목보다 넓게 배치돼도 빈 곳·항목 사이는 기본 커서
 }
 
 void Choice::setOptions (const juce::StringArray& v, const juce::StringArray& l)
@@ -155,10 +155,16 @@ void Choice::mouseMove (const juce::MouseEvent& e)
     int h = -1;
     for (int i = 0; i < values.size(); ++i)
         if (itemBounds (i).contains (e.position)) h = i;
+    setMouseCursor (h >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     if (h != hover) { hover = h; repaint(); }
 }
 
-void Choice::mouseExit (const juce::MouseEvent&) { hover = -1; repaint(); }
+void Choice::mouseExit (const juce::MouseEvent&)
+{
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    hover = -1;
+    repaint();
+}
 
 void Choice::mouseUp (const juce::MouseEvent& e)
 {

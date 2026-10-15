@@ -84,7 +84,30 @@ void Button::clicked()
     if (onPress) onPress();
 }
 
-void Button::timerCallback() { disarm(); }
+void Button::flashText (const juce::String& text, int ms)
+{
+    if (armed) return;   // 두 번 눌러 확정 버튼과는 같이 쓰지 않는다
+    if (! flashing)
+    {
+        normalText = getButtonText();
+        flashing = true;
+    }
+    startTimer (ms);   // 다시 누르면 처음부터
+    if (getButtonText() == text) return;
+    setButtonText (text);
+    repaint();
+    if (onStateChange) onStateChange();
+}
+
+void Button::timerCallback()
+{
+    if (! flashing) { disarm(); return; }
+    flashing = false;
+    stopTimer();
+    setButtonText (normalText);
+    repaint();
+    if (onStateChange) onStateChange();
+}
 
 void Button::Outside::mouseDown (const juce::MouseEvent& e)
 {

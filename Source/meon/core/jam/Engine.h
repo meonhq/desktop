@@ -89,6 +89,9 @@ public:
     /** 독립 앱 입력 채널 (0 기반 시작, 1 = 모노 / 2 = 스테레오). 송신 채널 수도 같이 맞춘다. 플러그인은 무시 */
     virtual void setInputChannels (int start, int count) = 0;
     virtual int inputChannelCount() const = 0;          // 잡혀 있는 입력 채널 수 (0 이면 입력 없음)
+    /** 출력 장치가 실제로 동작하는지: 열린 장치가 있고, 켜진 출력 채널이 있고, 샘플레이트가 0 보다 크다.
+        장치 이름이 골라져 있는지는 보지 않는다 (열기에 실패하면 이름만 남는다). 플러그인은 DAW 가 맡으므로 늘 true */
+    virtual bool outputAvailable() const { return true; }
     virtual juce::String inputChannelText() const = 0;  // 로그용 "1-2"
     virtual float inputLevel (int channel) const = 0;   // 입력 처리 뒤 (파일 소리 제외)
     virtual float sendLevel (int channel) const = 0;    // 실제로 보내는 신호

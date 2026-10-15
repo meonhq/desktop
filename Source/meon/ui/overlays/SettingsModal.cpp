@@ -163,8 +163,13 @@ namespace
         {
             // 아이디
             idBox.addAndMakeVisible (copy);
-            // 복사만 한다 (글자를 "복사됨" 으로 바꾸면 버튼 폭이 바뀐다)
-            copy.onPress = [this] { juce::SystemClipboard::copyTextToClipboard ("@" + username()); };
+            // 복사하고 2초 동안 "복사됨" (입장 코드 복사와 같다). 오른쪽 고정이라 버튼이 넓어지면 아이디가 왼쪽으로 밀린다
+            copy.onPress = [this]
+            {
+                juce::SystemClipboard::copyTextToClipboard ("@" + username());
+                copy.flashText (TXT ("복사됨"), 2000);
+            };
+            copy.onStateChange = [this] { idBox.resized(); idBox.repaint(); };
             idBox.owner = this;
             add (idRow).setControl (&idBox, 200);
 

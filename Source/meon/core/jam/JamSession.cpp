@@ -168,6 +168,8 @@ void JamSession::exit (const String& reason)
         sessionLog.end (reason);
     }
     if (silence.isWarning()) silence.update (scheduler.nowMs(), false, false, 0, 0.0f);
+    outputMissing = false;
+    outputMissingSince = -1;
     chatChannel.end();
     peerStates.clear();
     mix.clear();
@@ -192,7 +194,13 @@ void JamSession::applyAllowed()
         if (m != myId) others.add (m);
     // 엔진 수정 E1: 멤버 목록 밖의 상대와는 연결하지 않는다 (빠진 상대는 엔진이 끊는다)
     engine.setAllowedPeers (others, true);
-    chatChannel.setOthers (others);
+
+    // 채팅 받을 사람: 가짜 서버의 각본 멤버는 실제 앱이 아니라 빼고 센다 (가짜 코드를 지울 때 같이 지운다, REMAKE_PLAN 1.5)
+    juce::StringArray chatOthers;
+    for (auto& u : others)
+        if (options.fake == nullptr || ! options.fake->isScriptedUser (u))
+            chatOthers.add (u);
+    chatChannel.setOthers (chatOthers);
 
     const auto now = scheduler.nowMs();
     for (auto& u : others)
@@ -422,6 +430,8 @@ void JamSession::tick()
         listeners.call ([] (Listener& l) { l.jamSilenceChanged (false); });
     }
 
+    updateOutputMissing (now);
+
     if (phase == Phase::inRoom && now - lastSampleAt >= sampleMs)
     {
         lastSampleAt = now;
@@ -430,6 +440,28 @@ void JamSession::tick()
 
     if (membersChangedNow) listeners.call ([] (Listener& l) { l.jamMembersChanged(); });
     listeners.call ([] (Listener& l) { l.jamStatsChanged(); });
+}
+
+void JamSession::updateOutputMissing (juce::int64 now)
+{
+    // 입력 장치 없음(SilenceDetector)과 같은 규칙: 방 안에서 5초 이어지면 켜고, 장치가 열리거나 방을 나가면 바로 끈다
+    if (phase != Phase::inRoom || engine.outputAvailable())
+    {
+        outputMissingSince = -1;
+        if (! outputMissing) return;
+        outputMissing = false;
+        if (sessionLog.isActive())
+            sessionLog.addEvent ("outputMissingEnd", String ((now - outputMissingAt) / 1000.0, 1) + " s");
+        listeners.call ([] (Listener& l) { l.jamSilenceChanged (false); });
+        return;
+    }
+    if (outputMissing) return;
+    if (outputMissingSince < 0) outputMissingSince = now;
+    if (now - outputMissingSince < SilenceDetector::holdMs) return;
+    outputMissing = true;
+    outputMissingAt = now;
+    if (sessionLog.isActive()) sessionLog.addEvent ("outputMissingStart", engine.audioDescription());
+    listeners.call ([] (Listener& l) { l.jamSilenceChanged (true); });
 }
 
 void JamSession::writeSample (juce::int64)
@@ -472,6 +504,7 @@ void JamSession::writeSample (juce::int64)
         { "inputChannels", engine.inputChannelText() },
         { "inputSilent", isInputSilent() },
         { "inputMissing", isInputMissing() },
+        { "outputMissing", isOutputMissing() },
         { "sendChannels", engine.sendChannelCount() },
         { "masterDb", masterDb }, { "monitorMuted", monitorMuted }, { "selfMonitor", prefs.selfMonitor },
         { "selfMonitorAudible", isSelfMonitorAudible() }, { "selfMonitorDb", prefs.selfMonitorDb },
