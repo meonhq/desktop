@@ -7,6 +7,7 @@
 #include "MeonUpdater.h"
 #include "shell/ShellHooks.h"
 #include "core/MeonCore.h"
+#include "ui/overlays/SettingsModal.h"
 
 namespace meon
 {
@@ -38,6 +39,7 @@ public:
 
     /** tab: 0 계정 … (ui::SettingsModal::Tab 순서). 무음 경고의 "설정 열기"는 오디오 탭 */
     void openSettings (int tab = 0);
+    ui::SettingsModal::UpdateHooks settingsUpdateHooks();
     void closeSettings();
     bool isSettingsOpen() const { return settingsOverlay != nullptr; }
 

@@ -10,6 +10,7 @@
 #include "state/AppStore.h"
 #include "auth/AuthController.h"
 #include "auth/TokenStore.h"
+#include "auth/RefreshLock.h"
 #include "util/Scheduler.h"
 #include "jam/JamSession.h"
 #include "jam/RttReporter.h"
@@ -73,6 +74,7 @@ private:
     std::unique_ptr<Realtime> rt;
     AppStore appStore;
     std::unique_ptr<TokenStore> tokenStore;
+    std::unique_ptr<RefreshLock> refreshLock;
     std::unique_ptr<AuthController> authController;
     std::unique_ptr<HomeController> homeController;
     std::unique_ptr<RoomController> roomController;

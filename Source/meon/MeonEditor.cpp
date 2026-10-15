@@ -153,6 +153,23 @@ void MeonEditor::openSettings (int tab)
         return;
     if (core.auth().step() != core::AuthController::Step::ready)
         return;   // 로그인 전에는 설정이 없다
+    auto modal = std::make_unique<ui::SettingsModal> (core, settingsUpdateHooks(), (ui::SettingsModal::Tab) tab);
+    modal->onClose = [this]
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closeSettings(); });
+    };
+    settingsOverlay = std::move (modal);
+    settingsOverlay->setBounds (getLocalBounds());
+    addAndMakeVisible (*settingsOverlay);
+    settingsOverlay->toFront (false);
+    fader.fade (settingsOverlay.get(), 0.0f, 1.0f, metric::fadeMs);
+    grabKeyboardFocus();
+}
+
+ui::SettingsModal::UpdateHooks MeonEditor::settingsUpdateHooks()
+{
+    // 독립 앱의 업데이터 (설정 › 정보, 강제 업데이트 화면). 플러그인은 비워 둔다 (Q18: 버튼 없이 안내만)
     ui::SettingsModal::UpdateHooks hooks;
     if (MeonUpdater::isSupported() && ! pluginMode)
     {
@@ -175,18 +192,7 @@ void MeonEditor::openSettings (int tab)
         hooks.check = [this] { checkForUpdate(); };
         hooks.start = [this] { startUpdate(); };
     }
-    auto modal = std::make_unique<ui::SettingsModal> (core, std::move (hooks), (ui::SettingsModal::Tab) tab);
-    modal->onClose = [this]
-    {
-        juce::Component::SafePointer<MeonEditor> safe (this);
-        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closeSettings(); });
-    };
-    settingsOverlay = std::move (modal);
-    settingsOverlay->setBounds (getLocalBounds());
-    addAndMakeVisible (*settingsOverlay);
-    settingsOverlay->toFront (false);
-    fader.fade (settingsOverlay.get(), 0.0f, 1.0f, metric::fadeMs);
-    grabKeyboardFocus();
+    return hooks;
 }
 
 void MeonEditor::closeSettings()
@@ -263,9 +269,11 @@ juce::String MeonEditor::getVersionText() const
 }
 
 //==============================================================================
-void MeonEditor::authStepChanged (core::AuthController::Step)
+void MeonEditor::authStepChanged (core::AuthController::Step s)
 {
     if (devPreview) return;
+    // 강제 업데이트 화면: 새 버전을 바로 확인해 둔다 (버튼을 누르면 곧바로 받기)
+    if (s == core::AuthController::Step::outdated) checkForUpdate();
     updateOnboarding();
 }
 
@@ -305,7 +313,7 @@ void MeonEditor::updateOnboarding()
         settingsFadingOut = nullptr;
         if (onboarding == nullptr)
         {
-            onboarding = std::make_unique<ui::OnboardingScreen> (core);
+            onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
             onboarding->setLookAndFeel (newLookAndFeel.get());
             addAndMakeVisible (*onboarding);
             onboarding->setBounds (getLocalBounds());
@@ -471,18 +479,24 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
         using Step = core::AuthController::Step;
         const std::pair<const char*, Step> steps[] = { { "login", Step::login }, { "signup", Step::signup }, { "verify", Step::verify },
                                                         { "nickname", Step::nickname }, { "part", Step::part }, { "discord", Step::discord },
-                                                        { "done", Step::done } };
+                                                        { "done", Step::done }, { "outdated", Step::outdated }, { "replaced", Step::replaced } };
         for (auto& st : steps)
         {
             if (o["screen"] != st.first) continue;
             if (onboarding == nullptr)
             {
-                onboarding = std::make_unique<ui::OnboardingScreen> (core);
+                onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
                 onboarding->setLookAndFeel (newLookAndFeel.get());
                 addAndMakeVisible (*onboarding);
                 onboarding->setBounds (getLocalBounds());
             }
             devPreview = true;
+            if (st.second == Step::outdated && ! pluginMode)
+            {
+                // 스냅숏: 빌드 0 에는 업데이터가 없으므로 "새 버전이 있음" 상태로 버튼 모양을 보여 준다
+                onboarding->update.state = [] { return ui::SettingsModal::UpdateHooks::State::available; };
+                onboarding->update.start = [] {};
+            }
             onboarding->showStepForPreview (st.second);
             return;
         }

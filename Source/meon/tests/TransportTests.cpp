@@ -52,9 +52,18 @@ public:
             expectEquals (c.tokenItem, juce::String ("refresh-token"));
         }
 
-        beginTest ("build 0 defaults to the local server");
+        beginTest ("build 0 defaults to the fake server (plugin too: it gets no dev options)");
         {
             const auto c = ServerConfig::choose (0, {});
+            expect (c.isFake());
+            // 서버 없는 PR 빌드로 두 컴퓨터 합주를 시험할 수 있게 SonoBus 공개 AOO 서버 (운영 확인 뒤 지운다)
+            expectEquals (c.aooHost, juce::String ("aoo.sonobus.net"));
+            expectEquals (c.aooPort, 10998);
+        }
+
+        beginTest ("--server=local is the docker compose server");
+        {
+            const auto c = ServerConfig::choose (0, dev ({ { "server", "local" } }));
             expect (c.kind == ServerConfig::Kind::local);
             expectEquals (c.restBase, juce::String ("http://localhost:8080/v1"));
             expectEquals (c.wsUrl, juce::String ("ws://localhost:8080/v1/ws"));
@@ -76,10 +85,10 @@ public:
             const auto l = ServerConfig::choose (0, dev ({ { "server", "http://192.168.0.5:8080" } }));
             expectEquals (l.wsUrl, juce::String ("ws://192.168.0.5:8080/v1/ws"));
             expectEquals (l.aooHost, juce::String ("192.168.0.5"));
-            expect (ServerConfig::choose (0, dev ({ { "server", "nonsense" } })).kind == ServerConfig::Kind::local);
+            expect (ServerConfig::choose (0, dev ({ { "server", "nonsense" } })).isFake());
         }
 
-        beginTest ("screen previews and dev sign-up use the fake server unless --server is given");
+        beginTest ("screen previews and dev sign-up stay on the fake server unless --server is given");
         {
             expect (ServerConfig::choose (0, dev ({ { "screen", "home" } })).isFake());
             expect (ServerConfig::choose (0, dev ({ { "dev-signup", "a" } })).isFake());

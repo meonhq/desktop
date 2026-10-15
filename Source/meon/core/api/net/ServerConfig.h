@@ -1,7 +1,7 @@
 // MEON core - 어느 서버에 붙을지 (R11).
 //   실제 빌드 번호가 있는 빌드(CI 릴리스): 운영 서버 고정 (https://api.meon.co.kr)
-//   빌드 0(로컬·PR 빌드): 기본은 로컬 서버(docker compose, http://localhost:8080). 개발 옵션 --server=prod|local|fake|<주소>
-//   화면 미리보기(--screen=…)와 --dev-signup 은 가짜 서버가 기본 (CI 스냅숏은 서버 없이 돈다)
+//   빌드 0(로컬·PR 빌드): 기본은 가짜 서버 (더블클릭만으로 시험, 플러그인도). 개발 옵션 --server=local(docker compose,
+//   http://localhost:8080)|prod|fake|<주소>
 #pragma once
 
 #include <JuceHeader.h>

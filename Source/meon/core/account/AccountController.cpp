@@ -36,17 +36,29 @@ void AccountController::changePassword (const juce::String& current, const juce:
     api.changePassword (current, next, [weak, cb] (Result<Done> r) { if (! weak.expired() && cb) cb (std::move (r)); });
 }
 
-void AccountController::requestEmailChange (const juce::String& newEmail, Callback<Done> cb)
+void AccountController::requestEmailChange (const juce::String& newEmail, const juce::String& password, Callback<Done> cb)
 {
     pendingEmail = newEmail.trim();
+    pendingPassword = password;
     std::weak_ptr<bool> weak = alive;
-    api.requestEmailChange (pendingEmail, {}, [weak, cb] (Result<Done> r) { if (! weak.expired() && cb) cb (std::move (r)); });
+    api.requestEmailChange (pendingEmail, password, [this, weak, cb] (Result<Done> r)
+    {
+        if (weak.expired()) return;
+        if (! r.ok()) pendingPassword = {};
+        if (cb) cb (std::move (r));
+    });
 }
 
 void AccountController::resendEmailChange (Callback<Done> cb)
 {
     if (pendingEmail.isEmpty()) return;
-    requestEmailChange (pendingEmail, std::move (cb));
+    requestEmailChange (pendingEmail, pendingPassword, std::move (cb));
+}
+
+void AccountController::cancelEmailChange()
+{
+    pendingEmail = {};
+    pendingPassword = {};
 }
 
 void AccountController::verifyEmailChange (const juce::String& code, Callback<Me> cb)
@@ -55,7 +67,7 @@ void AccountController::verifyEmailChange (const juce::String& code, Callback<Me
     api.verifyEmailChange (code, [this, weak, cb] (Result<Me> r)
     {
         if (weak.expired()) return;
-        if (r.ok()) { store.setMe (r.get()); pendingEmail = {}; }
+        if (r.ok()) { store.setMe (r.get()); pendingEmail = {}; pendingPassword = {}; }
         if (cb) cb (std::move (r));
     });
 }
@@ -102,7 +114,7 @@ void AccountController::logout()
 void AccountController::deleteAccount (Callback<Done> cb)
 {
     std::weak_ptr<bool> weak = alive;
-    api.deleteAccount ({}, [this, weak, cb] (Result<Done> r)
+    api.deleteAccount ([this, weak, cb] (Result<Done> r)
     {
         if (weak.expired()) return;
         if (cb) cb (r);

@@ -925,6 +925,127 @@ struct DoneView : StepView
     }
 };
 
+/** 강제 업데이트 (API 13장, R11): 앱 버전이 낮아 서버가 받아 주지 않는다. 로그인은 그대로 남는다 */
+struct UpdateView : StepView
+{
+    using S = SettingsModal::UpdateHooks::State;
+    TitleBlock title { TXT ("업데이트가 필요해요"), {} };
+    Text status { {}, 400, 12.0f, col::inkSub };
+    Button go { Button::Kind::large, TXT ("업데이트") };
+    Button download { Button::Kind::largeSecondary, TXT ("새 버전 내려받기") };   // 업데이터를 못 쓰는 독립 앱 (빌드 0 등)
+    bool canUpdate = false;
+
+    UpdateView (OnboardingScreen& o) : StepView (o)
+    {
+        auto& u = owner.update;
+        canUpdate = ! meonCore().isPlugin() && u.state != nullptr && u.start != nullptr;
+        title.desc.setText (meonCore().isPlugin()
+            ? TXT ("이 버전으로는 서버에 연결할 수 없어요. MEON 앱에서 업데이트해 주세요")
+            : TXT ("이 버전으로는 서버에 연결할 수 없어요. 새 버전으로 업데이트하면 로그인한 그대로 이어서 쓸 수 있어요"));
+        addAndMakeVisible (title);
+        title.addAndMakeVisible (title.desc);
+        addChildComponent (status);
+        status.setJustification (juce::Justification::centredTop);
+        if (canUpdate)
+        {
+            addAndMakeVisible (go);
+            addAndMakeVisible (status);
+            go.onPress = [this]
+            {
+                auto& h = owner.update;
+                const auto st = h.state();
+                if (st == S::available) { if (h.start) h.start(); }
+                else if (h.check) h.check();
+                tick();
+            };
+            if (owner.update.state() == S::idle && owner.update.check) owner.update.check();
+        }
+        else if (! meonCore().isPlugin())
+        {
+            addAndMakeVisible (download);
+            download.onPress = [] { links::open (links::download()); };
+        }
+        tick();
+    }
+
+    void tick() override
+    {
+        if (! canUpdate) return;
+        auto& h = owner.update;
+        const auto st = h.state();
+        juce::String text, label = TXT ("업데이트");
+        bool enabled = true;
+        switch (st)
+        {
+            case S::idle:
+            case S::checking:    label = TXT ("새 버전 확인 중…"); enabled = false; break;
+            case S::upToDate:    text = TXT ("새 버전이 아직 올라오지 않았어요. 잠시 뒤 다시 확인해 주세요"); label = TXT ("다시 확인"); break;
+            case S::available:   break;
+            case S::downloading:
+            {
+                const float p = h.progress ? h.progress() : -1.0f;
+                label = p >= 0.0f ? TXT ("받는 중… ") + juce::String (juce::roundToInt (p * 100.0f)) + "%" : TXT ("받는 중…");
+                enabled = false;
+                break;
+            }
+            case S::installing:  label = TXT ("설치하는 중…"); enabled = false; break;
+            case S::failed:      text = TXT ("업데이트하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요"); label = TXT ("다시 시도"); break;
+        }
+        go.setButtonText (label);
+        go.setDimmed (! enabled);
+        go.setEnabled (enabled);
+        if (status.getText() != text) { status.setText (text); relayout(); }
+    }
+
+    int layoutFor (int w) override
+    {
+        Flow f { 0, w };
+        f.put (title, title.heightFor (w));
+        if (canUpdate)
+        {
+            f.gap (blockGap);
+            f.put (go, metric::bigButtonH);
+            if (status.getText().isNotEmpty()) { f.gap (9); f.put (status, status.getHeightForWidth (w)); }
+        }
+        else if (download.isVisible())
+        {
+            f.gap (blockGap);
+            f.put (download, metric::bigButtonH);
+        }
+        return f.y;
+    }
+};
+
+/** 다른 곳에서 접속 (닫는 코드 4000, API 10.1): 같은 계정으로 다른 앱·플러그인이 접속해 이쪽 연결이 끊겼다.
+    자동으로 다시 붙지 않는다 (서로 끊으며 반복하지 않게). 여기서 다시 연결하면 다른 쪽이 끊긴다 */
+struct ReplacedView : StepView
+{
+    TitleBlock title { TXT ("다른 곳에서 접속했어요"),
+                       TXT ("같은 계정으로 다른 곳(MEON 앱이나 플러그인)에서 접속해서 여기 연결이 끊겼어요. 여기서 계속 쓰려면 다시 연결해 주세요. 그러면 다른 곳의 연결이 끊겨요") };
+    Button again { Button::Kind::large, TXT ("여기서 다시 연결") };
+    Button logout { Button::Kind::linkSmall, TXT ("로그아웃") };
+
+    ReplacedView (OnboardingScreen& o) : StepView (o)
+    {
+        for (auto* c : std::initializer_list<juce::Component*> { &title, &again, &logout }) addAndMakeVisible (c);
+        again.onPress = [this] { auth().reconnectHere(); };
+        logout.onPress = [this] { auth().logout(); };
+    }
+
+    int layoutFor (int w) override
+    {
+        Flow f { 0, w };
+        f.put (title, title.heightFor (w));
+        f.gap (blockGap);
+        f.put (again, metric::bigButtonH);
+        f.gap (12);
+        const int lw = logout.getIdealWidth();
+        logout.setBounds ((w - lw) / 2, f.y, lw, 17);
+        f.gap (17);
+        return f.y;
+    }
+};
+
 /** 시작 중 / 서버에 연결하지 못함 */
 struct LoadingView : StepView
 {
@@ -955,7 +1076,7 @@ struct LoadingView : StepView
 } // namespace
 
 //==============================================================================
-OnboardingScreen::OnboardingScreen (core::MeonCore& c) : core (c)
+OnboardingScreen::OnboardingScreen (core::MeonCore& c, SettingsModal::UpdateHooks u) : core (c), update (std::move (u))
 {
     setOpaque (true);
     content.painter = [this] (juce::Graphics& g) { paintContent (g); };
@@ -999,6 +1120,8 @@ void OnboardingScreen::show (Step s)
         case Step::part:     view = std::make_unique<PartView> (*this); break;
         case Step::discord:  view = std::make_unique<DiscordView> (*this); break;
         case Step::done:     view = std::make_unique<DoneView> (*this); break;
+        case Step::outdated: view = std::make_unique<UpdateView> (*this); break;
+        case Step::replaced: view = std::make_unique<ReplacedView> (*this); break;
         case Step::loading:
         case Step::ready:    view = std::make_unique<LoadingView> (*this); break;
     }

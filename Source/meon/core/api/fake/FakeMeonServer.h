@@ -24,8 +24,10 @@ public:
     struct Options
     {
         int latencyMs = 120;                  // 응답·이벤트 지연
-        juce::String aooHost = "localhost";   // 로컬 aooserver (서버 저장소의 docker compose). --fake-aoo=host:port 로 바꾼다
-        int aooPort = 10999;
+        // SonoBus 공개 AOO 서버: 서버 없는 PR 빌드로 두 컴퓨터 합주를 시험한다 (빌드 0 전용, 실제 번호 빌드는 가짜 서버를 못 고른다).
+        // 운영 서버 + 실제 번호 빌드로 두 대 합주를 확인한 뒤 지운다 (REMAKE_PLAN 1.5). 로컬 aooserver 는 --fake-aoo=host:port
+        juce::String aooHost = "aoo.sonobus.net";
+        int aooPort = 10998;
         bool scripts = true;                  // 다른 사용자 각본
         double scriptSpeed = 1.0;             // 2.0 이면 두 배 빠르게
         bool fakeHostsAccept = true;          // 가짜 방장이 내 승인 요청을 수락
@@ -59,6 +61,7 @@ public:
     /** 마지막으로 "메일로 보낸" 6자리 코드 (가입 인증·이메일 변경). 개발 빌드는 화면에 보여 준다 */
     juce::String getLastMailedCode() const { return lastMailedCode; }
     void devDropLink (int seconds);             // 실시간 연결 끊김 흉내
+    void devCloseLink (int code);               // 서버가 닫는 코드로 닫음 흉내 (4000 다른 곳에서 접속, 4001 세션 폐기, 4002 느림)
     void devKickMe();                           // 내가 있는 방의 방장이 나를 내보냄 (가짜 방장일 때)
     void devCloseMyRoom();                      // 내가 있는 방의 가짜 방장이 방을 닫음
     void devSetConfig (int minBuild, int latestBuild);

@@ -121,12 +121,16 @@ public:
             expect (ok);
         }
 
-        beginTest ("account: email change with code (no password, provisional)");
+        beginTest ("account: email change needs the current password, then a code (API 4.4)");
         {
             Rig r;
             r.wait (31000);   // 가입 인증 메일 뒤 재전송 간격 (30초)
+            std::optional<ErrorCode> wrong;
+            r.account.requestEmailChange ("new@example.com", "wrong-pass1!", [&] (Result<Done> x) { if (! x.ok()) wrong = x.code(); });
+            r.wait();
+            expect (wrong == ErrorCode::invalidCredentials, "틀린 비밀번호");
             bool sent = false;
-            r.account.requestEmailChange ("new@example.com", [&] (Result<Done> x) { sent = x.ok(); });
+            r.account.requestEmailChange ("new@example.com", "abcd123!", [&] (Result<Done> x) { sent = x.ok(); });
             r.wait();
             expect (sent);
             bool verified = false;

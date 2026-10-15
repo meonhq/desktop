@@ -13,6 +13,21 @@ namespace meon::core
 template <typename T>
 using Callback = std::function<void (Result<T>)>;
 
+/** 같은 로그인(refresh 토큰 저장소)을 쓰는 다른 프로세스(독립 앱·플러그인)와 토큰 갱신을 나눠 쓰는 방법.
+    refresh 토큰은 한 번 쓰면 바뀌므로, 두 프로세스가 각자 들고 있는 옛 토큰으로 갱신하면 서버가 재사용(도용)으로 보고
+    모든 기기를 로그아웃시킬 수 있다. 그래서 갱신할 때는 잠그고, 저장소의 지금 토큰을 다시 읽어 쓴다. */
+struct RefreshCoordinator
+{
+    virtual ~RefreshCoordinator() = default;
+    /** 다른 프로세스가 갱신 중이 아니면 잠그고 true (기다리지 않는다) */
+    virtual bool tryLock() = 0;
+    virtual void unlock() = 0;
+    /** 저장소의 지금 refresh 토큰 (다른 프로세스가 바꿨을 수 있다). 못 읽으면 빈 문자열 */
+    virtual juce::String storedRefreshToken() = 0;
+    /** 잠그지 못했을 때 ms 뒤 다시 시도 (메시지 스레드) */
+    virtual void retryLater (int ms, std::function<void()>) = 0;
+};
+
 class MeonApi
 {
 public:
@@ -24,6 +39,9 @@ public:
     void setTokens (const Tokens&);
     const Tokens& getTokens() const        { return tokens; }
     bool hasSession() const                 { return tokens.refreshToken.isNotEmpty(); }
+    int buildNumber() const                 { return build; }
+    /** 다른 프로세스와 갱신을 나눠 쓴다 (없으면 이 프로세스 안에서만 하나씩). 소유하지 않는다 */
+    void setRefreshCoordinator (RefreshCoordinator* c) { coordinator = c; }
     /** 토큰이 바뀔 때마다 (로그인, 가입, 회전). 빈 값이면 세션이 끝난 것 */
     std::function<void (const Tokens&)> onTokensChanged;
     /** refresh 가 실패해서 다시 로그인해야 할 때 */
@@ -54,7 +72,8 @@ public:
     /** 인증 전 계정은 password 를 비워 보낸다 (API 4.4) */
     void requestEmailChange (const juce::String& newEmail, const juce::String& password, Callback<Done>);
     void verifyEmailChange (const juce::String& code, Callback<Me>);
-    void deleteAccount (const juce::String& password, Callback<Done>);
+    /** 본문 없이 로그인된 세션만으로 (API 4.5, v0.5) */
+    void deleteAccount (Callback<Done>);
     void getUser (const juce::String& userId, Callback<UserProfile>);
 
     // 5 방
@@ -105,6 +124,8 @@ private:
     const int build;
     Tokens tokens;
     bool refreshing = false;
+    RefreshCoordinator* coordinator = nullptr;
+    bool coordinatorLocked = false;
     bool sessionLostOnRefreshFailure = false;       // 요청 도중 401 로 시작한 갱신이면 실패 때 onSessionLost
     std::vector<Callback<Tokens>> refreshWaiters;   // 진행 중인 갱신의 결과를 기다리는 쪽 (요청 재시도 포함)
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
@@ -113,6 +134,8 @@ private:
     void request (const juce::String& method, const juce::String& path, const juce::var& body, bool auth, Raw done);
     void sendNow (const juce::String& method, const juce::String& path, const juce::var& body, bool auth, bool mayRetry, Raw done);
     void doRefresh (std::function<void (bool ok)> done, const juce::String& why);
+    void sendRefresh (int attempt);
+    void finishRefresh (const HttpResponse&);
 
     template <typename T>
     void call (const juce::String& method, const juce::String& path, const juce::var& body, bool auth, Callback<T> cb);

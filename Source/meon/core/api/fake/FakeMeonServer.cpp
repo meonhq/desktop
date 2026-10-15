@@ -822,10 +822,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
 
         if (m == "DELETE")
         {
-            // 화면에서 비밀번호 칸을 두지 않는다는 결정(Q2)에 맞춰, 가짜 서버는 비밀번호가 비어 있으면 검사하지 않는다.
-            // API 4.5 는 비밀번호를 요구한다 → 사용자 질문으로 올림
-            const auto pw = body.getProperty ("password", "").toString();
-            if (pw.isNotEmpty() && me.passwordHash != hashPassword (me.salt, pw)) return fail (ErrorCode::invalidCredentials);
+            // API 4.5 (v0.5): 비밀번호 없이 세션만으로. 본문이 와도 보지 않는다
             if (auto* r = roomOf (actor))
             {
                 const auto rid = r->id;
@@ -872,9 +869,9 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             me.verifyFails = 0;
             return noContent();
         }
-        // 비밀번호 없이 이메일 변경 방법은 사용자가 정해 주기로 함 (R7 전). 지금은 비어 있으면 검사하지 않는다
+        // 인증을 마친 계정은 지금 비밀번호가 맞아야 한다 (API 4.4)
         const auto pw = body.getProperty ("password", "").toString();
-        if (pw.isNotEmpty() && me.passwordHash != hashPassword (me.salt, pw)) return fail (ErrorCode::invalidCredentials);
+        if (me.passwordHash != hashPassword (me.salt, pw)) return fail (ErrorCode::invalidCredentials);
         me.pendingEmail = email;
         me.emailCode = newMailCode();
         me.emailCodeAt = me.lastMailAt = now();
@@ -1511,6 +1508,15 @@ void FakeMeonServer::devDropLink (int seconds)
     wsOpen = false;
     ++connectionGen;
     s->transportClosed (0);   // 네트워크 끊김
+}
+
+void FakeMeonServer::devCloseLink (int code)
+{
+    if (! wsOpen || sink == nullptr) return;
+    auto* s = sink;
+    wsOpen = false;
+    ++connectionGen;
+    s->transportClosed (code);
 }
 
 void FakeMeonServer::devKickMe()

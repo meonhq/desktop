@@ -22,7 +22,11 @@ struct EventLog : Realtime::Listener
     std::vector<Hello> hellos;
     std::vector<RealtimeEvent> events;
     juce::StringArray rejected;
+    int revoked = 0;
+    std::vector<Realtime::Link> links;
     void hello (const Hello& h) override                    { hellos.push_back (h); }
+    void sessionRevoked() override                          { ++revoked; }
+    void linkChanged (Realtime::Link l) override            { links.push_back (l); }
     void event (const RealtimeEvent& e) override            { events.push_back (e); }
     void authRejected (const juce::String& c) override      { rejected.add (c); }
 
@@ -261,6 +265,45 @@ public:
         expect (dup.has_value() && ! dup->ok() && (dup->code() == ErrorCode::emailTaken || dup->code() == ErrorCode::rateLimited),
                 "같은 이메일 가입은 email_taken (가입 제한에 걸렸으면 rate_limited)");
         must (wait<Done> ([&] (Callback<Done> cb) { a->api.logout (cb); }), "POST /auth/logout");
+
+        //==========================================================================
+        beginTest ("close codes: second login takes over (4000), logout closes (4001)");
+        {
+            auto c = signedUp ("ct_c", "Cee", "bass");
+            connect (*c);
+            Client again (*this, server);
+            auto auth = must (wait<AuthResult> ([&] (Callback<AuthResult> cb) { again.api.login (c->email, "Check-1234", cb); }), "login (다른 곳)");
+            juce::ignoreUnused (auth);
+            connect (again);
+            expect (queue.runUntil ([&] { return c->rt.getLink() == Realtime::Link::replaced; }, 10000), "먼저 연결한 쪽은 4000 으로 끊기고 다시 붙지 않아야 함");
+            queue.runUntil ([] { return false; }, 1500);
+            expect (c->rt.getLink() == Realtime::Link::replaced, "저절로 다시 붙지 않음");
+            expect (again.rt.getLink() == Realtime::Link::online, "나중에 연결한 쪽이 남음");
+
+            must (wait<Done> ([&] (Callback<Done> cb) { again.api.logout (cb); }), "logout");
+            expect (queue.runUntil ([&] { return again.log.revoked == 1; }, 10000), "로그아웃한 세션의 연결은 4001 로 닫힘");
+            expect (again.rt.getLink() == Realtime::Link::offline);
+        }
+
+        beginTest ("email change needs the current password; delete account without a body");
+        {
+            auto d = signedUp ("ct_d", "Dee", "vocal");
+            const auto newEmail = "new_" + d->email;
+            auto wrong = wait<Done> ([&] (Callback<Done> cb) { d->api.requestEmailChange (newEmail, "Wrong-1234", cb); });
+            mustFail (wrong, ErrorCode::invalidCredentials, "틀린 비밀번호로 이메일 변경");
+            juce::Thread::sleep (100);
+            auto sent = wait<Done> ([&] (Callback<Done> cb) { d->api.requestEmailChange (newEmail, "Check-1234", cb); });
+            if (sent.has_value() && ! sent->ok() && sent->code() == ErrorCode::rateLimited)
+                logMessage ("메일 재발송 간격(30초)에 걸려 이메일 변경 확인은 건너뜀");
+            else
+            {
+                must (sent, "POST /me/email");
+                auto me = must (wait<Me> ([&] (Callback<Me> cb) { d->api.verifyEmailChange (mailedCode (newEmail), cb); }), "POST /me/email/verify");
+                expectEquals (me.email, newEmail);
+            }
+            must (wait<Done> ([&] (Callback<Done> cb) { d->api.deleteAccount (cb); }), "DELETE /me (본문 없음)");
+            expect (! d->api.hasSession());
+        }
     }
 };
 

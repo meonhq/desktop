@@ -161,6 +161,7 @@ set(MEON_CORE_SOURCES
     Source/meon/core/state/AppStore.cpp
     Source/meon/core/auth/TokenStore.h
     Source/meon/core/auth/TokenStore.cpp
+    Source/meon/core/auth/RefreshLock.h
     Source/meon/core/auth/AuthController.h
     Source/meon/core/auth/AuthController.cpp
     Source/meon/core/home/HomeController.h
@@ -743,6 +744,7 @@ if (MEON_TESTS)
         Source/meon/tests/AppLogTests.cpp
         Source/meon/tests/TransportTests.cpp
         Source/meon/tests/ContractTests.cpp
+        Source/meon/tests/SessionTests.cpp
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)

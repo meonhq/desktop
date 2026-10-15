@@ -97,6 +97,7 @@ static juce::String linkName (Realtime::Link l)
         case Realtime::Link::connecting:   return LOGTXT ("연결 중");
         case Realtime::Link::online:       return LOGTXT ("연결됨");
         case Realtime::Link::reconnecting: return LOGTXT ("끊김, 다시 연결 중");
+        case Realtime::Link::replaced:     return LOGTXT ("다른 곳에서 접속해 끊김");
     }
     return LOGTXT ("?");
 }
@@ -165,6 +166,14 @@ void Realtime::scheduleHeartbeat()
     heartbeatTask = scheduler.post (heartbeatMs, [this, weak]
     {
         if (weak.expired() || ! transportOpen) return;
+        // 끊긴 줄 모르는 연결(공유기가 조용히 끊은 경우 등): 서버의 pong 도 오지 않으면 닫고 다시 연결한다
+        if (scheduler.nowMs() - lastReceivedMs > silenceLimitMs)
+        {
+            AppLog::write ("realtime", LOGTXT ("서버에서 ") + juce::String (silenceLimitMs / 1000) + LOGTXT ("초 넘게 아무것도 오지 않음 → 다시 연결"));
+            transport.close();
+            transportClosed (0);
+            return;
+        }
         transport.send (json::obj ({ { "type", "ping" } }));
         scheduleHeartbeat();
     });
@@ -187,6 +196,7 @@ void Realtime::scheduleReconnect()
 void Realtime::transportOpened()
 {
     transportOpen = true;
+    lastReceivedMs = scheduler.nowMs();
     const auto token = tokenProvider ? tokenProvider() : String();
     transport.send (json::obj ({ { "type", "auth" }, { "access_token", token }, { "build", build } }));
     scheduleHeartbeat();
@@ -194,6 +204,7 @@ void Realtime::transportOpened()
 
 void Realtime::transportMessage (const var& msg)
 {
+    lastReceivedMs = scheduler.nowMs();
     const auto type = msg.getProperty ("type", "").toString();
     if (type == "pong") return;
 
@@ -239,9 +250,32 @@ void Realtime::transportMessage (const var& msg)
 void Realtime::transportClosed (int code)
 {
     transportOpen = false;
-    lastCloseCode = code;
     scheduler.cancel (heartbeatTask);
     heartbeatTask = 0;
+
+    // 닫는 코드별 동작 (API 10.1). 1008(인증 실패)은 앞서 온 error 메시지가 이미 처리했다 (wanted = false)
+    if (code == closeReplaced)
+    {
+        AppLog::write ("realtime", LOGTXT ("다른 곳에서 같은 계정으로 접속해서 연결이 닫힘 (4000) → 다시 접속하지 않음"));
+        wanted = false;
+        scheduler.cancel (reconnectTask);
+        reconnectTask = 0;
+        setLink (Link::replaced);
+        return;
+    }
+    if (code == closeSessionRevoked)
+    {
+        AppLog::write ("realtime", LOGTXT ("서버가 세션을 폐기함 (4001) → 로그아웃"));
+        wanted = false;
+        scheduler.cancel (reconnectTask);
+        reconnectTask = 0;
+        setLink (Link::offline);
+        listeners.call ([] (Listener& l) { l.sessionRevoked(); });
+        return;
+    }
+    if (code == closeSlow)
+        AppLog::write ("realtime", LOGTXT ("서버가 느린 연결로 보고 닫음 (4002) → 다시 연결"));
+
     if (! wanted)
     {
         if (link != Link::offline) setLink (Link::offline);
