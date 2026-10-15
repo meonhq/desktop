@@ -521,7 +521,8 @@ void ProfileModal::refresh()
     footer.setVisible (hasFooter() || note.isNotEmpty());
 
     const int rows = lastSeenText().isNotEmpty() ? 3 : 2;
-    setContentHeight (18 + 48 + 18 + (rows * 17 + (rows - 1) * 9) + 18 + (footer.isVisible() ? ModalFooter::height : 0));
+    const int blockNoteH = isFriend ? 9 + 15 : 0;   // 친구는 차단 버튼 대신 안내 (API 8.1)
+    setContentHeight (18 + 48 + 18 + (rows * 17 + (rows - 1) * 9) + blockNoteH + 18 + (footer.isVisible() ? ModalFooter::height : 0));
     body.resized();
     body.repaint();
 }
@@ -552,6 +553,13 @@ void ProfileModal::Body::paint (juce::Graphics& g)
     row (TXT ("파트"), icons::partLabel (o.user.part.value_or ("other")));
     row (TXT ("상태"), o.statusText());
     if (o.lastSeenText().isNotEmpty()) row (TXT ("마지막 접속"), o.lastSeenText());
+    // 친구는 차단할 수 없다 (409 is_friend). 차단 버튼 대신 안내 (API 8.1)
+    if (o.profile && o.profile->relation == "friend")
+    {
+        g.setColour (col::inkFaint);
+        g.setFont (font (400, 12.0f));
+        g.drawText (TXT ("친구를 먼저 삭제해야 차단할 수 있어요"), metric::padX, y, getWidth() - 36, 15, juce::Justification::centredLeft, true);
+    }
 }
 
 void ProfileModal::Body::resized()

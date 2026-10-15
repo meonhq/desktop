@@ -1042,7 +1042,7 @@ namespace
         core::MeonCore& core;
         std::vector<core::Block> blocks;
         SettingsModal::Row reqRow { TXT ("친구 요청 받기") }, invRow { TXT ("방 초대 받기") },
-                           blockRow { TXT ("차단 목록"), TXT ("내가 방장인 방이 서로 안 보이고, 친구 요청을 보낼 수 없어요") };
+                           blockRow { TXT ("차단 목록"), TXT ("차단한 사람이 방장인 방은 내 목록에서, 내가 방장인 방은 그 사람 목록에서 보이지 않아요. 서로 친구 요청도 보낼 수 없어요.") };
         Choice friendReq { Choice::Style::small }, invites { Choice::Style::small };
         BlockList blockList;
     };

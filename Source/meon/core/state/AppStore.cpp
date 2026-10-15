@@ -1,4 +1,6 @@
 #include "AppStore.h"
+#include "../api/ApiJson.h"
+#include <algorithm>
 
 namespace meon::core
 {
@@ -38,7 +40,34 @@ void AppStore::upsertPublicRoom (const Room& r)
     changed (StateKey::publicRooms);
 }
 
-void AppStore::setFriends (std::vector<Friend> list)  { s.friends = std::move (list); changed (StateKey::friends); }
+void AppStore::sortFriends (std::vector<Friend>& list)
+{
+    // API 7.1: in_room → online → offline, 같은 상태 안에서는 닉네임순. offline 끼리는 last_seen_at 최근순.
+    // friend.updated 로 상태가 바뀌거나 friend.added 로 새 친구가 오면 앱이 다시 정렬한다
+    auto rank = [] (const Friend& f) { return f.status == "in_room" ? 0 : f.status == "online" ? 1 : 2; };
+    auto name = [] (const Friend& f) { return f.user.nickname.value_or (f.user.username); };
+    std::stable_sort (list.begin(), list.end(), [&] (const Friend& a, const Friend& b)
+    {
+        const int ra = rank (a), rb = rank (b);
+        if (ra != rb) return ra < rb;
+        if (ra == 2)
+        {
+            const auto ta = a.lastSeenAt ? json::parseIsoTime (*a.lastSeenAt) : 0;
+            const auto tb = b.lastSeenAt ? json::parseIsoTime (*b.lastSeenAt) : 0;
+            if (ta != tb) return ta > tb;
+        }
+        const int byName = name (a).compareNatural (name (b));
+        if (byName != 0) return byName < 0;
+        return a.user.username < b.user.username;
+    });
+}
+
+void AppStore::setFriends (std::vector<Friend> list)
+{
+    sortFriends (list);
+    s.friends = std::move (list);
+    changed (StateKey::friends);
+}
 
 void AppStore::setFriendRequests (std::vector<FriendRequest> list)
 {
@@ -130,9 +159,11 @@ void AppStore::clear()
 
 void AppStore::upsertFriend (const Friend& f)
 {
+    bool found = false;
     for (auto& x : s.friends)
-        if (x.user.id == f.user.id) { x = f; changed (StateKey::friends); return; }
-    s.friends.push_back (f);
+        if (x.user.id == f.user.id) { x = f; found = true; break; }
+    if (! found) s.friends.push_back (f);
+    sortFriends (s.friends);
     changed (StateKey::friends);
 }
 
@@ -165,6 +196,7 @@ void AppStore::hello (const Hello& h)
     s.currentRoom = droppedRoom.isEmpty() ? h.currentRoom : std::nullopt;
     s.joinRequests = droppedRoom.isEmpty() ? h.joinRequests : std::vector<JoinRequest>();
     s.friends = h.friends;
+    sortFriends (s.friends);
     s.hasUnreadNotifications = h.hasUnreadNotifications;
     s.invites = h.pendingInvites;
     for (auto k : { StateKey::me, StateKey::config, StateKey::currentRoom, StateKey::joinRequests, StateKey::friends,

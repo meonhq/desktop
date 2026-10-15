@@ -25,7 +25,30 @@ void HomeController::setHomeVisible (bool on)
     {
         refreshRooms();
         if (! friendRequestsLoaded) refreshFriendRequests();
+        refreshNotificationState();
     }
+}
+
+void HomeController::refreshFriends()
+{
+    const int gen = ++friendsGeneration;
+    std::weak_ptr<bool> weak = alive;
+    api.listFriends ([this, weak, gen] (Result<std::vector<Friend>> r)
+    {
+        if (weak.expired() || gen != friendsGeneration || ! r.ok()) return;
+        store.setFriends (std::move (r.get()));
+    });
+}
+
+void HomeController::refreshNotificationState()
+{
+    // 홈이 보일 때마다 (로그인 직후, 방에서 나왔을 때): 다른 기기에서 읽음 처리한 것도 맞춘다 (API 9.1)
+    std::weak_ptr<bool> weak = alive;
+    api.notificationState ([this, weak] (Result<bool> r)
+    {
+        if (weak.expired() || ! r.ok()) return;
+        store.setHasUnread (r.get());
+    });
 }
 
 void HomeController::refreshRooms()
@@ -64,7 +87,15 @@ void HomeController::stateChanged (StateKey k)
     {
         const auto& room = store.state().currentRoom;
         const auto id = room ? room->id : juce::String();
-        if (id != invitesRoomId) { invites.clear(); cancelOnArrival.clear(); invitesRoomId = id; }
+        if (id != invitesRoomId)
+        {
+            invites.clear();
+            cancelOnArrival.clear();
+            invitesRoomId = id;
+            // can_invite 는 "내가 방에 있는지"도 본다 (API 2.4). 내 입장·퇴장으로는 friend.updated 가 오지 않으므로 다시 받는다
+            // (로그아웃으로 방이 비는 경우는 빼고)
+            if (store.state().me) refreshFriends();
+        }
     }
 }
 
@@ -228,7 +259,16 @@ void HomeController::dismissInvite (const juce::String& inviteId)
 //==============================================================================
 void HomeController::sendFriendRequest (const juce::String& username, Callback<juce::String> cb)
 {
-    api.sendFriendRequest (username.trim().trimCharactersAtStart ("@").toLowerCase(), std::move (cb));
+    const auto name = username.trim().trimCharactersAtStart ("@").toLowerCase();
+    std::weak_ptr<bool> weak = alive;
+    api.sendFriendRequest (name, [this, weak, name, cb] (Result<juce::String> r)
+    {
+        // accepted: 상대가 나에게 보내 둔 요청이 있어 바로 친구가 됐다 → 그 받은 요청은 알림 목록에서 지운다 (서버에서도 지워짐)
+        if (! weak.expired() && r.ok() && r.get() == "accepted")
+            for (auto& fr : std::vector<FriendRequest> (store.state().friendRequests))
+                if (fr.from.username.equalsIgnoreCase (name)) store.removeFriendRequest (fr.id);
+        if (cb) cb (std::move (r));
+    });
 }
 
 void HomeController::acceptFriendRequest (const juce::String& requestId, Callback<Done> cb)
@@ -267,7 +307,9 @@ void HomeController::invite (const juce::String& userId, Callback<InviteSent> cb
     auto& rec = invites[userId];
     rec = {};
     rec.state.phase = InviteState::Phase::pending;
-    rec.state.deliverAtMs = scheduler.nowMs() + 3000;   // 응답이 오면 서버의 deliver_at 으로 바꾼다
+    // "취소" 3초는 누른 순간부터 이 컴퓨터 시계로 센다. 서버의 deliver_at 은 서버 시계라 내 시계가 어긋나 있으면
+    // 바로 "초대됨"이 되거나 오래 남는다. 실제로 전달됐는지는 서버가 정한다 (취소에 already_delivered → "초대됨")
+    rec.state.deliverAtMs = scheduler.nowMs() + inviteCancelWindowMs;
     std::weak_ptr<bool> weak = alive;
     api.sendInvite (userId, [this, weak, userId, cb] (Result<InviteSent> r)
     {
@@ -284,16 +326,16 @@ void HomeController::invite (const juce::String& userId, Callback<InviteSent> cb
         if (r.ok())
         {
             rec.inviteId = r.get().id;
-            if (const auto at = json::parseIsoTime (r.get().deliverAt); at > 0) rec.state.deliverAtMs = at;
         }
         else if (r.code() == ErrorCode::alreadyInvited)
         {
-            rec.state.phase = InviteState::Phase::sent;
+            rec.state.phase = InviteState::Phase::sent;   // 토스트 없이 "초대됨" (7.7)
             rec.state.deliverAtMs = 0;
         }
         else
         {
-            invites.erase (it);
+            invites.erase (it);   // 버튼은 "초대"로. 이유는 토스트로 (AppRoot)
+            if (onInviteFailed) onInviteFailed (r.code());
         }
         if (cb) cb (std::move (r));
     });

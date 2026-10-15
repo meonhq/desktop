@@ -1,7 +1,10 @@
 // MEON ui - core 의 오류 코드·입력 규칙 → 화면 문구. core 는 문구를 만들지 않는다 (REMAKE_PLAN 0-2).
 #pragma once
 
-#include "theme/Tokens.h"
+#include <JuceHeader.h>
+#ifndef TXT   // theme/Tokens.h 와 같은 정의. 문구만 다루므로 그림 모듈 없이도 쓸 수 있게 (단위 테스트)
+ #define TXT(s) juce::String (juce::CharPointer_UTF8 (s))
+#endif
 #include "../core/api/ApiError.h"
 #include "../core/model/Validation.h"
 #include "../core/home/HomeController.h"
@@ -111,6 +114,31 @@ inline juce::String friendRequestResult (const juce::String& result, const juce:
     return {};
 }
 
+/** 방 초대 실패 (API 7.7). already_invited 는 토스트 없이 "초대됨"으로 바뀐다 */
+inline juce::String inviteFailure (core::ErrorCode c)
+{
+    using E = core::ErrorCode;
+    switch (c)
+    {
+        case E::targetOffline: return TXT ("친구가 지금 오프라인이에요");
+        case E::targetInRoom:  return TXT ("친구가 다른 방에서 합주 중이에요");
+        case E::roomFull:      return TXT ("방이 가득 차서 초대할 수 없어요");
+        case E::notAccepting:  return TXT ("지금은 초대를 받을 수 없는 친구예요");
+        case E::notFriend:     return TXT ("친구에게만 초대를 보낼 수 있어요");
+        case E::notInRoom:     return TXT ("방에 있을 때만 초대할 수 있어요");
+        default:               return {};
+    }
+}
+
+/** 받은 초대 수락 실패 중 토스트로 알리는 것 (API 7.9). 나머지 입장 오류는 입장 실패 모달 */
+inline juce::String inviteAcceptFailure (core::ErrorCode c)
+{
+    using E = core::ErrorCode;
+    if (c == E::roomClosed) return TXT ("방이 닫혀서 들어갈 수 없어요");
+    if (c == E::notFound)   return TXT ("이미 끝난 초대예요");
+    return {};
+}
+
 inline juce::String friendRequestError (const core::ApiError& e)
 {
     if (e.code == core::ErrorCode::blockedByMe)
@@ -135,6 +163,13 @@ inline juce::String ago (juce::int64 thenMs, juce::int64 nowMs)
     const auto days = hours / 24;
     if (days < 2) return TXT ("어제");
     return juce::String (days) + TXT ("일 전");
+}
+
+/** 친구 목록의 오프라인 친구: "3시간 전 접속", "방금 접속" (프로필의 "마지막 접속" 칸은 ago 그대로) */
+inline juce::String lastSeen (juce::int64 thenMs, juce::int64 nowMs)
+{
+    const auto when = ago (thenMs, nowMs);
+    return when.isEmpty() ? TXT ("오프라인") : when + TXT (" 접속");
 }
 
 } // namespace meon::ui::msg

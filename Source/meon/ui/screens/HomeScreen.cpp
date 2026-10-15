@@ -257,10 +257,9 @@ struct HomeScreen::FriendList : juce::Component
         juce::String statusText() const
         {
             if (fr.status == "in_room")
-                return fr.room ? fr.room->title + TXT ("에서 합주 중") : TXT ("다른 방에서 합주 중");
+                return fr.room ? fr.room->title + TXT ("에서 합주 중") : TXT ("합주 중");   // 비공개 방이면 위치를 숨긴다 (API 2.10)
             if (fr.status == "online") return TXT ("온라인");
-            const auto when = fr.lastSeenAt ? msg::ago (core::json::parseIsoTime (*fr.lastSeenAt), owner.core.scheduler().nowMs()) : juce::String();
-            return when.isEmpty() ? TXT ("오프라인") : TXT ("마지막 접속 ") + when;
+            return msg::lastSeen (fr.lastSeenAt ? core::json::parseIsoTime (*fr.lastSeenAt) : 0, owner.core.scheduler().nowMs());
         }
 
         void paint (juce::Graphics& g) override
