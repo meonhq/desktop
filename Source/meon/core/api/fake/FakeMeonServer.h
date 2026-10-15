@@ -2,6 +2,11 @@
 // 요청은 진짜와 같은 경로·JSON 으로 받고, 응답·이벤트도 API.md 모양의 JSON 으로 돌려준다 (클라이언트는 같은 디코더를 쓴다).
 // 서버 규칙(정원, 승인 요청, 3초 초대, 차단 필터, 숨은 친구 요청 …)은 API.md 대로 작게 구현한다.
 // 다른 사용자·공개 방·친구는 fixtures/world.json 과 각본(FakeWorld.cpp)이 만든다.
+// 오류 코드·검사 순서·이벤트는 진짜 서버 v0.5 와 맞췄다 (R11 PR5). 흉내 내지 않는 것:
+//   - 실시간 연결은 이 앱의 계정 하나뿐이라 다른 사용자에게 가는 이벤트는 버린다
+//   - 요청 횟수 제한(429, 로그인 실패 제한 포함), 인증 5초·무응답 45초 닫기, 4000·4002 는 개발 명령으로만
+//   - 탈퇴 30일 뒤 영구 삭제, 실시간 연결 없이 REST 로만 들어온 멤버의 30초 정리 (끊긴 뒤 30초 정리는 한다)
+//   - 다른 컴퓨터가 만든 방의 제목·멤버·방장 (코드 입장은 "비공개 방"으로 들어가 AOO 상대로 채운다), 메일 발송
 //
 // 가짜 기간의 실제 합주 (REMAKE_PLAN 1.5): Connection 은 지금 AOO 서버를 쓰고, 비공개 방은 입장 코드를 그룹 이름으로,
 // 그룹 비밀번호는 코드에서 계산한다. 그래서 다른 컴퓨터의 가짜 서버와도 같은 AOO 그룹에서 만난다.
@@ -95,9 +100,9 @@ public:
     static constexpr int joinRequestLifeMs = 60000;
     static constexpr int requestUntilMs = 5 * 60 * 1000;
     static constexpr int accessLifeMs = 15 * 60 * 1000;
-    // refresh 재사용 유예: 회전한 뒤 새 토큰이 한 번도 쓰이지 않았으면 옛 토큰을 이 시간까지 받아 준다.
-    // 진짜 서버 반영 대기 (지금 진짜 서버 API 1.3 은 10초 유예. 같은 규칙으로 바꾸는 일은 서버 쪽에서 따로 한다)
+    // refresh 재사용 유예 (API 1.3): 회전한 뒤 새 토큰이 한 번도 쓰이지 않았으면 옛 토큰을 처음 회전부터 이 시간까지 받아 준다
     static constexpr int refreshReuseGraceMs = 10 * 60 * 1000;
+    static constexpr int disconnectGraceMs = 30000;   // 끊긴 지 30초: 방에서 퇴장, 승인 요청 삭제, 받은 초대 소멸 (PLAN 5.1)
     static constexpr int codeLifeMs = 10 * 60 * 1000;
     static constexpr int resendGapMs = 30000;
     static constexpr int closedMemoryMs = 24 * 60 * 60 * 1000;
@@ -116,12 +121,13 @@ private:
         bool scripted = false;       // 각본 사용자 (fixtures/world.json). 실제 앱이 아니라 채팅을 받지 못한다
         bool online = false;         // 가짜 사용자: 각본이 정한다. 내 계정: 실시간 연결이 있을 때
         juce::int64 lastSeenAt = 0;
-        bool deleted = false;
+        bool deleted = false;        // 탈퇴 유예 중 (다시 로그인하면 취소. 이메일·아이디는 그동안 예약)
         OptInt rttMs;
         juce::String aooPassword;
         // 메일 코드
         juce::String verifyCode, emailCode;
-        juce::int64 verifyCodeAt = 0, emailCodeAt = 0, lastMailAt = 0;
+        juce::int64 verifyCodeAt = 0, emailCodeAt = 0;
+        juce::int64 lastSignupMailAt = 0, lastEmailChangeMailAt = 0;   // 30초 1회는 용도마다 (가입 인증 / 이메일 변경)
         int verifyFails = 0, emailFails = 0;
         juce::StringArray refreshTokens;
         bool worldAttached = false;  // 가짜 친구·요청·차단을 붙였는지
@@ -146,9 +152,12 @@ private:
 
     struct FriendReqRec { juce::String id, from, to; juce::int64 at; bool hidden = false, read = false; };
     struct JoinReqRec { juce::String id, roomId, userId; bool viaInvite = false; juce::int64 at = 0, expiresAt = 0; };
-    struct InviteRec { juce::String id, from, to, roomId; juce::int64 at = 0, deliverAt = 0; bool delivered = false; };
-    struct Session { juce::String userId; juce::int64 expiresAt; };
-    struct RequestUntil { juce::String roomId; juce::int64 until; };
+    // 초대는 끝나도 기록을 남긴다 (진짜 서버의 invites 행). ended: "" 살아 있음, accepted, dismissed, dropped(전달 때 버림), expired.
+    // 한 방·한 사람에 기록 하나: 무시한 초대가 남아 있으면 다시 초대할 수 없다 (already_invited). 나머지는 새 초대 전에 지운다
+    struct InviteRec { juce::String id, from, to, roomId; juce::int64 at = 0, deliverAt = 0; bool delivered = false; juce::String ended; };
+    // 진짜 서버처럼 로그인 한 번이 세션 하나. refresh 회전마다 세대가 오르고, 옛 세대의 access 토큰은 바로 무효 (API 1.3)
+    struct Session { juce::String userId, sessionId; int generation = 0; juce::int64 expiresAt = 0; };   // access 토큰
+    struct SessionRec { juce::String userId; int generation = 0; };
 
     using Body = juce::var;
     struct Out { int status; Body body; };
@@ -166,13 +175,17 @@ private:
     std::set<juce::String> friendships;                 // "a|b" (작은 ID 먼저)
     std::map<juce::String, std::map<juce::String, juce::int64>> blocks;   // 차단한 사람 → 차단당한 사람 → 시각
     std::vector<JoinReqRec> joinRequests;
-    std::map<juce::String, RequestUntil> requestUntil;  // 신청자 → 요청 보냄 표시
+    std::map<juce::String, std::map<juce::String, juce::int64>> requestUntil;  // 신청자 → 방 → 요청 보냄 표시 (방마다 따로)
     std::vector<InviteRec> invites;
     std::map<juce::String, Session> accessTokens;
-    std::map<juce::String, juce::String> refreshOwners;  // refresh → 사용자
-    // 회전해서 지운 refresh → 그때 준 새 refresh·회전 시각 (재사용 유예와 도용 판단용, 진짜 서버 반영 대기)
-    struct Rotation { juce::String userId, issued; juce::int64 at = 0; };
+    std::map<juce::String, SessionRec> sessions;         // 세션 ID → 사용자·세대
+    struct RefreshRec { juce::String userId, sessionId; };
+    std::map<juce::String, RefreshRec> refreshOwners;    // 살아 있는 refresh → 사용자·세션
+    // 회전해서 지운 refresh → 그때 준 새 refresh·회전 시각 (재사용 유예와 도용 판단용)
+    struct Rotation { juce::String userId, sessionId, issued; juce::int64 at = 0; };
     std::map<juce::String, Rotation> rotatedRefresh;
+    // 유예로 다시 발급하면서 버린 refresh (받지 못한 새 토큰). 다시 오면 도용으로 본다
+    std::map<juce::String, RefreshRec> discardedRefresh;
     std::map<juce::String, juce::String> fixedCodes;     // 시험용 코드 → 오류 키
     juce::String lastMailedCode;
 
@@ -180,6 +193,8 @@ private:
     Sink* sink = nullptr;
     bool wsOpen = false, subscribed = false;
     juce::String wsUser;           // 인증된 사용자 (= 이 앱의 나)
+    juce::String wsSession;        // 그 연결의 세션 (세션을 폐기하면 4001 로 닫는다)
+    bool wsAuthed = false;         // 이 연결에서 auth 를 마쳤는지 (첫 메시지는 auth 여야 한다)
     int seq = 0;
     juce::int64 dropUntil = 0;
     int connectionGen = 0;
@@ -216,6 +231,7 @@ private:
     bool areFriends (const juce::String& a, const juce::String& b) const;
     bool hasBlocked (const juce::String& by, const juce::String& target) const;
     bool blockedEitherWay (const juce::String& a, const juce::String& b) const;
+    void removeFriendRequestsBetween (juce::String a, juce::String b);   // 숨은 기록 포함, 양쪽 방향
     bool hostPresent (const RoomRec&) const;
     bool hasRoomFor (const RoomRec&, const juce::String& userId) const;
     bool isOnline (const juce::String& userId) const;
@@ -249,7 +265,9 @@ private:
     // 그래서 값으로 받는다 (호출하는 쪽이 r->id, it->userId 처럼 넘겨도 안전하게)
     void removeMember (RoomRec&, juce::String userId);
     void deleteRoom (juce::String roomId, bool closedByHost);
-    void expireInvitesTo (juce::String userId);
+    void expireInvitesTo (juce::String userId, bool notify = true);
+    /** 새 초대 전: 다시 초대할 수 있는 지난 기록(수락·버림·소멸)을 지우고, 남은 기록(대기·전달·무시)이 있으면 true */
+    bool inviteExists (const juce::String& roomId, const juce::String& to);
     void removeJoinRequestsOf (juce::String userId);
     void removeJoinRequestsForRoom (juce::String roomId);
     void deliverInvite (const juce::String& inviteId);
@@ -267,8 +285,17 @@ private:
     static Out noContent() { return { 204, {} }; }
     static Out fail (ErrorCode c, const juce::String& msg = {}, const juce::String& field = {});
     /** rotatedFrom: refresh 회전이면 지운 옛 토큰 (새로 준 토큰을 기록한 뒤 상태를 저장한다) */
-    Out issueTokens (User&, int status, bool withMe, const juce::String& rotatedFrom = {});
-    void revokeAllSessions (const juce::String& userId);
+    Out issueTokens (User&, int status, bool withMe, const juce::String& sessionId, const juce::String& rotatedFrom = {});
+    juce::String newSession (const juce::String& userId);
+    /** 세션 폐기: 그 세션의 refresh·회전 기록을 지우고, 실시간 연결이 그 세션이면 4001 로 닫는다 */
+    void revokeSession (const juce::String& sessionId);
+    void revokeAllSessions (const juce::String& userId, const juce::String& keepSession = {});
+    /** 서버가 실시간 연결을 닫음 (닫는 코드는 API 10.1). 접속 끊김으로 처리한다 */
+    void serverCloseLink (int code);
+    /** 내 계정의 실시간 연결이 끊김: 오프라인, 30초 뒤 정리 */
+    void linkLost();
+    void sweepDisconnected (const juce::String& userId);
+    int sweepGen = 0;
 
     JUCE_DECLARE_NON_COPYABLE (FakeMeonServer)
 };

@@ -69,6 +69,45 @@ FakeMeonServer::Out FakeMeonServer::fail (ErrorCode c, const String& msg, const 
     return { errorHttpStatus (c), json::encodeError (ApiError::of (c, msg, field)) };
 }
 
+// 진짜 서버의 이메일 검사 (validate.Email). 앱의 validation::email 보다 엄격하다 (서버가 최종 판정)
+static bool serverEmailOk (const String& s)
+{
+    if (s.isEmpty() || s.getNumBytesAsUTF8() > 254 || s.containsAnyOf (" \t\r\n<>\"(),;:\\[]")) return false;
+    for (auto p = s.getCharPointer(); ! p.isEmpty();)
+        if (p.getAndAdvance() > 0x7F) return false;
+    const int at = s.lastIndexOfChar ('@');
+    if (at < 1 || at > 64 || at == s.length() - 1) return false;
+    const auto local = s.substring (0, at), domain = s.substring (at + 1);
+    if (local.containsChar ('@')) return false;
+    if (local.startsWithChar ('.') || local.endsWithChar ('.') || local.contains ("..")) return false;   // mail.ParseAddress
+    return domain.containsChar ('.') && ! domain.startsWithChar ('.') && ! domain.endsWithChar ('.') && ! domain.contains ("..");
+}
+
+// 방 이름·소개의 제어 문자 (validate.Text): Cc 와 줄·문단 구분자. 소개는 줄바꿈(\n)만 허용
+static bool hasControl (const String& s, bool multiline)
+{
+    for (auto p = s.getCharPointer(); ! p.isEmpty();)
+    {
+        const auto c = p.getAndAdvance();
+        if (multiline && c == '\n') continue;
+        if (c < 0x20 || (c >= 0x7F && c <= 0x9F) || c == 0x2028 || c == 0x2029) return true;
+    }
+    return false;
+}
+
+// PATCH 본문에 키가 있는데 값이 null 인지
+static bool isNullField (const var& obj, const char* key)
+{
+    auto* o = obj.getDynamicObject();
+    return o != nullptr && o->hasProperty (key) && obj.getProperty (key, var()).isVoid();
+}
+
+static bool hasField (const var& obj, const char* key)
+{
+    auto* o = obj.getDynamicObject();
+    return o != nullptr && o->hasProperty (key);
+}
+
 //==============================================================================
 // 조회
 
@@ -86,8 +125,8 @@ const FakeMeonServer::User* FakeMeonServer::findUser (const String& id) const
 
 FakeMeonServer::User* FakeMeonServer::findByEmail (const String& email)
 {
-    for (auto& [id, u] : users)
-        if (! u.deleted && u.email.equalsIgnoreCase (email)) return &u;
+    for (auto& [id, u] : users)   // 탈퇴 유예 중인 계정도 (주소는 예약, 로그인하면 탈퇴 취소)
+        if (u.email.equalsIgnoreCase (email)) return &u;
     return nullptr;
 }
 
@@ -131,6 +170,13 @@ static String pairKey (const String& a, const String& b) { return a < b ? a + "|
 
 bool FakeMeonServer::areFriends (const String& a, const String& b) const { return friendships.count (pairKey (a, b)) > 0; }
 
+void FakeMeonServer::removeFriendRequestsBetween (String a, String b)
+{
+    friendRequests.erase (std::remove_if (friendRequests.begin(), friendRequests.end(), [&] (const FriendReqRec& f)
+                          { return (f.from == a && f.to == b) || (f.from == b && f.to == a); }),
+                          friendRequests.end());
+}
+
 bool FakeMeonServer::hasBlocked (const String& by, const String& target) const
 {
     auto it = blocks.find (by);
@@ -172,7 +218,7 @@ int FakeMeonServer::pendingInviteCountFor (const String& userId) const
 {
     int n = 0;
     for (auto& i : invites)
-        if (i.to == userId && i.delivered) ++n;
+        if (i.to == userId && i.delivered && i.ended.isEmpty()) ++n;
     return n;
 }
 
@@ -217,9 +263,9 @@ Room FakeMeonServer::roomView (const RoomRec& r, const String& viewer) const
     if (auto* host = findUser (r.hostId)) x.hostRttMs = host->rttMs;
     for (auto& m : r.members)
         x.members.push_back ({ publicOf (m.userId), m.userId == r.hostId, areFriends (viewer, m.userId), json::isoTime (m.joinedAt) });
-    auto ru = requestUntil.find (viewer);
-    if (ru != requestUntil.end() && ru->second.roomId == r.id && ru->second.until > now())
-        x.myJoinRequestUntil = json::isoTime (ru->second.until);
+    if (auto ru = requestUntil.find (viewer); ru != requestUntil.end())
+        if (auto mark = ru->second.find (r.id); mark != ru->second.end() && mark->second > now())
+            x.myJoinRequestUntil = json::isoTime (mark->second);
     x.createdAt = json::isoTime (r.createdAt);
     return x;
 }
@@ -258,7 +304,8 @@ Friend FakeMeonServer::friendView (const String& friendId, const String& viewer)
     if (! online && u != nullptr && u->lastSeenAt > 0) f.lastSeenAt = json::isoTime (u->lastSeenAt);
     if (online && room != nullptr && room->type == "public")
         f.room = RoomRef { room->id, room->title, hasRoomFor (*room, viewer) && ! blockedEitherWay (viewer, room->hostId) };
-    f.canInvite = online && room == nullptr && u->settings.roomInvites == "friends";   // API 2.4·2.10: 상대 기준 (내 방 여부와 무관)
+    // API 2.4·2.10: 상대가 온라인이고 방에 없고 초대를 받고, 내가 방에 있을 때
+    f.canInvite = online && room == nullptr && u->settings.roomInvites == "friends" && roomOf (viewer) != nullptr;
     return f;
 }
 
@@ -272,12 +319,19 @@ std::vector<Friend> FakeMeonServer::friendsOf (const String& viewer) const
         const auto other = a == viewer ? b : a;
         if (findUser (other) != nullptr) list.push_back (friendView (other, viewer));
     }
+    // 진짜 서버 (view/friends.go sortFriends): in_room → online → offline. offline 은 last_seen_at 최근순(없으면 뒤),
+    // 그다음 닉네임순(한국어 정렬), 같으면 아이디순. 한국어 정렬은 대소문자를 가리지 않는 비교로 근사한다
     auto rank = [] (const Friend& f) { return f.status == "in_room" ? 0 : f.status == "online" ? 1 : 2; };
     std::stable_sort (list.begin(), list.end(), [&] (const Friend& x, const Friend& y)
     {
         if (rank (x) != rank (y)) return rank (x) < rank (y);
-        if (x.status == "offline") return x.lastSeenAt.value_or ("") > y.lastSeenAt.value_or ("");
-        return x.user.nickname.value_or ("") < y.user.nickname.value_or ("");
+        if (x.status == "offline" && x.lastSeenAt != y.lastSeenAt)
+        {
+            if (! x.lastSeenAt || ! y.lastSeenAt) return x.lastSeenAt.has_value();
+            return *x.lastSeenAt > *y.lastSeenAt;
+        }
+        if (const int c = x.user.nickname.value_or ("").compareIgnoreCase (y.user.nickname.value_or ("")); c != 0) return c < 0;
+        return x.user.username < y.user.username;
     });
     return list;
 }
@@ -315,7 +369,7 @@ Hello FakeMeonServer::helloFor (const String& userId) const
     h.friends = friendsOf (userId);
     h.hasUnreadNotifications = hasUnread (userId);
     for (auto& i : invites)
-        if (i.to == userId && i.delivered) h.pendingInvites.push_back (inviteView (i));
+        if (i.to == userId && i.delivered && i.ended.isEmpty()) h.pendingInvites.push_back (inviteView (i));
     h.config = config;
     return h;
 }
@@ -355,11 +409,7 @@ void FakeMeonServer::roomChanged (const RoomRec& r, bool publicListChanged)
     for (auto& m : r.members)
         emit (m.userId, "room.updated", json::encode (detailView (r, m.userId)));
     if (publicListChanged) emitRooms ("rooms.updated", r);
-    // 멤버를 친구로 둔 나에게 친구 상태(방 정보·joinable)도 바뀐다
-    if (wsUser.isNotEmpty())
-        for (auto& m : r.members)
-            if (m.userId != wsUser && areFriends (wsUser, m.userId))
-                emit (wsUser, "friend.updated", json::encode (friendView (m.userId, wsUser)));
+    // friend.updated 는 여기서 보내지 않는다: 진짜 서버는 들어오고 나간 사람 본인의 상태가 바뀔 때만 보낸다 (friendChanged)
 }
 
 void FakeMeonServer::friendChanged (const String& userId)
@@ -410,8 +460,9 @@ void FakeMeonServer::removeMember (RoomRec& r, String userId)
 {
     r.members.erase (std::remove_if (r.members.begin(), r.members.end(), [&] (const MemberRec& m) { return m.userId == userId; }),
                      r.members.end());
-    if (userId == r.hostId)
-        removeJoinRequestsForRoom (r.id);   // 방장이 나가면 대기 요청 즉시 삭제 (5.7)
+    // 방장이 나가면 대기 요청 즉시 삭제 (5.7, 방장에게 removed). 마지막 사람이면 방이 닫히며 조용히 지운다 (deleteRoom)
+    if (userId == r.hostId && ! r.members.empty())
+        removeJoinRequestsForRoom (r.id);
 }
 
 void FakeMeonServer::deleteRoom (String roomId, bool closedByHost)   // roomId 는 값: 방을 지운 뒤에도 쓴다
@@ -425,17 +476,16 @@ void FakeMeonServer::deleteRoom (String roomId, bool closedByHost)   // roomId �
             if (m.userId != copy.hostId)
                 emit (m.userId, "room.closed", json::obj ({ { "room_id", roomId }, { "reason", "host_closed" } }));
 
-    // 그 방 초대 전부 소멸 (받은 사람에게 invite.expired)
-    for (auto it = invites.begin(); it != invites.end();)
+    // 그 방 초대 전부 소멸 (이미 받은 사람에게만 invite.expired). 기록은 남긴다: 닫힌 방의 초대를 수락·무시하면 410
+    for (auto& i : invites)
     {
-        if (it->roomId == roomId)
-        {
-            if (it->delivered) emit (it->to, "invite.expired", json::obj ({ { "invite_id", it->id } }));
-            it = invites.erase (it);
-        }
-        else ++it;
+        if (i.roomId != roomId || i.ended.isNotEmpty()) continue;
+        i.ended = "expired";
+        if (i.delivered) emit (i.to, "invite.expired", json::obj ({ { "invite_id", i.id } }));
     }
-    removeJoinRequestsForRoom (roomId);
+    // 승인 요청은 조용히 지운다 (방장에게도 removed 없음, 진짜 서버 closeRoom)
+    joinRequests.erase (std::remove_if (joinRequests.begin(), joinRequests.end(), [&] (const JoinReqRec& j) { return j.roomId == roomId; }),
+                        joinRequests.end());
 
     closedRooms[roomId] = now();
     if (copy.type == "private" && copy.inviteCode.isNotEmpty()) closedRooms[copy.inviteCode] = now();
@@ -446,17 +496,25 @@ void FakeMeonServer::deleteRoom (String roomId, bool closedByHost)   // roomId �
         friendChanged (m.userId);
 }
 
-void FakeMeonServer::expireInvitesTo (String userId)
+void FakeMeonServer::expireInvitesTo (String userId, bool notify)
 {
-    for (auto it = invites.begin(); it != invites.end();)
+    // 전달된 살아 있는 초대만 소멸 (전달 전인 것은 전달 시점에 방에 있으면 버려진다)
+    for (auto& i : invites)
     {
-        if (it->to == userId)
-        {
-            if (it->delivered) emit (userId, "invite.expired", json::obj ({ { "invite_id", it->id } }));
-            it = invites.erase (it);
-        }
-        else ++it;
+        if (i.to != userId || ! i.delivered || i.ended.isNotEmpty()) continue;
+        i.ended = "expired";
+        if (notify) emit (userId, "invite.expired", json::obj ({ { "invite_id", i.id } }));
     }
+}
+
+bool FakeMeonServer::inviteExists (const String& roomId, const String& to)
+{
+    invites.erase (std::remove_if (invites.begin(), invites.end(), [&] (const InviteRec& i)
+                   { return i.roomId == roomId && i.to == to && (i.ended == "accepted" || i.ended == "dropped" || i.ended == "expired"); }),
+                   invites.end());
+    for (auto& i : invites)
+        if (i.roomId == roomId && i.to == to) return true;
+    return false;
 }
 
 void FakeMeonServer::removeJoinRequestsOf (String userId)
@@ -510,11 +568,12 @@ FakeMeonServer::Out FakeMeonServer::joinCommon (const String& actor, RoomRec& r,
                           && ! (viaInvite && inviterId == r.hostId);   // 방장의 초대는 승인 없이 (7.9)
     if (approval)
     {
-        if (! hostPresent (r)) return fail (ErrorCode::hostAbsent);
+        // 5분 안의 같은 방 재요청: 새로 만들지 않고 기존 request_until (방장이 없어도. 진짜 서버 requestJoin 순서)
+        auto& marks = requestUntil[actor];
+        if (auto mark = marks.find (r.id); mark != marks.end() && mark->second > now())
+            return { 202, json::obj ({ { "status", "requested" }, { "request_until", json::isoTime (mark->second) } }) };
 
-        auto ru = requestUntil.find (actor);
-        if (ru != requestUntil.end() && ru->second.roomId == r.id && ru->second.until > now())
-            return { 202, json::obj ({ { "status", "requested" }, { "request_until", json::isoTime (ru->second.until) } }) };
+        if (! hostPresent (r)) return fail (ErrorCode::hostAbsent);
 
         removeJoinRequestsOf (actor);   // 한 번에 한 방에만
         JoinReqRec j;
@@ -525,7 +584,7 @@ FakeMeonServer::Out FakeMeonServer::joinCommon (const String& actor, RoomRec& r,
         j.at = now();
         j.expiresAt = j.at + joinRequestLifeMs;
         joinRequests.push_back (j);
-        requestUntil[actor] = { r.id, j.at + requestUntilMs };
+        requestUntil[actor][r.id] = j.at + requestUntilMs;
         emit (r.hostId, "join_request.received", json::encode (joinRequestView (j)));
 
         std::weak_ptr<bool> weak = alive;
@@ -551,10 +610,14 @@ void FakeMeonServer::fakeHostConsider (const String& requestId)
         if (j.id != requestId) continue;
         auto* r = findRoom (j.roomId);
         if (r == nullptr || ! hasRoomFor (*r, j.userId) || roomOf (j.userId) != nullptr) return;
-        const auto userId = j.userId;
-        addMember (*r, userId);   // 요청도 지운다
+        const auto userId = j.userId, reqId = j.id;
+        // 수락한 요청은 먼저 지운다 (방장에게 removed 가 가지 않게, 진짜 서버 AcceptJoinRequest)
+        joinRequests.erase (std::remove_if (joinRequests.begin(), joinRequests.end(), [&] (const JoinReqRec& x) { return x.id == reqId; }),
+                            joinRequests.end());
+        addMember (*r, userId);
         emit (userId, "join_request.accepted", json::obj ({ { "room", json::encode (detailView (*r, userId)) } }));
         roomChanged (*r);
+        friendChanged (userId);
         return;
     }
 }
@@ -581,11 +644,21 @@ HttpResponse FakeMeonServer::handle (const HttpRequest& req)
     return r;
 }
 
-FakeMeonServer::Out FakeMeonServer::issueTokens (User& u, int status, bool withMe, const String& rotatedFrom)
+String FakeMeonServer::newSession (const String& userId)
 {
+    const auto id = newId ("s_");
+    sessions[id] = { userId, 0 };
+    return id;
+}
+
+FakeMeonServer::Out FakeMeonServer::issueTokens (User& u, int status, bool withMe, const String& sessionId, const String& rotatedFrom)
+{
+    auto& sess = sessions[sessionId];
+    sess.userId = u.id;
+    if (rotatedFrom.isNotEmpty()) ++sess.generation;   // 회전하면 옛 access 토큰은 바로 무효 (진짜 서버 BumpSession)
     const auto at = newId ("at_"), rt = newId ("rt_");
-    accessTokens[at] = { u.id, now() + accessLifeMs };
-    refreshOwners[rt] = u.id;
+    accessTokens[at] = { u.id, sessionId, sess.generation, now() + accessLifeMs };
+    refreshOwners[rt] = { u.id, sessionId };
     u.refreshTokens.add (rt);
     if (rotatedFrom.isNotEmpty())
     {
@@ -593,6 +666,7 @@ FakeMeonServer::Out FakeMeonServer::issueTokens (User& u, int status, bool withM
         auto& rot = rotatedRefresh[rotatedFrom];
         if (rot.at == 0) rot.at = now();
         rot.userId = u.id;
+        rot.sessionId = sessionId;
         rot.issued = rt;
     }
     // 오래된 회전 기록은 버린다 (유예가 끝난 뒤에도 하루는 남겨 도용으로 판단한다)
@@ -639,13 +713,14 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
 
         if (m == "POST" && what == "signup")
         {
+            // 진짜 서버 순서: email → username → password → agreed_terms (service/auth Signup)
             const auto email = body.getProperty ("email", "").toString().trim();
-            const auto username = body.getProperty ("username", "").toString().toLowerCase();
+            const auto username = body.getProperty ("username", "").toString().trim().toLowerCase();
             const auto password = body.getProperty ("password", "").toString();
-            if (! (bool) body.getProperty ("agreed_terms", false)) return fail (ErrorCode::invalidRequest, {}, "agreed_terms");
-            if (v::email (email) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "email");
+            if (! serverEmailOk (email)) return fail (ErrorCode::invalidRequest, {}, "email");
             if (v::username (username) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "username");
             if (v::password (password) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "password");
+            if (! (bool) body.getProperty ("agreed_terms", false)) return fail (ErrorCode::invalidRequest, {}, "agreed_terms");
             if (findByEmail (email) != nullptr) return fail (ErrorCode::emailTaken);
             if (findByUsername (username) != nullptr) return fail (ErrorCode::usernameTaken);
 
@@ -659,64 +734,66 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
             u.local = true;
             u.aooPassword = juce::Uuid().toString();
             u.verifyCode = newMailCode();
-            u.verifyCodeAt = u.lastMailAt = now();
+            u.verifyCodeAt = u.lastSignupMailAt = now();
             users[u.id] = u;
-            return issueTokens (users[u.id], 201, true);
+            return issueTokens (users[u.id], 201, true, newSession (u.id));
         }
 
         if (m == "POST" && what == "login")
         {
-            auto* u = findByEmail (body.getProperty ("email", "").toString().trim());
-            if (u == nullptr || u->passwordHash != hashPassword (u->salt, body.getProperty ("password", "").toString()))
+            const auto email = body.getProperty ("email", "").toString().trim();
+            const auto password = body.getProperty ("password", "").toString();
+            if (email.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "email");
+            if (password.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "password");
+            auto* u = findByEmail (email);
+            if (u == nullptr || u->passwordHash != hashPassword (u->salt, password))
                 return fail (ErrorCode::invalidCredentials, String::fromUTF8 ("이메일 또는 비밀번호가 맞지 않아요"));
-            return issueTokens (*u, 200, true);
+            u->deleted = false;   // 탈퇴 유예 중이면 탈퇴 취소 (API 3.7, 4.5)
+            return issueTokens (*u, 200, true, newSession (u->id));
         }
 
         if (m == "POST" && what == "refresh")
         {
             const auto rt = body.getProperty ("refresh_token", "").toString();
+            if (rt.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "refresh_token");
+            // 도용 판단: 그 계정의 모든 세션 무효 (실시간 연결은 4001). 다시 붙으려 하면 무효가 된 토큰이라 로그인 화면으로 간다
+            auto reuseDetected = [this] (const String& userId)
+            {
+                revokeAllSessions (userId);
+                stateChanged();
+                return fail (ErrorCode::unauthorized);
+            };
             auto it = refreshOwners.find (rt);
             if (it == refreshOwners.end())
             {
-                // 이미 회전한 토큰이 다시 왔다. 진짜 서버 반영 대기 (진짜 서버는 지금 10초 유예):
-                // - 그때 준 새 토큰이 한 번도 안 쓰였고 회전한 지 10분 안이면, 앱이 응답을 못 받고 죽었다가
+                // 유예 재발급으로 버린 토큰이 다시 옴: 도용 (진짜 서버 errReuse)
+                if (auto d = discardedRefresh.find (rt); d != discardedRefresh.end())
+                    return reuseDetected (d->second.userId);
+                // 이미 회전한 토큰이 다시 왔다 (API 1.3 재사용 유예):
+                // - 그때 준 새 토큰이 한 번도 안 쓰였고 처음 회전한 지 10분 안이면, 앱이 응답을 못 받고 죽었다가
                 //   다시 켠 것으로 본다 → 못 받은 새 토큰은 무효로 하고 새로 발급
                 // - 새 토큰이 이미 쓰였거나 10분이 지났으면 도용으로 본다 → 그 계정의 모든 세션 무효
                 auto rot = rotatedRefresh.find (rt);
                 if (rot == rotatedRefresh.end()) return fail (ErrorCode::unauthorized);
-                const auto userId = rot->second.userId, issued = rot->second.issued;
+                const auto userId = rot->second.userId, issued = rot->second.issued, sessionId = rot->second.sessionId;
                 auto* u = findUser (userId);
-                if (u == nullptr || u->deleted) return fail (ErrorCode::unauthorized);
+                if (u == nullptr || sessions.count (sessionId) == 0) return fail (ErrorCode::unauthorized);
                 const bool issuedUnused = refreshOwners.count (issued) > 0;
                 if (issuedUnused && now() - rot->second.at <= refreshReuseGraceMs)
                 {
                     refreshOwners.erase (issued);
                     u->refreshTokens.removeString (issued);
-                    return issueTokens (*u, 200, false, rt);
+                    discardedRefresh[issued] = { userId, sessionId };
+                    return issueTokens (*u, 200, false, sessionId, rt);
                 }
-                revokeAllSessions (userId);
-                stateChanged();
-                // 그 계정의 실시간 연결도 끊는다. 다시 붙으려 하면 무효가 된 토큰이라 로그인 화면으로 간다
-                if (userId == wsUser && wsOpen && sink != nullptr)
-                {
-                    std::weak_ptr<bool> weak = alive;
-                    const int gen = connectionGen;
-                    scheduler.post (options.latencyMs, [this, weak, gen]
-                    {
-                        if (weak.expired() || gen != connectionGen || ! wsOpen || sink == nullptr) return;
-                        auto* s = sink;
-                        wsOpen = false;
-                        ++connectionGen;
-                        s->transportClosed (4001);   // 세션 폐기 (API 10.1)
-                    });
-                }
-                return fail (ErrorCode::unauthorized);
+                return reuseDetected (userId);
             }
-            auto* u = findUser (it->second);
+            const auto owner = it->second;
+            auto* u = findUser (owner.userId);
             if (u == nullptr) return fail (ErrorCode::unauthorized);
             refreshOwners.erase (it);
             u->refreshTokens.removeString (rt);
-            return issueTokens (*u, 200, false, rt);
+            return issueTokens (*u, 200, false, owner.sessionId, rt);
         }
     }
 
@@ -725,6 +802,9 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
     auto sit = accessTokens.find (token);
     if (token.isEmpty() || sit == accessTokens.end()) return fail (ErrorCode::unauthorized);
     if (sit->second.expiresAt <= now()) return fail (ErrorCode::tokenExpired);
+    // 폐기한 세션이거나 회전으로 세대가 지난 토큰 (진짜 서버 principal)
+    if (auto se = sessions.find (sit->second.sessionId); se == sessions.end() || se->second.generation != sit->second.generation)
+        return fail (ErrorCode::unauthorized);
     auto* me = findUser (sit->second.userId);
     if (me == nullptr) return fail (ErrorCode::unauthorized);
 
@@ -745,6 +825,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
                                                 const juce::StringPairArray&)
 {
     const auto actor = accessTokens[req.accessToken].userId;
+    const auto mySession = accessTokens[req.accessToken].sessionId;
     auto& me = users[actor];
     const auto& body = req.body;
     const auto path = seg.joinIntoString ("/");
@@ -753,14 +834,12 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
     //------------------------------------------------------------------ 3 계정
     if (m == "POST" && path == "auth/logout")
     {
+        // 그 refresh 의 세션을 폐기한다 (그 세션의 access 토큰 전부 무효, 실시간 연결은 4001).
+        // 남의 토큰이거나 없는 토큰이면 아무것도 하지 않고 204 (API 3.9)
         const auto rt = body.getProperty ("refresh_token", "").toString();
-        refreshOwners.erase (rt);
-        me.refreshTokens.removeString (rt);
-        accessTokens.erase (req.accessToken);
-        // 로그아웃으로 끝난 세션: 그 세션의 옛 토큰은 유예·도용 판단 없이 그냥 무효
-        for (auto it = rotatedRefresh.begin(); it != rotatedRefresh.end();)
-            it = it->second.issued == rt ? rotatedRefresh.erase (it) : std::next (it);
-        stateChanged();
+        if (rt.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "refresh_token");
+        if (auto it = refreshOwners.find (rt); it != refreshOwners.end() && it->second.userId == actor)
+            revokeSession (it->second.sessionId);
         return noContent();
     }
 
@@ -782,9 +861,10 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
 
     if (m == "POST" && path == "auth/resend-verification")
     {
-        if (now() - me.lastMailAt < resendGapMs) return fail (ErrorCode::rateLimited);
+        if (me.verified) return noContent();   // 이미 인증함: 아무것도 하지 않는다
+        if (now() - me.lastSignupMailAt < resendGapMs) return fail (ErrorCode::rateLimited);
         me.verifyCode = newMailCode();
-        me.verifyCodeAt = me.lastMailAt = now();
+        me.verifyCodeAt = me.lastSignupMailAt = now();
         me.verifyFails = 0;
         return noContent();
     }
@@ -796,85 +876,117 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
 
         if (m == "PATCH")
         {
+            // 진짜 서버 순서 (handlers_auth.go): null 인 필드 → settings: null → username·email 은 바꿀 수 없음 → 값 검사
+            const auto settingsBody = body.getProperty ("settings", var());
+            if (isNullField (body, "nickname")) return fail (ErrorCode::invalidRequest, {}, "nickname");
+            if (isNullField (body, "part")) return fail (ErrorCode::invalidRequest, {}, "part");
+            if (isNullField (settingsBody, "friend_requests")) return fail (ErrorCode::invalidRequest, {}, "settings.friend_requests");
+            if (isNullField (settingsBody, "room_invites")) return fail (ErrorCode::invalidRequest, {}, "settings.room_invites");
+            if (isNullField (body, "settings")) return fail (ErrorCode::invalidRequest, {}, "settings");
+            if (hasField (body, "username")) return fail (ErrorCode::invalidRequest, {}, "username");
+            if (hasField (body, "email")) return fail (ErrorCode::invalidRequest, {}, "email");
             MePatch p;
             if (! json::decode (body, p)) return fail (ErrorCode::invalidRequest);
             if (p.nickname && v::nickname (*p.nickname) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "nickname");
             if (p.part && ! parts::isValid (*p.part)) return fail (ErrorCode::invalidRequest, {}, "part");
             if (p.friendRequests && *p.friendRequests != "everyone" && *p.friendRequests != "none")
-                return fail (ErrorCode::invalidRequest, {}, "friend_requests");
+                return fail (ErrorCode::invalidRequest, {}, "settings.friend_requests");
             if (p.roomInvites && *p.roomInvites != "friends" && *p.roomInvites != "none")
-                return fail (ErrorCode::invalidRequest, {}, "room_invites");
-            const bool profile = p.nickname || p.part;
+                return fail (ErrorCode::invalidRequest, {}, "settings.room_invites");
+            const auto before = me;
             if (p.nickname) me.nickname = v::normalise (*p.nickname);
             if (p.part) me.part = *p.part;
             if (p.friendRequests)
             {
                 me.settings.friendRequests = *p.friendRequests;
-                if (*p.friendRequests == "everyone")   // 숨은 요청 기록 삭제 (7.2)
+                if (before.settings.friendRequests == "none" && *p.friendRequests == "everyone")   // 받지 않음 → 모두: 숨은 요청 기록 삭제 (7.2)
                     friendRequests.erase (std::remove_if (friendRequests.begin(), friendRequests.end(),
                                                           [&] (const FriendReqRec& f) { return f.to == actor && f.hidden; }),
                                           friendRequests.end());
             }
             if (p.roomInvites) me.settings.roomInvites = *p.roomInvites;
-            if (profile) profileChanged (actor);
+            if (before.nickname != me.nickname || before.part != me.part) profileChanged (actor);   // 실제로 바뀌었을 때만
             return ok (json::encode (meOf (me)));
         }
 
         if (m == "DELETE")
         {
-            // API 4.5 (v0.5): 비밀번호 없이 세션만으로. 본문이 와도 보지 않는다
+            // API 4.5 (v0.5): 비밀번호 없이 세션만으로. 본문이 와도 보지 않는다.
+            // 탈퇴 유예(30일) 중에는 이메일·아이디를 예약하고, 다시 로그인하면 탈퇴를 취소한다 (가짜는 30일 뒤 삭제를 하지 않는다)
+            juce::StringArray friendIds;
+            for (auto& key : friendships)
+            {
+                const auto a = key.upToFirstOccurrenceOf ("|", false, false), b = key.fromFirstOccurrenceOf ("|", false, false);
+                if (a == actor || b == actor) friendIds.add (a == actor ? b : a);
+            }
             if (auto* r = roomOf (actor))
             {
                 const auto rid = r->id;
-                removeMember (*r, actor);
+                const bool wasHost = r->hostId == actor;
+                r->members.erase (std::remove_if (r->members.begin(), r->members.end(), [&] (const MemberRec& x) { return x.userId == actor; }),
+                                  r->members.end());
                 if (r->members.empty()) deleteRoom (rid, false);
                 else
                 {
-                    if (r->hostId == actor) r->hostId = r->members.front().userId;   // 가장 오래 있던 멤버
+                    if (wasHost) r->hostId = r->members.front().userId;   // 방장이면 가장 오래 있던 멤버에게 (진짜 서버 DetachForDeletion)
                     roomChanged (*r);
                 }
             }
             for (auto& [rid, r] : rooms)
                 if (r.hostId == actor && ! r.members.empty()) { r.hostId = r.members.front().userId; roomChanged (r); }
-            revokeAllSessions (actor);
+            removeJoinRequestsOf (actor);
+            expireInvitesTo (actor);
             me.deleted = true;
-            me.email = "deleted:" + me.email;   // 30일 뒤 재가입 허용 규칙은 가짜에서는 바로 허용
-            if (wsUser == actor) close();
+            revokeAllSessions (actor);   // 실시간 연결은 4001
+            for (auto& f : friendIds)
+            {
+                emit (actor, "friend.removed", json::obj ({ { "user_id", f } }));
+                emit (f, "friend.removed", json::obj ({ { "user_id", actor } }));
+            }
             return noContent();
         }
     }
 
     if (m == "POST" && path == "me/password")
     {
-        if (me.passwordHash != hashPassword (me.salt, body.getProperty ("current_password", "").toString()))
-            return fail (ErrorCode::invalidCredentials);
+        const auto current = body.getProperty ("current_password", "").toString();
         const auto next = body.getProperty ("new_password", "").toString();
+        if (current.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "current_password");
         if (v::password (next) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "new_password");
+        if (me.passwordHash != hashPassword (me.salt, current)) return fail (ErrorCode::invalidCredentials);
         me.passwordHash = hashPassword (me.salt, next);
+        revokeAllSessions (actor, mySession);   // 지금 세션 외 모두 폐기 (API 4.3)
         return noContent();
     }
 
     if (m == "POST" && path == "me/email")
     {
+        // 진짜 서버 순서 (account.RequestEmailChange): 형식 → 지금 주소와 같음 → (인증한 계정) 비밀번호 → email_taken → 30초 1회 (용도마다)
         const auto email = body.getProperty ("new_email", "").toString().trim();
-        if (v::email (email) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "new_email");
+        if (! serverEmailOk (email)) return fail (ErrorCode::invalidRequest, {}, "new_email");
+        if (email.equalsIgnoreCase (me.email)) return fail (ErrorCode::invalidRequest, {}, "new_email");
+        if (me.verified)
+        {
+            // 인증을 마친 계정은 지금 비밀번호가 맞아야 한다 (API 4.4)
+            const auto pw = body.getProperty ("password", "").toString();
+            if (pw.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "password");
+            if (me.passwordHash != hashPassword (me.salt, pw)) return fail (ErrorCode::invalidCredentials);
+        }
         if (auto* other = findByEmail (email); other != nullptr && other != &me) return fail (ErrorCode::emailTaken);
-        if (now() - me.lastMailAt < resendGapMs) return fail (ErrorCode::rateLimited);
         if (! me.verified)
         {
             // 인증 전: 주소를 바로 바꾸고 가입 인증 코드를 새 주소로 (4.4)
+            if (now() - me.lastSignupMailAt < resendGapMs) return fail (ErrorCode::rateLimited);
             me.email = email;
             me.verifyCode = newMailCode();
-            me.verifyCodeAt = me.lastMailAt = now();
+            me.verifyCodeAt = me.lastSignupMailAt = now();
             me.verifyFails = 0;
             return noContent();
         }
-        // 인증을 마친 계정은 지금 비밀번호가 맞아야 한다 (API 4.4)
-        const auto pw = body.getProperty ("password", "").toString();
-        if (me.passwordHash != hashPassword (me.salt, pw)) return fail (ErrorCode::invalidCredentials);
+        if (now() - me.lastEmailChangeMailAt < resendGapMs) return fail (ErrorCode::rateLimited);
         me.pendingEmail = email;
         me.emailCode = newMailCode();
-        me.emailCodeAt = me.lastMailAt = now();
+        me.emailCodeAt = me.lastEmailChangeMailAt = now();
         me.emailFails = 0;
         return noContent();
     }
@@ -887,7 +999,13 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             if (++me.emailFails >= 5) me.emailCode = {};
             return fail (ErrorCode::codeInvalid);
         }
-        if (auto* other = findByEmail (*me.pendingEmail); other != nullptr && other != &me) return fail (ErrorCode::emailTaken);
+        if (auto* other = findByEmail (*me.pendingEmail); other != nullptr && other != &me)
+        {
+            // 그사이 다른 계정이 그 주소를 씀: 변경 요청을 지운다 (진짜 서버 account.go)
+            me.pendingEmail.reset();
+            me.emailCode = {};
+            return fail (ErrorCode::emailTaken);
+        }
         me.email = *me.pendingEmail;
         me.pendingEmail.reset();
         me.emailCode = {};
@@ -919,14 +1037,18 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             p.room = fv.room;
             p.canInvite = fv.canInvite;
         }
-        p.canSendFriendRequest = u->settings.friendRequests != "none" || hasBlocked (u->id, actor);
+        // 상대 설정만 본다 (상대가 나를 차단했어도 설정이 everyone 이면 true, 차단 사실을 숨긴다)
+        p.canSendFriendRequest = u->settings.friendRequests == "everyone";
         return ok (json::encode (p));
     }
 
     if (m == "POST" && path == "me/rtt")
     {
-        const int ms = (int) body.getProperty ("aoo_rtt_ms", -1);
-        if (ms < 0) return fail (ErrorCode::invalidRequest, {}, "aoo_rtt_ms");
+        const auto value = body.getProperty ("aoo_rtt_ms", var());
+        if (! hasField (body, "aoo_rtt_ms") || value.isVoid()) return fail (ErrorCode::invalidRequest, {}, "aoo_rtt_ms");
+        if (! (value.isInt() || value.isInt64())) return fail (ErrorCode::invalidRequest);   // 정수가 아님 (본문 해석 실패)
+        const int ms = (int) value;
+        if (ms < 0 || ms > 10000) return fail (ErrorCode::invalidRequest, {}, "aoo_rtt_ms");
         const bool changed = me.rttMs != OptInt (ms);
         me.rttMs = ms;
         if (changed)
@@ -936,7 +1058,23 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
     }
 
     if (m == "POST" && path == "telemetry/latency")
+    {
+        // 5.10: room_id 형식과 값 범위(0~10000 ms)만 본다 (진짜 서버와 같게. 그 방의 멤버인지는 보지 않는다).
+        // 빠진 값은 0 으로 받는다. 정수가 아니면 본문 해석 실패 (필드 없음)
+        static const char* fields[] = { "estimated_ms", "my_rtt_ms", "host_rtt_ms", "actual_p2p_rtt_ms" };
+        for (auto* field : fields)
+        {
+            const auto value = body.getProperty (field, var());
+            if (hasField (body, field) && ! value.isVoid() && ! (value.isInt() || value.isInt64())) return fail (ErrorCode::invalidRequest);
+        }
+        if (! body.getProperty ("room_id", "").toString().startsWith ("r_")) return fail (ErrorCode::invalidRequest, {}, "room_id");
+        for (auto* field : fields)
+        {
+            const auto ms = (juce::int64) body.getProperty (field, 0);
+            if (ms < 0 || ms > 10000) return fail (ErrorCode::invalidRequest, {}, field);
+        }
         return noContent();
+    }
 
     //------------------------------------------------------------------ 5 방
     if (seg.size() >= 1 && seg[0] == "rooms")
@@ -954,14 +1092,18 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
 
         if (n == 1 && m == "POST")
         {
+            // 진짜 서버 순서: capacity 빠짐·null → type → entry_mode (비공개 방은 키 자체가 없어야) → title → description → capacity 범위
+            if (! hasField (body, "capacity") || isNullField (body, "capacity")) return fail (ErrorCode::invalidRequest, {}, "capacity");
             CreateRoom c;
             if (! json::decode (body, c)) return fail (ErrorCode::invalidRequest);
             if (c.type != "public" && c.type != "private") return fail (ErrorCode::invalidRequest, {}, "type");
             if (c.type == "public" && c.entryMode != String ("instant") && c.entryMode != String ("approval"))
                 return fail (ErrorCode::invalidRequest, {}, "entry_mode");
-            if (c.type == "private" && c.entryMode) return fail (ErrorCode::invalidRequest, {}, "entry_mode");
-            if (v::roomTitle (c.title) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "title");
-            if (v::roomDescription (c.description) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "description");
+            if (c.type == "private" && hasField (body, "entry_mode")) return fail (ErrorCode::invalidRequest, {}, "entry_mode");
+            if (v::roomTitle (c.title) != v::Problem::none || hasControl (v::normalise (c.title), false))
+                return fail (ErrorCode::invalidRequest, {}, "title");
+            if (v::roomDescription (c.description) != v::Problem::none || hasControl (v::normalise (c.description), true))
+                return fail (ErrorCode::invalidRequest, {}, "description");
             if (c.capacity < 2 || c.capacity > 7) return fail (ErrorCode::invalidRequest, {}, "capacity");
             if (roomOf (actor) != nullptr) return fail (ErrorCode::alreadyInRoom);
 
@@ -1010,6 +1152,27 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             return joinCommon (actor, *r, false, {});
         }
 
+        // 5.6 퇴장: 그 방 멤버가 아니거나, 방이 없거나 닫혔어도 204 (재시도해도 같게)
+        if (n == 3 && seg[2] == "leave" && m == "POST")
+        {
+            auto* lr = findRoom (seg[1]);
+            if (lr == nullptr || ! isMember (lr->id, actor)) return noContent();
+            const auto rid = lr->id;
+            removeMember (*lr, actor);
+            if (lr->members.empty()) deleteRoom (rid, false);
+            else roomChanged (*lr);
+            friendChanged (actor);
+            return noContent();
+        }
+
+        // 6.2·6.3 본문의 user_id 는 방을 찾기 전에 본다: 비었으면 400, 형식이 틀리면 방에 없는 사람 (진짜 서버 targetUser)
+        if (n == 3 && (seg[2] == "transfer-host" || seg[2] == "kick") && m == "POST")
+        {
+            const auto target = body.getProperty ("user_id", "").toString();
+            if (target.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "user_id");
+            if (! target.startsWith ("u_")) return fail (ErrorCode::targetNotInRoom);
+        }
+
         auto* r = n >= 2 ? findRoom (seg[1]) : nullptr;
         if (n >= 2 && r == nullptr)
         {
@@ -1030,17 +1193,6 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             return joinCommon (actor, *r, false, {});
         }
 
-        if (n == 3 && seg[2] == "leave" && m == "POST")
-        {
-            if (! isMember (r->id, actor)) return fail (ErrorCode::notInRoom);
-            const auto rid = r->id;
-            removeMember (*r, actor);
-            if (r->members.empty()) deleteRoom (rid, false);
-            else roomChanged (*r);
-            friendChanged (actor);
-            return noContent();
-        }
-
         // 방장 전용 (6장): 지금 방에 있는 방장만
         const bool isHostHere = r != nullptr && r->hostId == actor && isMember (r->id, actor);
 
@@ -1057,8 +1209,8 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
         {
             if (! isHostHere) return fail (ErrorCode::notHost);
             auto it = std::find_if (joinRequests.begin(), joinRequests.end(),
-                                    [&] (const JoinReqRec& j) { return j.id == seg[3] && j.roomId == r->id; });
-            if (it == joinRequests.end()) return fail (ErrorCode::requestUnavailable);
+                                    [&] (const JoinReqRec& j) { return j.id == seg[3] && j.roomId == r->id && j.expiresAt > now(); });
+            if (it == joinRequests.end()) return fail (ErrorCode::notFound);   // 없거나 만료된 요청 (5.7)
             const auto userId = it->userId;
 
             if (seg[4] == "decline")
@@ -1079,6 +1231,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
                 return fail (ErrorCode::requestUnavailable);
             }
             if (! hasRoomFor (*r, userId)) return fail (ErrorCode::roomFull);   // 요청은 남는다
+            joinRequests.erase (it);   // 수락한 요청은 먼저 지운다 (방장에게 removed 가 가지 않게)
             addMember (*r, userId);
             emit (userId, "join_request.accepted", json::obj ({ { "room", json::encode (detailView (*r, userId)) } }));
             roomChanged (*r);
@@ -1091,14 +1244,17 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             if (! isHostHere) return fail (ErrorCode::notHost);
             RoomPatch p;
             if (! json::decode (body, p)) return fail (ErrorCode::invalidRequest);
+            // 진짜 서버 순서: title → description → type → entry_mode → capacity 범위 → 인원보다 작음
             const auto newType = p.type.value_or (r->type);
+            if (p.title && (v::roomTitle (*p.title) != v::Problem::none || hasControl (v::normalise (*p.title), false)))
+                return fail (ErrorCode::invalidRequest, {}, "title");
+            if (p.description && (v::roomDescription (*p.description) != v::Problem::none || hasControl (v::normalise (*p.description), true)))
+                return fail (ErrorCode::invalidRequest, {}, "description");
             if (newType != "public" && newType != "private") return fail (ErrorCode::invalidRequest, {}, "type");
-            if (p.title && v::roomTitle (*p.title) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "title");
-            if (p.description && v::roomDescription (*p.description) != v::Problem::none) return fail (ErrorCode::invalidRequest, {}, "description");
-            if (p.capacity && (*p.capacity < 2 || *p.capacity > 7)) return fail (ErrorCode::invalidRequest, {}, "capacity");
             if (newType == "private" && p.setEntryMode && p.entryMode) return fail (ErrorCode::invalidRequest, {}, "entry_mode");
             if (newType == "public" && p.setEntryMode && p.entryMode != String ("instant") && p.entryMode != String ("approval"))
                 return fail (ErrorCode::invalidRequest, {}, "entry_mode");
+            if (p.capacity && (*p.capacity < 2 || *p.capacity > 7)) return fail (ErrorCode::invalidRequest, {}, "capacity");
             if (p.capacity && *p.capacity < (int) r->members.size() + (hostPresent (*r) ? 0 : 1))
                 return fail (ErrorCode::capacityBelowMembers);
 
@@ -1131,7 +1287,8 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             if (oldMode == String ("approval") && r->entryMode != String ("approval"))
                 removeJoinRequestsForRoom (r->id);
 
-            roomChanged (*r, oldType == newType && newType == "public");
+            // 비공개 → 공개는 rooms.added 다음 rooms.updated 도 간다 (진짜 서버: 목록 이벤트 뒤 RoomChanged)
+            roomChanged (*r);
             return ok (json::encode (detailView (*r, actor)));
         }
 
@@ -1139,6 +1296,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
         {
             if (! isHostHere) return fail (ErrorCode::notHost);
             const auto target = body.getProperty ("user_id", "").toString();
+            if (target == actor) return fail (ErrorCode::invalidRequest, {}, "user_id");
             if (! isMember (r->id, target)) return fail (ErrorCode::targetNotInRoom);
             r->hostId = target;
             roomChanged (*r);
@@ -1151,9 +1309,9 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             const auto target = body.getProperty ("user_id", "").toString();
             if (target == actor) return fail (ErrorCode::invalidRequest, {}, "user_id");
             if (! isMember (r->id, target)) return fail (ErrorCode::targetNotInRoom);
-            removeMember (*r, target);
             r->kicked.insert (target);
             emit (target, "room.kicked", json::obj ({ { "room_id", r->id } }));
+            removeMember (*r, target);
             roomChanged (*r);
             friendChanged (target);
             return noContent();
@@ -1177,16 +1335,22 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
 
         if (n == 2 && seg[1] == "requests" && m == "GET")
         {
-            juce::Array<var> arr;
+            std::vector<const FriendReqRec*> list;
             for (auto& f : friendRequests)
-                if (f.to == actor && ! f.hidden && findUser (f.from) != nullptr)
-                    arr.add (json::encode (FriendRequest { f.id, publicOf (f.from), json::isoTime (f.at) }));
+                if (f.to == actor && ! f.hidden && findUser (f.from) != nullptr) list.push_back (&f);
+            // 최신순 (진짜 서버: created_at DESC, id DESC)
+            std::stable_sort (list.begin(), list.end(), [] (const FriendReqRec* a, const FriendReqRec* b)
+                              { return a->at != b->at ? a->at > b->at : a->id > b->id; });
+            juce::Array<var> arr;
+            for (auto* f : list)
+                arr.add (json::encode (FriendRequest { f->id, publicOf (f->from), json::isoTime (f->at) }));
             return ok (json::obj ({ { "requests", var (arr) } }));
         }
 
         if (n == 2 && seg[1] == "requests" && m == "POST")
         {
             const auto username = body.getProperty ("username", "").toString().trim().toLowerCase();
+            if (username.isEmpty()) return fail (ErrorCode::invalidRequest, {}, "username");
             auto result = [] (const char* r) { return ok (json::obj ({ { "result", r } })); };
             if (username == me.username) return result ("self");
             auto* target = findByUsername (username);
@@ -1194,13 +1358,16 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             if (hasBlocked (actor, target->id)) return fail (ErrorCode::blockedByMe);
             if (areFriends (actor, target->id)) return result ("already_friends");
 
-            for (auto it = friendRequests.begin(); it != friendRequests.end(); ++it)
+            for (auto& f : friendRequests)
             {
-                if (it->from == target->id && it->to == actor && ! it->hidden)
+                if (f.from == target->id && f.to == actor && ! f.hidden)
                 {
-                    friendships.insert (pairKey (actor, target->id));
-                    friendRequests.erase (it);
-                    emit (actor, "friend.added", json::encode (friendView (target->id, actor)));
+                    // 상대가 먼저 요청해 둠 → 바로 친구. 둘 사이의 요청은 숨은 기록까지 모두 지우고 양쪽에 friend.added
+                    const auto other = target->id;
+                    friendships.insert (pairKey (actor, other));
+                    removeFriendRequestsBetween (actor, other);
+                    emit (actor, "friend.added", json::encode (friendView (other, actor)));
+                    emit (other, "friend.added", json::encode (friendView (actor, other)));
                     return result ("accepted");
                 }
             }
@@ -1227,12 +1394,16 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
         {
             auto it = std::find_if (friendRequests.begin(), friendRequests.end(),
                                     [&] (const FriendReqRec& f) { return f.id == seg[2] && f.to == actor && ! f.hidden; });
-            if (it == friendRequests.end()) return fail (ErrorCode::notFound);
+            if (it == friendRequests.end() || findUser (it->from) == nullptr) return fail (ErrorCode::notFound);   // 보낸 사람이 탈퇴 유예 중이어도
+            if (seg[3] != "decline" && seg[3] != "accept") return fail (ErrorCode::notFound);
             const auto from = it->from;
-            friendRequests.erase (it);
-            if (seg[3] == "decline") return noContent();
-            if (seg[3] != "accept") return fail (ErrorCode::notFound);
+            if (seg[3] == "decline")
+            {
+                friendRequests.erase (it);
+                return noContent();
+            }
             friendships.insert (pairKey (actor, from));
+            removeFriendRequestsBetween (actor, from);   // 반대 방향 요청(숨은 기록 포함)도 지운다
             emit (actor, "friend.added", json::encode (friendView (from, actor)));
             emit (from, "friend.added", json::encode (friendView (actor, from)));
             return noContent();
@@ -1240,7 +1411,7 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
 
         if (n == 2 && m == "DELETE")
         {
-            if (! areFriends (actor, seg[1])) return fail (ErrorCode::notFriend);
+            if (! areFriends (actor, seg[1])) return fail (ErrorCode::notFound);   // 7.6
             friendships.erase (pairKey (actor, seg[1]));
             emit (actor, "friend.removed", json::obj ({ { "user_id", seg[1] } }));
             emit (seg[1], "friend.removed", json::obj ({ { "user_id", actor } }));
@@ -1264,8 +1435,8 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
             if (! t->online) return fail (ErrorCode::targetOffline);
             if (roomOf (target) != nullptr) return fail (ErrorCode::targetInRoom);
             if (! hasRoomFor (*r, target)) return fail (ErrorCode::roomFull);
-            for (auto& i : invites)
-                if (i.from == actor && i.to == target && i.roomId == r->id) return fail (ErrorCode::alreadyInvited);
+            // 한 방에서 같은 사람에게 한 번 (누가 보냈든): 3초 대기 중, 전달됐지만 수락·무시 전, 무시함 (API 7.7)
+            if (inviteExists (r->id, target)) return fail (ErrorCode::alreadyInvited);
 
             InviteRec i { newId ("inv_"), actor, target, r->id, now(), now() + inviteDelayMs, false };
             invites.push_back (i);
@@ -1281,26 +1452,34 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
         if (n == 2 && m == "DELETE")
         {
             if (it == invites.end() || it->from != actor) return fail (ErrorCode::notFound);
-            if (it->delivered) return fail (ErrorCode::alreadyDelivered);
+            if (it->delivered || it->ended.isNotEmpty()) return fail (ErrorCode::alreadyDelivered);   // 전달 때 버린 것 포함
             invites.erase (it);
             return noContent();
         }
 
-        if (n == 3 && m == "POST")
+        if (n == 3 && m == "POST" && (seg[2] == "accept" || seg[2] == "dismiss"))
         {
-            if (it == invites.end() || it->to != actor || ! it->delivered)
-                return fail (ErrorCode::notFound);
+            // 진짜 서버 lockReceivedInvite: 나에게 전달된 초대가 아니면 404 → 방이 닫혔으면 410 → 끝난 초대면 404
+            if (it == invites.end() || it->to != actor || ! it->delivered) return fail (ErrorCode::notFound);
             const auto inv = *it;
+            auto* r = findRoom (inv.roomId);
+            if (r == nullptr)
+                return closedRooms.count (inv.roomId) > 0 && now() - closedRooms[inv.roomId] < closedMemoryMs
+                           ? fail (ErrorCode::roomClosed) : fail (ErrorCode::notFound);
+            if (inv.ended.isNotEmpty()) return fail (ErrorCode::notFound);
             if (seg[2] == "dismiss")
             {
-                invites.erase (it);
+                it->ended = "dismissed";   // 기록은 남는다: 같은 방에서 다시 초대할 수 없다
                 return noContent();
             }
-            if (seg[2] != "accept") return fail (ErrorCode::notFound);
-            auto* r = findRoom (inv.roomId);
-            if (r == nullptr) { invites.erase (it); return fail (ErrorCode::roomClosed); }
-            // 초대한 사람이 수락 시점에 방장이면 승인 없이 (7.9)
-            return joinCommon (actor, *r, true, inv.from);
+            // 수락으로 먼저 끝낸다 (입장 정리의 invite.expired 대상이 아니게). 입장이 실패하면 되돌린다.
+            // 초대한 사람이 수락 시점에 방장이면 승인 없이 (7.9), 아니면 via_invite 승인 요청 (202 여도 초대는 끝난다)
+            it->ended = "accepted";
+            auto out = joinCommon (actor, *r, true, inv.from);
+            if (out.status >= 400)
+                for (auto& x : invites)
+                    if (x.id == inv.id) x.ended = {};
+            return out;
         }
         return fail (ErrorCode::notFound);
     }
@@ -1310,30 +1489,44 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
     {
         if (n == 1 && m == "GET")
         {
-            juce::Array<var> arr;
+            std::vector<std::pair<String, juce::int64>> list;
             if (auto b = blocks.find (actor); b != blocks.end())
                 for (auto& [uid, at] : b->second)
-                    if (findUser (uid) != nullptr)
-                        arr.add (json::encode (Block { publicOf (uid), json::isoTime (at) }));
+                    if (findUser (uid) != nullptr) list.push_back ({ uid, at });
+            // 최신순, 같으면 사용자 ID 순 (진짜 서버 ListBlocks)
+            std::stable_sort (list.begin(), list.end(), [] (const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+            juce::Array<var> arr;
+            for (auto& [uid, at] : list)
+                arr.add (json::encode (Block { publicOf (uid), json::isoTime (at) }));
             return ok (json::obj ({ { "blocks", var (arr) } }));
         }
         if (n == 1 && m == "POST")
         {
             const auto target = body.getProperty ("user_id", "").toString();
-            if (findUser (target) == nullptr || target == actor) return fail (ErrorCode::notFound);
+            if (target == actor) return fail (ErrorCode::invalidRequest, {}, "user_id");
+            if (findUser (target) == nullptr) return fail (ErrorCode::notFound);
             if (areFriends (actor, target)) return fail (ErrorCode::isFriend);
-            friendRequests.erase (std::remove_if (friendRequests.begin(), friendRequests.end(), [&] (const FriendReqRec& f)
-                                  { return (f.from == actor && f.to == target) || (f.from == target && f.to == actor); }),
-                                  friendRequests.end());
+            if (hasBlocked (actor, target)) return noContent();   // 이미 차단함: 그대로 (차단 시각도 그대로)
             blocks[actor][target] = now();
+            removeFriendRequestsBetween (actor, target);
+            // 차단한 사람의 공개 방 목록에서 상대가 방장인 방이 빠진다 (구독 중이면 rooms.removed)
+            if (subscribed && wsUser == actor)
+                for (auto& [rid, r] : rooms)
+                    if (r.type == "public" && r.hostId == target) emit (actor, "rooms.removed", json::obj ({ { "room_id", rid } }));
             return noContent();
         }
         if (n == 2 && m == "DELETE")
         {
-            blocks[actor].erase (seg[1]);
+            const auto other = seg[1];
+            if (! hasBlocked (actor, other)) return noContent();   // 차단한 적 없음: 아무것도 하지 않는다
+            blocks[actor].erase (other);
             friendRequests.erase (std::remove_if (friendRequests.begin(), friendRequests.end(), [&] (const FriendReqRec& f)
-                                  { return f.from == seg[1] && f.to == actor && f.hidden; }),
+                                  { return f.from == other && f.to == actor && f.hidden; }),
                                   friendRequests.end());
+            // 반대 방향 차단이 없으면 상대가 방장인 공개 방이 내 목록에 다시 나타난다 (구독 중이면 rooms.added)
+            if (subscribed && wsUser == actor && ! hasBlocked (other, actor))
+                for (auto& [rid, r] : rooms)
+                    if (r.type == "public" && r.hostId == other) emit (actor, "rooms.added", json::encode (roomView (r, actor)));
             return noContent();
         }
         return fail (ErrorCode::notFound);
@@ -1360,14 +1553,15 @@ void FakeMeonServer::deliverInvite (const String& inviteId)
 {
     for (auto it = invites.begin(); it != invites.end(); ++it)
     {
-        if (it->id != inviteId || it->delivered) continue;
-        // 전달 시점에 오프라인이거나 방에 있으면 조용히 버린다 (7.7)
+        if (it->id != inviteId || it->delivered || it->ended.isNotEmpty()) continue;
+        // 전달 시점에 오프라인이거나 방에 있으면 조용히 버린다 (7.7). 보낸 사람에게는 "초대됨" 그대로. 받은 사람에게는 없음.
+        // 기록은 dropped 로 남는다 (취소하면 already_delivered, 같은 사람에게 다시 초대할 수 있다)
+        it->delivered = true;
         if (! isOnline (it->to) || roomOf (it->to) != nullptr || findRoom (it->roomId) == nullptr)
         {
-            invites.erase (it);   // 보낸 사람에게는 "초대됨" 그대로. 받은 사람에게는 없음
+            it->ended = "dropped";
             return;
         }
-        it->delivered = true;
         emit (it->to, "invite.received", json::encode (inviteView (*it)));
         if (auto* u = findUser (it->to); u != nullptr && ! u->local)
         {
@@ -1381,13 +1575,13 @@ void FakeMeonServer::deliverInvite (const String& inviteId)
 void FakeMeonServer::fakeUserAcceptInvite (const String& inviteId)
 {
     auto it = std::find_if (invites.begin(), invites.end(), [&] (const InviteRec& i) { return i.id == inviteId; });
-    if (it == invites.end()) return;
+    if (it == invites.end() || it->ended.isNotEmpty()) return;
     const auto inv = *it;
-    invites.erase (it);
     auto* r = findRoom (inv.roomId);
     if (r == nullptr || roomOf (inv.to) != nullptr || ! hasRoomFor (*r, inv.to)) return;
     const bool direct = r->type == "private" || r->entryMode != String ("approval") || inv.from == r->hostId;
     if (! direct) return;
+    it->ended = "accepted";
     addMember (*r, inv.to);
     roomChanged (*r);
     friendChanged (inv.to);
@@ -1398,9 +1592,10 @@ void FakeMeonServer::fakeUserAcceptFriend (const String& requestId)
     auto it = std::find_if (friendRequests.begin(), friendRequests.end(), [&] (const FriendReqRec& f) { return f.id == requestId; });
     if (it == friendRequests.end() || it->hidden) return;
     const auto from = it->from, to = it->to;
-    friendRequests.erase (it);
     friendships.insert (pairKey (from, to));
+    removeFriendRequestsBetween (from, to);
     emit (from, "friend.added", json::encode (friendView (to, from)));
+    emit (to, "friend.added", json::encode (friendView (from, to)));
 }
 
 //==============================================================================
@@ -1419,6 +1614,7 @@ void FakeMeonServer::open (Sink* s)
         if (weak.expired() || gen != connectionGen || sink == nullptr) return;
         if (refuse) { sink->transportClosed (0); return; }
         wsOpen = true;
+        wsAuthed = false;
         seq = 0;
         sink->transportOpened();
     });
@@ -1452,17 +1648,26 @@ void FakeMeonServer::send (const var& msg)
         });
     };
 
-    if (type == "auth")
+    // 첫 메시지는 auth 여야 한다 (아니면 unauthorized 로 닫는다). 순서: 토큰 → email_not_verified → client_outdated (API 10.1)
+    if (! wsAuthed)
     {
+        if (type != "auth") { rejectAndClose ("unauthorized"); return; }
         auto it = accessTokens.find (msg.getProperty ("access_token", "").toString());
         if (it == accessTokens.end() || it->second.expiresAt <= now()) { rejectAndClose ("unauthorized"); return; }
-        const int build = (int) msg.getProperty ("build", 0);
-        if (build != 0 && build < config.minBuild) { rejectAndClose ("client_outdated"); return; }
+        auto se = sessions.find (it->second.sessionId);
+        if (se == sessions.end() || se->second.generation != it->second.generation) { rejectAndClose ("unauthorized"); return; }
         auto* u = findUser (it->second.userId);
         if (u == nullptr) { rejectAndClose ("unauthorized"); return; }
         if (! u->verified) { rejectAndClose ("email_not_verified"); return; }
+        // build 가 없으면 옛 앱으로 본다. 0 은 개발 빌드 (가짜 서버는 개발 서버처럼 받아 준다)
+        const auto buildValue = msg.getProperty ("build", var());
+        if (! (buildValue.isInt() || buildValue.isInt64())) { rejectAndClose ("client_outdated"); return; }
+        const auto build = (juce::int64) buildValue;
+        if (build < 0 || build > 0x7fffffff || (build != 0 && build < config.minBuild)) { rejectAndClose ("client_outdated"); return; }
 
         wsUser = u->id;
+        wsSession = it->second.sessionId;
+        wsAuthed = true;
         subscribed = false;
         const bool wasOnline = u->online;
         u->online = true;
@@ -1472,7 +1677,6 @@ void FakeMeonServer::send (const var& msg)
         scheduleScript();
         return;
     }
-    if (wsUser.isEmpty()) return;
 
     if (type == "ping")        reply (json::obj ({ { "type", "pong" } }));
     else if (type == "resync") sendHello();
@@ -1486,15 +1690,58 @@ void FakeMeonServer::send (const var& msg)
 void FakeMeonServer::close()
 {
     if (! wsOpen && sink == nullptr) return;
+    const bool wasOpen = wsOpen;
     wsOpen = false;
     ++connectionGen;
-    if (auto* u = findUser (wsUser))
-    {
-        u->online = false;
-        u->lastSeenAt = now();
-    }
     sink = nullptr;
+    if (wasOpen) linkLost();
     subscribed = false;
+}
+
+void FakeMeonServer::serverCloseLink (int code)
+{
+    if (! wsOpen || sink == nullptr) return;
+    auto* s = sink;
+    wsOpen = false;
+    ++connectionGen;
+    // 4000 은 같은 계정이 다른 곳에서 접속한 것이라 그 사용자는 계속 접속 중이다 (오프라인·30초 정리 없음)
+    if (code == 4000) subscribed = false;
+    else linkLost();
+    s->transportClosed (code);
+}
+
+void FakeMeonServer::linkLost()
+{
+    subscribed = false;
+    auto* u = findUser (wsUser);
+    if (u == nullptr) return;
+    u->online = false;
+    u->lastSeenAt = now();
+    friendChanged (u->id);
+    // 30초 안에 다시 붙지 않으면 정리한다 (진짜 서버 SweepDisconnected·SweepJoinRequests·SweepInvites)
+    std::weak_ptr<bool> weak = alive;
+    const auto userId = u->id;
+    const int gen = ++sweepGen;
+    scheduler.post (disconnectGraceMs, [this, weak, userId, gen]
+    {
+        if (! weak.expired() && gen == sweepGen) sweepDisconnected (userId);
+    });
+}
+
+void FakeMeonServer::sweepDisconnected (const String& userId)
+{
+    auto* u = findUser (userId);
+    if (u == nullptr || u->online || now() - u->lastSeenAt < disconnectGraceMs) return;
+    if (auto* r = roomOf (userId))
+    {
+        const auto rid = r->id;
+        removeMember (*r, userId);
+        if (r->members.empty()) deleteRoom (rid, false);
+        else roomChanged (*r);
+        friendChanged (userId);
+    }
+    removeJoinRequestsOf (userId);       // 방장에게 removed
+    expireInvitesTo (userId, false);     // 받은 사람은 오프라인이라 이벤트 없음
 }
 
 //==============================================================================
@@ -1503,30 +1750,23 @@ void FakeMeonServer::close()
 void FakeMeonServer::devDropLink (int seconds)
 {
     dropUntil = now() + seconds * 1000LL;
-    if (! wsOpen || sink == nullptr) return;
-    auto* s = sink;
-    wsOpen = false;
-    ++connectionGen;
-    s->transportClosed (0);   // 네트워크 끊김
+    serverCloseLink (0);   // 네트워크 끊김
 }
 
 void FakeMeonServer::devCloseLink (int code)
 {
-    if (! wsOpen || sink == nullptr) return;
-    auto* s = sink;
-    wsOpen = false;
-    ++connectionGen;
-    s->transportClosed (code);
+    serverCloseLink (code);
 }
 
 void FakeMeonServer::devKickMe()
 {
     auto* r = roomOf (wsUser);
     if (r == nullptr || r->hostId == wsUser) return;
-    removeMember (*r, wsUser);
     r->kicked.insert (wsUser);
     emit (wsUser, "room.kicked", json::obj ({ { "room_id", r->id } }));
+    removeMember (*r, wsUser);
     roomChanged (*r);
+    friendChanged (wsUser);
 }
 
 void FakeMeonServer::devCloseMyRoom()
@@ -1585,17 +1825,42 @@ void FakeMeonServer::remotePeerLeft (const String& userId)
 //==============================================================================
 // 저장
 
-void FakeMeonServer::revokeAllSessions (const String& userId)
+void FakeMeonServer::revokeSession (const String& sessionId)
 {
-    if (auto* u = findUser (userId))
+    const auto sit = sessions.find (sessionId);
+    if (sit == sessions.end()) return;
+    const auto userId = sit->second.userId;
+    sessions.erase (sit);
+    // access 토큰은 남겨 둔다: 만료 전이면 401, 만료 뒤면 token_expired (진짜 서버와 같은 순서)
+    auto& u = users[userId];
+    for (auto it = refreshOwners.begin(); it != refreshOwners.end();)
     {
-        for (auto& t : u->refreshTokens) refreshOwners.erase (t);
-        u->refreshTokens.clear();
+        if (it->second.sessionId == sessionId) { u.refreshTokens.removeString (it->first); it = refreshOwners.erase (it); }
+        else ++it;
     }
-    for (auto it = accessTokens.begin(); it != accessTokens.end();)
-        it = it->second.userId == userId ? accessTokens.erase (it) : std::next (it);
     for (auto it = rotatedRefresh.begin(); it != rotatedRefresh.end();)
-        it = it->second.userId == userId ? rotatedRefresh.erase (it) : std::next (it);
+        it = it->second.sessionId == sessionId ? rotatedRefresh.erase (it) : std::next (it);
+    for (auto it = discardedRefresh.begin(); it != discardedRefresh.end();)
+        it = it->second.sessionId == sessionId ? discardedRefresh.erase (it) : std::next (it);
+    stateChanged();
+    // 그 세션의 실시간 연결은 4001 (세션 폐기, API 10.1)
+    if (userId == wsUser && sessionId == wsSession && wsOpen && sink != nullptr)
+    {
+        std::weak_ptr<bool> weak = alive;
+        const int gen = connectionGen;
+        scheduler.post (options.latencyMs, [this, weak, gen]
+        {
+            if (! weak.expired() && gen == connectionGen) serverCloseLink (4001);
+        });
+    }
+}
+
+void FakeMeonServer::revokeAllSessions (const String& userId, const String& keepSession)
+{
+    juce::StringArray ids;
+    for (auto& [id, se] : sessions)
+        if (se.userId == userId && id != keepSession) ids.add (id);
+    for (auto& id : ids) revokeSession (id);
 }
 
 juce::var FakeMeonServer::saveState() const
@@ -1603,23 +1868,29 @@ juce::var FakeMeonServer::saveState() const
     juce::Array<var> accounts;
     for (auto& [id, u] : users)
     {
-        if (! u.local || u.deleted) continue;
-        juce::Array<var> tokens;
-        for (auto& t : u.refreshTokens) tokens.add (t);
+        if (! u.local) continue;
+        juce::Array<var> tokens;   // refresh 와 그 세션
+        for (auto& t : u.refreshTokens)
+            if (auto it = refreshOwners.find (t); it != refreshOwners.end())
+                tokens.add (json::obj ({ { "token", t }, { "session", it->second.sessionId } }));
         accounts.add (json::obj ({
             { "id", u.id }, { "username", u.username }, { "email", u.email }, { "salt", u.salt }, { "password_hash", u.passwordHash },
             { "nickname", u.nickname ? var (*u.nickname) : var() }, { "part", u.part ? var (*u.part) : var() },
             { "pending_email", u.pendingEmail ? var (*u.pendingEmail) : var() },
             { "email_verified", u.verified }, { "settings", json::encode (u.settings) },
             { "created_at", json::isoTime (u.createdAt) }, { "aoo_password", u.aooPassword }, { "refresh_tokens", var (tokens) },
-            { "verify_code", u.verifyCode }, { "verify_code_at", u.verifyCodeAt }
+            { "verify_code", u.verifyCode }, { "verify_code_at", u.verifyCodeAt }, { "deleted", u.deleted }
         }));
     }
     // 회전 기록도 남긴다: 응답을 받기 전에 앱이 죽었다가 다시 켜도 유예가 이어지게
     juce::Array<var> rotations;
     for (auto& [old, r] : rotatedRefresh)
-        rotations.add (json::obj ({ { "old", old }, { "issued", r.issued }, { "user", r.userId }, { "at", r.at } }));
-    return json::obj ({ { "version", 1 }, { "accounts", var (accounts) }, { "rotated_refresh", var (rotations) } });
+        rotations.add (json::obj ({ { "old", old }, { "issued", r.issued }, { "user", r.userId }, { "session", r.sessionId }, { "at", r.at } }));
+    juce::Array<var> discarded;
+    for (auto& [t, r] : discardedRefresh)
+        discarded.add (json::obj ({ { "token", t }, { "user", r.userId }, { "session", r.sessionId } }));
+    return json::obj ({ { "version", 1 }, { "accounts", var (accounts) }, { "rotated_refresh", var (rotations) },
+                        { "discarded_refresh", var (discarded) } });
 }
 
 void FakeMeonServer::loadState (const var& saved)
@@ -1645,12 +1916,19 @@ void FakeMeonServer::loadState (const var& saved)
             u.aooPassword = a.getProperty ("aoo_password", juce::Uuid().toString()).toString();
             u.verifyCode = a.getProperty ("verify_code", "").toString();
             u.verifyCodeAt = (juce::int64) a.getProperty ("verify_code_at", 0);
+            u.deleted = (bool) a.getProperty ("deleted", false);
             u.local = true;
             if (auto* toks = a.getProperty ("refresh_tokens", var()).getArray())
                 for (auto& t : *toks)
                 {
-                    u.refreshTokens.add (t.toString());
-                    refreshOwners[t.toString()] = u.id;
+                    // { token, session } (옛 저장 파일은 토큰 문자열만: 토큰마다 새 세션)
+                    const auto token = t.isObject() ? t.getProperty ("token", "").toString() : t.toString();
+                    auto sessionId = t.isObject() ? t.getProperty ("session", "").toString() : String();
+                    if (token.isEmpty()) continue;
+                    if (sessionId.isEmpty()) sessionId = newId ("s_");
+                    sessions[sessionId] = { u.id, 0 };
+                    u.refreshTokens.add (token);
+                    refreshOwners[token] = { u.id, sessionId };
                 }
             users[u.id] = u;
         }
@@ -1659,10 +1937,17 @@ void FakeMeonServer::loadState (const var& saved)
         for (auto& r : *arr)
         {
             const auto old = r.getProperty ("old", "").toString();
+            const auto issued = r.getProperty ("issued", "").toString();
+            auto sessionId = r.getProperty ("session", "").toString();
+            if (sessionId.isEmpty())
+                if (auto it = refreshOwners.find (issued); it != refreshOwners.end()) sessionId = it->second.sessionId;
             if (old.isNotEmpty())
-                rotatedRefresh[old] = { r.getProperty ("user", "").toString(), r.getProperty ("issued", "").toString(),
-                                        (juce::int64) r.getProperty ("at", 0) };
+                rotatedRefresh[old] = { r.getProperty ("user", "").toString(), sessionId, issued, (juce::int64) r.getProperty ("at", 0) };
         }
+    if (auto* arr = saved.getProperty ("discarded_refresh", var()).getArray())
+        for (auto& d : *arr)
+            if (const auto t = d.getProperty ("token", "").toString(); t.isNotEmpty())
+                discardedRefresh[t] = { d.getProperty ("user", "").toString(), d.getProperty ("session", "").toString() };
 }
 
 } // namespace meon::core
