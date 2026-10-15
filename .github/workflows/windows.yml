@@ -75,7 +75,9 @@ jobs:
         run: |
           cmake --build build --config Release --parallel --target MEON_Tests
           python scripts/meon_test_server.py 18080 2> mock.log &
-          sleep 2
+          # 가짜 서버가 실제로 답할 때까지 기다린다 (러너에 따라 Python 이 뜨는 데 수십 초 걸릴 수 있다)
+          for i in $(seq 1 60); do curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo && break; sleep 1; done
+          curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo || { echo "::error::가짜 서버가 뜨지 않음"; cat mock.log; exit 1; }
           T=build/MEON_Tests_artefacts/Release/MEON_Tests.exe
           MEON_TEST_MOCK=http://127.0.0.1:18080 "$T" Transport
           MEON_TEST_TLS=1 "$T" TransportTls
