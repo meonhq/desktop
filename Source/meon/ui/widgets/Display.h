@@ -89,7 +89,7 @@ public:
 
 private:
     juce::String title;
-    bool open = true, collapsible = false;
+    bool open = true, collapsible = false, sidewaysFold = false;
     float fold = 1.0f;
     std::unique_ptr<CollapseButton> collapse;
     juce::Component* accessory = nullptr;

@@ -89,6 +89,7 @@ void Card::setTitle (const juce::String& t, bool canCollapse, bool sideways)
 {
     title = t;
     collapsible = canCollapse;
+    sidewaysFold = canCollapse && sideways;
     if (collapsible && collapse == nullptr)
     {
         collapse = std::make_unique<CollapseButton> (sideways);
@@ -156,7 +157,9 @@ void Card::paint (juce::Graphics& g)
         g.setColour (col::ink);
         g.setFont (font (600, 15.0f));
         g.drawText (title, getLocalBounds().withHeight (headerHeight()).reduced (metric::padX, 0), juce::Justification::centredLeft, true);
-        if (fold > 0.0f || ! collapsible)   // 접힘(e = 0)이면 구분선 없음
+        // 세로로 접는 카드는 접히면(e = 0) 머리말만 남아 구분선이 없다.
+        // 옆으로 접는 카드(내 오디오·모니터)는 접혀도 아래에 미터가 남으므로 늘 긋는다
+        if (fold > 0.0f || ! collapsible || sidewaysFold)
         {
             g.setColour (col::line);
             g.fillRect (1, headerHeight(), getWidth() - 2, 1);
