@@ -7,17 +7,17 @@
 namespace meon::ui
 {
 
-/** 핑 배지 (폭 48, 높이 19). 18ms 를 넘으면 노란 면 + 진한 글자. text 가 "나" 같은 글자면 그대로 */
+/** 핑 배지 (폭 48, 높이 19, 모서리 5, 400 12px). 연한 회색 면(badgeBg) + #767676 글자, 테두리 없음.
+    핑 값과 상관없이 같은 모양 (예전의 18ms 초과 노란 면은 쓰지 않는다, 2026-10-16). text 가 "나" 같은 글자면 그대로 */
 class PingBadge : public juce::Component
 {
 public:
     PingBadge();
     void setPing (std::optional<int> ms);   // 없으면 "—"
-    void setText (const juce::String& t) { text = t; warn = false; repaint(); }
+    void setText (const juce::String& t) { text = t; repaint(); }
     void paint (juce::Graphics&) override;
 private:
     juce::String text { "—" };
-    bool warn = false;
 };
 
 /** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #E0E0E0.
@@ -50,7 +50,10 @@ private:
     Status status = Status::none;
 };
 
-/** "비공개" 같은 작은 태그 (500 11px #767676, 여백 2·4, 테두리 #E0E0E0, 모서리 3) */
+/** "비공개" 같은 작은 태그 (500 11px #767676, 여백 2·4, 연한 회색 면 badgeBg, 테두리 없음, 모서리 3) */
+/** 작은 태그 상자를 그린다 (Tag, 방 카드 멤버의 친구·방장, 합주 멤버 행의 방장이 함께 쓴다) */
+void paintTagBox (juce::Graphics&, juce::Rectangle<float> box, const juce::String& text, const juce::Font&);
+
 class Tag : public juce::Component
 {
 public:

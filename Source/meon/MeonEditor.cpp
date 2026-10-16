@@ -442,10 +442,33 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (TXT ("방장이 방을 닫았어요"), TXT ("금요일 밤 홍대 밴드 합주"));
     }
+    else if (p == "ping")   // 방 카드의 예상 지연 (내 RTT 를 정해 두면 방장 RTT 에 따라 낮고 높은 값이 섞인다)
+    {
+        core.store().setMyRtt (8);
+    }
     else if (p == "toastline")   // 한 줄 토스트 (초대 실패 등)가 초대 토스트 아래에 쌓인 모습
     {
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (ui::msg::inviteFailure (core::ErrorCode::targetOffline), {});
+    }
+    else if (p == "jam:ping")   // 멤버가 있는 공개 방에 들어가 멤버 행에 낮고 높은 핑을 보인다
+    {
+        const core::Room* pick = nullptr;
+        for (auto& r : core.store().state().publicRooms)
+            if (! r.isApproval() && r.memberCount < r.capacity && (pick == nullptr || r.memberCount > pick->memberCount))
+                pick = &r;
+        if (pick == nullptr) return;
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        core.home().joinRoom (pick->id, [safe] (core::Result<core::JoinResult>)
+        {
+            if (safe == nullptr) return;
+            auto* jam = safe->core.jam();
+            const auto& room = safe->core.store().state().currentRoom;
+            if (jam == nullptr || ! room) return;
+            const int pings[] = { 9, 26, 14, 41, 17, 33 };
+            int i = 0;
+            for (auto& m : room->members) jam->setPreviewPing (m.user.id, pings[i++ % 6]);
+        });
     }
     else if (p == "jam" || p.startsWith ("jam:"))
     {

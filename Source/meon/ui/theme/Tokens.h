@@ -22,6 +22,7 @@ namespace col
     const juce::Colour field        { 0xFFD5D5D5u };   // 입력·버튼 테두리
     const juce::Colour softBg       { 0xFFFCFCFCu };   // 작은 버튼·미터 상자 배경
     const juce::Colour hoverBg      { 0xFFF5F5F5u };   // 호버·비활성 면
+    const juce::Colour badgeBg      { 0xFFF5F5F5u };   // 핑 배지·작은 태그(친구·방장·비공개) 면, 글자는 inkSub. 테두리 없음
     const juce::Colour rowHover     { 0xFFF8F8F8u };   // 목록 행 호버
     const juce::Colour tabOn        { 0xFFF0F0F0u };   // 설정 탭 선택
     const juce::Colour danger       { 0xFFD92D20u };   // 오류·삭제
@@ -58,7 +59,6 @@ namespace metric
     constexpr int gap = 9;              // 나란히 붙는 카드·헤더 버튼 사이
     constexpr float radius = 6.0f;      // 카드·버튼·입력
     constexpr float smallRadius = 5.0f; // 작은 버튼·미터 상자
-    constexpr float pingWarnMs = 18.0f;
 
     // 창 크기 (6.1, Q19)
     constexpr int appMinW = 1024, appMinH = 680, appDefaultW = 1280, appDefaultH = 800;
