@@ -10,21 +10,16 @@ PingBadge::PingBadge() { setInterceptsMouseClicks (false, false); }
 void PingBadge::setPing (std::optional<int> ms)
 {
     text = ms ? juce::String (*ms) + "ms" : juce::String (TXT ("—"));
-    warn = ms && (float) *ms > metric::pingWarnMs;
     repaint();
 }
 
 void PingBadge::paint (juce::Graphics& g)
 {
+    // 테두리 1px 자리는 투명으로 둔다 (크기는 예전과 같음)
     auto r = juce::Rectangle<float> (48.0f, 19.0f).withCentre (getLocalBounds().toFloat().getCentre());
-    if (warn)
-    {
-        g.setColour (col::accentSoft);
-        g.fillRoundedRectangle (r, metric::smallRadius);
-    }
-    g.setColour (warn ? col::accent : col::line);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::smallRadius, 1.0f);
-    g.setColour (warn ? col::ink : col::inkSub);
+    g.setColour (col::badgeBg);
+    g.fillRoundedRectangle (r, metric::smallRadius);
+    g.setColour (col::inkSub);
     g.setFont (font (400, 12.0f));
     g.drawText (text, r, juce::Justification::centred, false);
 }
@@ -72,14 +67,19 @@ Tag::Tag (const juce::String& t) : text (t) { setInterceptsMouseClicks (false, f
 
 int Tag::getIdealWidth() const { return (int) std::ceil (textWidth (font (500, 11.0f), text)) + 8 + 2; }
 
+void paintTagBox (juce::Graphics& g, juce::Rectangle<float> box, const juce::String& text, const juce::Font& f)
+{
+    // 테두리 1px 자리는 투명으로 둔다 (크기는 예전과 같음)
+    g.setColour (col::badgeBg);
+    g.fillRoundedRectangle (box, 3.0f);
+    g.setColour (col::inkSub);
+    g.setFont (f);
+    g.drawText (text, box, juce::Justification::centred, false);
+}
+
 void Tag::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().withSizeKeepingCentre ((float) getIdealWidth(), 17.0f);
-    g.setColour (col::line);
-    g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
-    g.setColour (col::inkSub);
-    g.setFont (font (500, 11.0f));
-    g.drawText (text, r, juce::Justification::centred, false);
+    paintTagBox (g, getLocalBounds().toFloat().withSizeKeepingCentre ((float) getIdealWidth(), 17.0f), text, font (500, 11.0f));
 }
 
 //==============================================================================

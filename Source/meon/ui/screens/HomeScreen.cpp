@@ -149,11 +149,7 @@ struct HomeScreen::RoomCard : juce::Component
             {
                 cx += 3.0f;
                 const juce::Rectangle<float> tr (cx, (float) y + 1.5f, textWidth (tagF, tag) + 8.0f + 2.0f, 15.0f);
-                g.setColour (col::line);
-                g.drawRoundedRectangle (tr.reduced (0.5f), 3.0f, 1.0f);
-                g.setColour (col::inkSub);
-                g.setFont (tagF);
-                g.drawText (tag, tr, juce::Justification::centred, false);
+                paintTagBox (g, tr, tag, tagF);
             }
             y += 20;
         }

@@ -101,6 +101,8 @@ public:
 
     // 멤버 (나 포함, 서버 목록 순)
     std::vector<Member> members() const;
+    /** 개발용 미리 보기 (--screen=jam:ping): 엔진에 핑이 없는 멤버(가짜 서버 각본 사용자)에 보일 핑 */
+    void setPreviewPing (const juce::String& userId, int ms) { previewPings[userId] = ms; }
     float memberLevel (const juce::String& userId, int channel) const;
     void setMemberMuted (const juce::String& userId, bool);
     void setMemberGainDb (const juce::String& userId, float db);   // -60 ~ +6
@@ -195,6 +197,7 @@ private:
     struct Mix { bool muted = false; float gainDb = 0.0f; int pan = 0; bool defaultsApplied = false; };
     std::map<juce::String, PeerState> peerStates;
     std::map<juce::String, Mix> mix;
+    std::map<juce::String, int> previewPings;
     SilenceDetector silence;
     bool outputMissing = false;
     juce::int64 outputMissingSince = -1, outputMissingAt = 0;

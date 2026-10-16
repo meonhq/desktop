@@ -727,6 +727,8 @@ std::vector<JamSession::Member> JamSession::members() const
                     m.pingMs = (int) std::lround (p.pingMs);
                     m.channels = juce::jmax (1, p.recvChannels);
                 }
+            if (! m.pingMs)
+                if (auto it = previewPings.find (m.userId); it != previewPings.end()) m.pingMs = it->second;
             if (auto it = mix.find (m.userId); it != mix.end())
             {
                 m.muted = it->second.muted;

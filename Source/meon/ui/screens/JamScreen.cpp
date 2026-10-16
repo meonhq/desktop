@@ -293,11 +293,7 @@ struct JamScreen::MemberRow : juce::Component
             cx += 8;
             const auto tf = font (500, 11.0f);
             const juce::Rectangle<float> tr ((float) cx, 10.0f, textWidth (tf, TXT ("방장")) + 10.0f, 15.0f);
-            g.setColour (col::line);
-            g.drawRoundedRectangle (tr.reduced (0.5f), 3.0f, 1.0f);
-            g.setColour (col::inkSub);
-            g.setFont (tf);
-            g.drawText (TXT ("방장"), tr, juce::Justification::centred, false);
+            paintTagBox (g, tr, TXT ("방장"), tf);
             cx = (int) tr.getRight();
         }
         // 연결 상태 (버그 #2·#3): 연결 중 / 소리 끊김 / 연결 실패
