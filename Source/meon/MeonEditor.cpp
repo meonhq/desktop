@@ -452,7 +452,7 @@ void MeonEditor::applyHomePreview()
         {
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
-            if (safe != nullptr && p == "jam:disc")      // 연결 끊김 줄 (서버 실시간 연결이 끊긴 지 2초)
+            if (safe != nullptr && p == "jam:disc")      // 연결 끊김 토스트 (서버 실시간 연결이 끊긴 지 2초)
                 if (auto* fake = safe->core.fakeServer()) fake->devDropLink (60);
             if (safe == nullptr || p != "jam:host") return;
             if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();   // 입장 요청 하나
@@ -466,9 +466,19 @@ void MeonEditor::applyHomePreview()
         for (int i = 0; i < 8; ++i) if (name == tabNames[i]) tab = i;
         openSettings (tab);
     }
-    else if (p == "disc")
+    else if (p == "disc")   // 연결 끊김 토스트
     {
         if (auto* fake = core.fakeServer()) fake->devDropLink (60);
+    }
+    else if (p == "discinvite")   // 초대 토스트 위에 연결 끊김 토스트가 쌓인 모습 (초대가 3초 뒤 도착한 다음 끊는다)
+    {
+        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (4000, [safe]
+        {
+            if (safe != nullptr)
+                if (auto* fake = safe->core.fakeServer()) fake->devDropLink (60);
+        });
     }
 }
 

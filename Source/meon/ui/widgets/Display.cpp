@@ -318,28 +318,4 @@ void Text::mouseUp (const juce::MouseEvent& e)
     if (onClick && getLocalBounds().contains (e.getPosition())) onClick();
 }
 
-//==============================================================================
-void paintDisconnectedStrip (juce::Graphics& g, juce::Rectangle<int> area)
-{
-    g.setColour (col::accentSoft);
-    g.fillRect (area);
-    // 빨간 점 + "연결이 끊겼어요" + 설명 (한 줄. 좁으면 설명이 말줄임)
-    const int x0 = area.getX() + metric::padX;
-    const float cy = (float) area.getCentreY();
-    g.setColour (col::danger);
-    g.fillEllipse ((float) x0, cy - 3.0f, 6.0f, 6.0f);
-    const auto f1 = font (600, 12.0f);
-    const auto t1 = TXT ("연결이 끊겼어요");
-    const int w1 = (int) std::ceil (textWidth (f1, t1)) + 1;
-    const int tx = x0 + 6 + 7;
-    g.setColour (col::ink);
-    g.setFont (f1);
-    g.drawText (t1, tx, area.getY(), w1, area.getHeight(), juce::Justification::centredLeft, false);
-    g.setColour (col::inkSub);
-    g.setFont (font (400, 12.0f));
-    const int dx = tx + w1 + 8;
-    g.drawText (TXT ("인터넷 연결을 확인해 주세요. 다시 연결하는 중이에요"), dx, area.getY(),
-                juce::jmax (0, area.getRight() - metric::padX - dx), area.getHeight(), juce::Justification::centredLeft, true);
-}
-
 } // namespace meon::ui

@@ -417,7 +417,6 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     addSend.onPress = [this] { sendFriendRequest(); };
 
     core.store().addListener (this);
-    core.connection().addListener (this);
     rebuildRooms();
     rebuildFriends();
     refreshHeader();
@@ -429,7 +428,6 @@ HomeScreen::~HomeScreen()
 {
     *alive = false;
     core.store().removeListener (this);
-    core.connection().removeListener (this);
     modal.reset();
     popover.reset();
     notifications.reset();
@@ -437,16 +435,6 @@ HomeScreen::~HomeScreen()
 
 
 //==============================================================================
-bool HomeScreen::showDisconnected() const
-{
-    return core.connection().isShown();   // 서버 실시간 연결이 끊긴 지 2초 (MeonCore::connection)
-}
-
-void HomeScreen::connectionShownChanged (bool)
-{
-    repaint (0, headerLineY + 1 + bannersHeight(), getWidth(), metric::padX);
-}
-
 HomeScreen::UpdateHooks::State HomeScreen::updateState() const
 {
     return update.state ? update.state() : UpdateHooks::State::none;
@@ -467,7 +455,7 @@ bool HomeScreen::showUpdate() const
 
 int HomeScreen::bannersHeight() const
 {
-    return showUpdate() ? 38 : 0;   // 연결 끊김은 배너가 아니라 패널 위 여백에 그린다 (배치를 밀지 않게)
+    return showUpdate() ? 38 : 0;   // 연결 끊김은 배너가 아니라 토스트 (AppRoot::connectionToastChanged)
 }
 
 void HomeScreen::refreshHeader()
@@ -846,9 +834,6 @@ void HomeScreen::paint (juce::Graphics& g)
             g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, p)), 2.0f);
         }
     }
-    // 연결 끊김: 배너 아래, 패널 위 여백 (배치를 밀지 않는다)
-    if (showDisconnected())
-        paintDisconnectedStrip (g, { 0, headerLineY + 1 + bannersHeight(), getWidth(), metric::padX });
 }
 
 void HomeScreen::resized()

@@ -18,7 +18,6 @@ namespace meon::ui
 
 class HomeScreen : public juce::Component,
                    private core::AppStore::Listener,
-                   private core::ConnectionWatch::Listener,
                    private juce::Timer
 {
 public:
@@ -65,7 +64,6 @@ private:
     // 배너
     bool updateDismissed = false;
     Button later { Button::Kind::small, TXT ("나중에") }, updateNow { Button::Kind::smallPrimary, TXT ("업데이트") };
-    bool showDisconnected() const;
     UpdateHooks::State updateState() const;
     bool showUpdate() const;
     int bannersHeight() const;
@@ -125,7 +123,6 @@ private:
     juce::String deviceText() const;
 
     void stateChanged (core::StateKey) override;
-    void connectionShownChanged (bool) override;
     void timerCallback() override;
 };
 

@@ -1,4 +1,5 @@
-// 연결 끊김 표시: ConnectionWatch 규칙(2초, 다시 붙음, 4000·4001, 방이 사라짐), Realtime 의 답 없는 ping, 가짜 서버로 전체 흐름.
+// 연결 끊김 토스트: ConnectionWatch 규칙(2초, 끊긴 동안 유지, 다시 붙으면 "다시 연결됐어요" 3초, 4000·4001, 방이 사라짐),
+// Realtime 의 답 없는 ping, 가짜 서버로 전체 흐름.
 #include "../core/api/MeonApi.h"
 #include "../core/api/Realtime.h"
 #include "../core/api/ApiJson.h"
@@ -13,10 +14,9 @@ namespace
 {
     struct WatchLog : ConnectionWatch::Listener
     {
-        std::vector<bool> shown;
-        int restored = 0;
-        void connectionShownChanged (bool s) override { shown.push_back (s); }
-        void connectionRestored() override { ++restored; }
+        std::vector<ConnectionWatch::Toast> states;
+        void connectionToastChanged (ConnectionWatch::Toast t) override { states.push_back (t); }
+        int count (ConnectionWatch::Toast t) const { return (int) std::count (states.begin(), states.end(), t); }
     };
 
     /** 보낸 것을 세는 실시간 전송 (서버 답은 손으로) */
@@ -133,36 +133,66 @@ public:
             expect (ConnectionWatch::inputFor (L::offline, false) == In::stopped);
         }
 
-        beginTest ("watch: under 2 s nothing, from 2 s shown, back -> hidden at once and one 'reconnected'");
+        using T = ConnectionWatch::Toast;
+
+        beginTest ("toast: a 1 s cut shows nothing");
         {
             ManualScheduler clock;
             ConnectionWatch w (clock);
             WatchLog log;
             w.addListener (&log);
-
             w.update (In::lost);
-            clock.advance (1900);
+            clock.advance (1000);
             w.update (In::connected);
-            clock.advance (5000);
-            expect (log.shown.empty() && log.restored == 0, "2초 안에 다시 붙으면 깜빡이지 않는다");
-
+            clock.advance (10000);
+            expect (log.states.empty(), "1초 끊김은 아무것도 띄우지 않는다");
             w.update (In::lost);
             clock.advance (1999);
-            expect (! w.isShown());
-            clock.advance (1);
-            expect (w.isShown(), "2초가 지나면 띄운다");
-            w.update (In::lost);   // 같은 끊김이 이어짐
-            clock.advance (10000);
-            expectEquals ((int) log.shown.size(), 1);
             w.update (In::connected);
-            expect (! w.isShown(), "다시 붙으면 바로 내린다");
-            expectEquals (log.restored, 0, "토스트는 같은 차례의 hello 를 본 뒤");
-            clock.advance (0);
-            expectEquals (log.restored, 1, "\"다시 연결됐어요\"");
+            clock.advance (10000);
+            expect (log.states.empty(), "2초 안이면 아무것도");
             w.removeListener (&log);
         }
 
-        beginTest ("watch: 4000 / 4001 (stopped) hides without a toast; a stop from the start shows nothing");
+        beginTest ("toast: from 2 s 'lost' and it stays while cut; back -> same toast 'restored', gone after 3 s");
+        {
+            ManualScheduler clock;
+            ConnectionWatch w (clock);
+            WatchLog log;
+            w.addListener (&log);
+            w.update (In::lost);
+            clock.advance (1999);
+            expect (w.toast() == T::none);
+            clock.advance (1);
+            expect (w.toast() == T::lost, "2초가 지나면 띄운다");
+            w.update (In::lost);   // 같은 끊김이 이어짐
+            clock.advance (120000);
+            expect (w.toast() == T::lost, "끊긴 동안은 저절로 닫히지 않는다");
+            expectEquals ((int) log.states.size(), 1);
+            w.update (In::connected);
+            clock.advance (0);
+            expect (w.toast() == T::restored, "같은 토스트가 \"다시 연결됐어요\"로");
+            clock.advance (ConnectionWatch::restoredShowMs - 1);
+            expect (w.toast() == T::restored);
+            clock.advance (1);
+            expect (w.toast() == T::none, "3초 뒤 닫힌다");
+            expect (log.states == std::vector<T> ({ T::lost, T::restored, T::none }));
+
+            // "다시 연결됐어요" 를 보이는 중에 다시 끊기면 2초 뒤 다시 끊김으로
+            log.states.clear();
+            w.update (In::lost);
+            clock.advance (3000);
+            w.update (In::connected);
+            clock.advance (1000);
+            w.update (In::lost);
+            clock.advance (ConnectionWatch::showDelayMs);
+            expect (w.toast() == T::lost);
+            clock.advance (10000);
+            expect (w.toast() == T::lost, "앞의 3초 닫기가 지금 끊김을 닫지 않는다");
+            w.removeListener (&log);
+        }
+
+        beginTest ("toast: 4000 / 4001 / logout (stopped) closes it without 'restored'; a stop from the start shows nothing");
         {
             ManualScheduler clock;
             ConnectionWatch w (clock);
@@ -170,19 +200,19 @@ public:
             w.addListener (&log);
             w.update (In::lost);
             clock.advance (3000);
-            expect (w.isShown());
+            expect (w.toast() == T::lost);
             w.update (In::stopped);
-            clock.advance (100);
-            expect (! w.isShown());
-            expectEquals (log.restored, 0, "일부러 끊긴 경우는 다시 연결 토스트가 없다");
-            log.shown.clear();
+            expect (w.toast() == T::none, "바로 닫는다");
+            clock.advance (5000);
+            expectEquals (log.count (T::restored), 0);
+            log.states.clear();
             w.update (In::stopped);
             clock.advance (5000);
-            expect (log.shown.empty(), "끊김으로 보지 않는다");
+            expect (log.states.empty(), "끊김으로 보지 않는다");
             w.removeListener (&log);
         }
 
-        beginTest ("watch: room lost on reconnect replaces 'reconnected'");
+        beginTest ("toast: room lost on reconnect -> no 'restored', just closed");
         {
             ManualScheduler clock;
             ConnectionWatch w (clock);
@@ -193,13 +223,14 @@ public:
             w.update (In::connected);
             w.roomLost();   // 같은 차례의 hello: current_room 이 null
             clock.advance (0);
-            expectEquals (log.restored, 0);
+            expect (w.toast() == T::none);
+            expectEquals (log.count (T::restored), 0);
             // 다음 끊김은 다시 평소대로
             w.update (In::lost);
             clock.advance (3000);
             w.update (In::connected);
             clock.advance (0);
-            expectEquals (log.restored, 1);
+            expectEquals (log.count (T::restored), 1);
             w.removeListener (&log);
         }
 
@@ -244,15 +275,18 @@ public:
             r.clock.advance (1900);
             expect (r.rt.getLink() == L::online);
             r.clock.advance (5000);
-            expect (r.log.shown.empty() && r.log.restored == 0, "짧은 끊김은 깜빡이지 않는다");
+            expect (r.log.states.empty(), "짧은 끊김은 깜빡이지 않는다");
 
             r.server.devDropLink (5);   // 1·3초 시도는 거절, 7초에 붙음
             r.clock.advance (2100);
-            expect (r.watch.isShown(), "2초가 지나면 띄운다");
-            r.clock.advance (6000);
+            expect (r.watch.toast() == T::lost, "2초가 지나면 띄운다");
+            r.clock.advance (4500);
+            expect (r.watch.toast() == T::lost, "붙기 전까지 그대로");
+            r.clock.advance (1500);
             expect (r.rt.getLink() == L::online);
-            expect (! r.watch.isShown(), "다시 붙으면 내린다");
-            expectEquals (r.log.restored, 1, "\"다시 연결됐어요\"");
+            expect (r.watch.toast() == T::restored, "\"다시 연결됐어요\"");
+            r.clock.advance (ConnectionWatch::restoredShowMs);
+            expect (r.watch.toast() == T::none);
             expect (r.store.state().inRoom() && r.server.isMember (roomId, r.server.meId()), "30초 안이라 방에 그대로");
         }
 
@@ -264,8 +298,7 @@ public:
                 r.signUpAndEnterRoom();
                 r.server.devCloseLink (code);
                 r.clock.advance (10000);
-                expect (r.log.shown.empty(), juce::String (code));
-                expectEquals (r.log.restored, 0);
+                expect (r.log.states.empty(), juce::String (code));
             }
         }
 
@@ -276,17 +309,17 @@ public:
             expect (r.store.state().inRoom());
             r.server.devDropLink (60);
             r.clock.advance (2500);
-            expect (r.watch.isShown());
+            expect (r.watch.toast() == T::lost);
             r.clock.advance (35000);
             expect (! r.server.isMember (roomId, r.server.meId()), "끊긴 지 30초가 지나 서버가 방에서 내보냄");
             expect (r.store.state().inRoom(), "끊겨 있는 동안 앱은 아직 모른다");
             r.clock.advance (60000);   // 다시 붙음 (재연결 간격 1·2·4…30초)
             expect (r.rt.getLink() == L::online);
-            expect (! r.watch.isShown());
+            expect (r.watch.toast() == T::none);
             expect (! r.store.state().inRoom(), "hello 의 current_room 이 null → 홈");
             expect (std::find (r.wiring.notices.begin(), r.wiring.notices.end(), Notice::Kind::roomLostWhileDisconnected) != r.wiring.notices.end(),
                     "\"연결이 오래 끊겨서 방에서 나왔어요\"");
-            expectEquals (r.log.restored, 0, "\"다시 연결됐어요\" 는 띄우지 않는다");
+            expectEquals (r.log.count (T::restored), 0, "\"다시 연결됐어요\" 는 띄우지 않는다");
         }
     }
 };

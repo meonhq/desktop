@@ -917,7 +917,6 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     addAndMakeVisible (*filePlayer);
 
     core.store().addListener (this);
-    core.connection().addListener (this);
     jam.addListener (this);
     jam.chat().addListener (this);
     refreshHeader();
@@ -934,7 +933,6 @@ JamScreen::~JamScreen()
     jam.chat().removeListener (this);
     jam.removeListener (this);
     core.store().removeListener (this);
-    core.connection().removeListener (this);
 }
 
 juce::String JamScreen::memberName (const juce::String& userId) const
@@ -943,16 +941,6 @@ juce::String JamScreen::memberName (const juce::String& userId) const
         if (m.userId == userId && m.nickname.isNotEmpty()) { knownNames[userId] = m.nickname; return m.nickname; }
     if (auto it = knownNames.find (userId); it != knownNames.end()) return it->second;
     return TXT ("멤버");
-}
-
-bool JamScreen::showBanner() const
-{
-    return core.connection().isShown();   // 서버 실시간 연결이나 합주 서버(AOO)가 끊긴 지 2초 (MeonCore::connection)
-}
-
-void JamScreen::connectionShownChanged (bool)
-{
-    repaint (0, headerLineY + 1, getWidth(), metric::padX);
 }
 
 //==============================================================================
@@ -1089,7 +1077,7 @@ void JamScreen::timerCallback()
 void JamScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
-    // 상단 바(·연결 끊김 배너) 아래 작업 영역 (패널들을 감싸는 곳)
+    // 상단 바 아래 작업 영역 (패널들을 감싸는 곳)
     const int canvasTop = headerLineY + 1;
     g.setColour (col::surfaceCanvas);
     g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
@@ -1100,9 +1088,7 @@ void JamScreen::paint (juce::Graphics& g)
     g.setColour (col::line);
     g.fillRect (0, headerLineY, getWidth(), 1);
 
-    // 연결 끊김: 상단 바 아래, 패널 위 여백 (배치를 밀지 않는다)
-    if (showBanner())
-        paintDisconnectedStrip (g, { 0, headerLineY + 1, getWidth(), metric::padX });
+
 }
 
 void JamScreen::resized()

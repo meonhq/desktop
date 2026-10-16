@@ -182,20 +182,36 @@ void AppRoot::syncInviteToasts()
     }
 }
 
-void AppRoot::connectionRestored()
+void AppRoot::connectionToastChanged (core::ConnectionWatch::Toast state)
 {
-    addInfoToast (TXT ("다시 연결됐어요"), {}, 3000);
+    using T = core::ConnectionWatch::Toast;
+    if (state == T::none)
+    {
+        if (connectionToast != nullptr) removeToast (connectionToast.getComponent());
+        connectionToast = nullptr;
+        return;
+    }
+    if (connectionToast == nullptr)
+    {
+        // 다른 토스트와 같은 모양·자리 (아래에서 위로 쌓기). 닫기 버튼 없이, 상태가 바뀔 때만 바뀌고 닫힌다
+        auto* t = toasts.insert (0, new Toast ({}, {}));
+        t->setClosable (false);
+        connectionToast = t;
+        addAndMakeVisible (t);
+        layoutToasts();
+    }
+    connectionToast->setTitle (state == T::lost ? TXT ("연결이 끊겼어요 · 다시 연결하는 중이에요") : TXT ("다시 연결됐어요"));
 }
 
-void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub, int showMs)
+void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub)
 {
     auto* t = toasts.insert (0, new Toast (title, sub));
     juce::Component::SafePointer<Toast> sp (t);
     t->onClose = [this, sp] { if (sp != nullptr) removeToast (sp.getComponent()); };
     addAndMakeVisible (t);
-    // showMs 뒤 자동으로 닫힘 (기본 6초)
+    // 6초 뒤 자동으로 닫힘
     juce::Component::SafePointer<AppRoot> safe (this);
-    juce::Timer::callAfterDelay (showMs, [safe, sp]
+    juce::Timer::callAfterDelay (6000, [safe, sp]
     {
         if (safe != nullptr && sp != nullptr) safe->removeToast (sp.getComponent());
     });

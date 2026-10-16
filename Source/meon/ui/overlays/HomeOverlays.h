@@ -166,6 +166,9 @@ public:
     Toast (const juce::String& title, const juce::String& sub, const juce::String& action = {});
     static constexpr int width = 280, height = 60;
     std::function<void()> onAction, onClose;
+    void setTitle (const juce::String& t) { title = t; repaint(); }
+    /** 닫기 버튼을 숨긴다 (연결이 끊긴 동안의 토스트: 다시 붙으면 저절로 바뀐다) */
+    void setClosable (bool c) { close.setVisible (c); repaint(); }
     juce::String key;   // 초대 ID 등 (지울 때 찾는 용도)
     void paint (juce::Graphics&) override;
     void resized() override;

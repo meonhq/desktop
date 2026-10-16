@@ -23,7 +23,7 @@ public:
     HomeScreen* getHome() { return home.get(); }
     void showJoinFailure (const core::ApiError&);
     void showJoinFailure (core::HomeController::JoinFailure);
-    void addInfoToast (const juce::String& title, const juce::String& sub, int showMs = 6000);
+    void addInfoToast (const juce::String& title, const juce::String& sub);
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -47,7 +47,9 @@ private:
 
     void stateChanged (core::StateKey) override;
     void notice (const core::Notice&) override;
-    void connectionRestored() override;   // "다시 연결됐어요"
+    /** 연결 끊김 토스트: "연결이 끊겼어요 · 다시 연결하는 중이에요" → 같은 자리에서 "다시 연결됐어요" → 닫힘 */
+    void connectionToastChanged (core::ConnectionWatch::Toast) override;
+    juce::Component::SafePointer<Toast> connectionToast;
 };
 
 } // namespace meon::ui

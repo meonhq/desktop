@@ -528,7 +528,7 @@ void Toast::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r, metric::radius);
     g.setColour (col::field);
     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
-    const int right = (action != nullptr ? action->getX() : close.getX()) - 9;
+    const int right = (action != nullptr ? action->getX() : close.isVisible() ? close.getX() : getWidth() - 12) - 9;
     g.setColour (col::ink);
     g.setFont (font (600, 13.0f));
     if (sub.isEmpty())   // 보조 줄이 없으면 한 줄로 가운데
