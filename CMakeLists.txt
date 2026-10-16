@@ -736,6 +736,7 @@ if (MEON_TESTS)
         Source/meon/tests/ApiJsonTests.cpp
         Source/meon/tests/ValidationTests.cpp
         Source/meon/tests/FakeServerTests.cpp
+        Source/meon/tests/ConnectionTests.cpp
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp

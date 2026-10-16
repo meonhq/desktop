@@ -3,6 +3,7 @@
 #include "ui/dev/DevJamScreen.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
+#include "ui/Messages.h"
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
 
@@ -441,6 +442,11 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (TXT ("방장이 방을 닫았어요"), TXT ("금요일 밤 홍대 밴드 합주"));
     }
+    else if (p == "toastline")   // 한 줄 토스트 (초대 실패 등)가 초대 토스트 아래에 쌓인 모습
+    {
+        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        appRoot->addInfoToast (ui::msg::inviteFailure (core::ErrorCode::targetOffline), {});
+    }
     else if (p == "jam" || p.startsWith ("jam:"))
     {
         core::CreateRoom c;
@@ -452,6 +458,8 @@ void MeonEditor::applyHomePreview()
         {
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
+            if (safe != nullptr && (p == "jam:disc" || p == "jam:discback"))   // 연결 끊김 토스트 (끊긴 채 / 4초 뒤 다시 붙음)
+                if (auto* fake = safe->core.fakeServer()) fake->devDropLink (p == "jam:disc" ? 60 : 4);
             if (safe == nullptr || p != "jam:host") return;
             if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();   // 입장 요청 하나
         });
@@ -464,9 +472,27 @@ void MeonEditor::applyHomePreview()
         for (int i = 0; i < 8; ++i) if (name == tabNames[i]) tab = i;
         openSettings (tab);
     }
-    else if (p == "disc")
+    else if (p.startsWith ("disc") || p.startsWith ("roomlost"))
     {
-        if (auto* fake = core.fakeServer()) fake->devDropLink (60);
+        // 연결 끊김 토스트. disc: 끊긴 채, discback: 4초 끊겼다 다시 붙음 ("다시 연결됐어요"), roomlost: 오래 끊겨 방에서 나옴.
+        // 뒤에 invite 가 붙으면 초대 토스트가 먼저 떠 있을 때 (초대가 3초 뒤 도착한 다음)
+        const bool invite = p.endsWith ("invite");
+        const auto what = p.upToFirstOccurrenceOf ("invite", false, false);
+        if (invite)
+            if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (invite ? 4000 : 1, [safe, what]
+        {
+            if (safe == nullptr) return;
+            if (what == "roomlost")
+            {
+                core::Notice n;
+                n.kind = core::Notice::Kind::roomLostWhileDisconnected;
+                if (safe->appRoot != nullptr) safe->appRoot->previewNotice (n);
+            }
+            else if (auto* fake = safe->core.fakeServer())
+                fake->devDropLink (what == "discback" ? 4 : 60);
+        });
     }
 }
 

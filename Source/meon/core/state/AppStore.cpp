@@ -1,6 +1,7 @@
 #include "AppStore.h"
 #include "../api/ApiJson.h"
 #include <algorithm>
+#include <utility>
 
 namespace meon::core
 {
@@ -171,6 +172,7 @@ void AppStore::upsertFriend (const Friend& f)
 void AppStore::linkChanged (Realtime::Link l)
 {
     if (s.link == l) return;
+    helloAfterReconnect = s.link == Realtime::Link::reconnecting && l == Realtime::Link::online;
     s.link = l;
     changed (StateKey::link);
     // 다른 곳에서 같은 계정으로 접속했다 (4000): 방은 그대로 둔다 (leave 를 부르지 않는다. 서버에서도 방에 그대로다).
@@ -183,6 +185,8 @@ void AppStore::hello (const Hello& h)
     // 전체 상태를 통째로 덮어쓴다 (10.4). 끊긴 사이 놓친 추방·방 닫힘은 current_room 이 비어 있는 것으로 반영된다.
     // 방에 있었는데 다른 방이 오면: 끊긴 사이 같은 계정의 다른 기기가 들어간 방이다 (JamSession 이 송출 정지로 들어간다)
     const auto before = s.currentRoom ? s.currentRoom->id : String();
+    const auto beforeTitle = s.currentRoom ? s.currentRoom->title : String();
+    const bool afterReconnect = std::exchange (helloAfterReconnect, false);
     // 지난번에 정상 종료하며 나간 방이 아직 남아 있으면(나가기가 서버에 닿지 않음) 그 방에는 들어가지 않는다
     String droppedRoom;
     if (roomLeftOnQuit.isNotEmpty())
@@ -204,6 +208,9 @@ void AppStore::hello (const Hello& h)
         changed (k);
     if (before.isNotEmpty() && s.currentRoom && s.currentRoom->id != before)
         notify ({ Notice::Kind::movedToOtherRoom, s.currentRoom->id, s.currentRoom->title, {} });
+    // 끊긴 사이 방에서 나와 있다: 끊긴 채 30초가 지나 서버가 내보냈다 (5.6). 그사이 놓친 추방·방 닫힘도 같은 모양이라 구분하지 않는다
+    if (afterReconnect && before.isNotEmpty() && ! s.currentRoom && droppedRoom.isEmpty())
+        notify ({ Notice::Kind::roomLostWhileDisconnected, before, beforeTitle, {} });
     if (droppedRoom.isNotEmpty() && onRoomLeftOnQuit) onRoomLeftOnQuit (droppedRoom);
 }
 

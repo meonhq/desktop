@@ -521,31 +521,70 @@ Toast::Toast (const juce::String& t, const juce::String& s, const juce::String& 
     setSize (width, height);
 }
 
+namespace
+{
+    constexpr int toastPadX = 18, toastTitleY = 12, toastTitleH = 17, toastSubGap = 3, toastSubLineH = 16;
+    juce::Font toastTitleFont() { return font (600, 13.0f); }
+    juce::Font toastSubFont()   { return font (400, 12.0f); }
+}
+
+int Toast::textRight (int w) const
+{
+    if (action != nullptr) return action->getX() - 9;
+    return (close.isVisible() ? w - 12 - 19 : w - 12) - 9;
+}
+
+float Toast::subHeight (int w) const
+{
+    if (kind == Kind::normal) return (float) toastSubLineH;
+    return paragraphHeightWithEmoji (sub, toastSubFont(), (float) (textRight (w) - toastPadX), (float) toastSubLineH);
+}
+
+int Toast::heightForWidth (int w) const
+{
+    // 한 줄 토스트 ("다시 연결됐어요", 초대 수락 실패 등): 글자 높이에 위아래 여백만
+    if (sub.isEmpty() && action == nullptr) return toastTitleY + toastTitleH + toastTitleY;
+    if (kind == Kind::normal || sub.isEmpty()) return height;
+    return juce::jmax (height, toastTitleY + toastTitleH + toastSubGap + (int) std::ceil (subHeight (w)) + toastTitleY);
+}
+
 void Toast::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    g.setColour (col::white);
+    g.setColour (kind == Kind::warning ? col::accentSoft : col::white);
     g.fillRoundedRectangle (r, metric::radius);
     g.setColour (col::field);
     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
-    const int right = (action != nullptr ? action->getX() : close.getX()) - 9;
+    const int right = textRight (getWidth());
     g.setColour (col::ink);
-    g.setFont (font (600, 13.0f));
+    g.setFont (toastTitleFont());
     if (sub.isEmpty())   // 보조 줄이 없으면 한 줄로 가운데
     {
-        g.drawText (title, 18, 0, right - 18, getHeight(), juce::Justification::centredLeft, true);
+        g.drawText (title, toastPadX, 0, right - toastPadX, getHeight(), juce::Justification::centredLeft, true);
         return;
     }
-    g.drawText (title, 18, 12, right - 18, 17, juce::Justification::centredLeft, true);
+    g.drawText (title, toastPadX, toastTitleY, right - toastPadX, toastTitleH, juce::Justification::centredLeft, true);
+    const int subY = toastTitleY + toastTitleH + toastSubGap;
+    if (kind == Kind::warning)   // 설명은 자르지 않고 줄바꿈
+    {
+        drawParagraphWithEmoji (g, sub, toastSubFont(), col::inkSub,
+                                juce::Rectangle<float> ((float) toastPadX, (float) subY, (float) (right - toastPadX), subHeight (getWidth())),
+                                (float) toastSubLineH, juce::Justification::topLeft);
+        return;
+    }
     g.setColour (col::inkSub);
-    g.setFont (font (400, 12.0f));
-    g.drawText (sub, 18, 12 + 17 + 3, right - 18, 16, juce::Justification::centredLeft, true);
+    g.setFont (toastSubFont());
+    g.drawText (sub, toastPadX, subY, right - toastPadX, toastSubLineH, juce::Justification::centredLeft, true);
 }
 
 void Toast::resized()
 {
     auto r = getLocalBounds().reduced (12, 0);
-    close.setBounds (r.removeFromRight (19).withSizeKeepingCentre (19, 19));
+    // 경고는 설명이 여러 줄일 수 있어서 닫기 버튼을 제목 줄에 맞춘다
+    auto closeArea = r.removeFromRight (19);
+    close.setBounds (kind == Kind::warning && sub.isNotEmpty()
+                         ? juce::Rectangle<int> (closeArea.getX(), toastTitleY + (toastTitleH - 19) / 2, 19, 19)
+                         : closeArea.withSizeKeepingCentre (19, 19));
     if (action != nullptr)
     {
         r.removeFromRight (9);

@@ -68,7 +68,6 @@ private:
     void openProfile (const juce::String& userId);
     void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);
-    bool showBanner() const;
 
     // 멤버
     Card membersCard;

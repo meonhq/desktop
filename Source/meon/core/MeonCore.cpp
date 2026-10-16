@@ -149,6 +149,7 @@ void MeonCore::createFake()
 void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
 {
     homeMonitorGate.reset();
+    if (jamSession != nullptr) jamSession->removeListener (this);
     jamSession.reset();
     engineImpl = std::move (e);
     o.plugin = options.plugin;
@@ -160,8 +161,37 @@ void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
             if (! res.ok()) AppLog::write ("api", LOGTXT ("지연 보정 자료 보내기 실패: ") + errorKey (res.code()));
         });
     };
+    // 상대 소리가 모두 끊기면 내 인터넷을 의심한다: 서버 실시간 연결을 바로 확인하고(Realtime::checkNow),
+    // 합주 서버에 TCP 로 닿는지 본다 (와이파이가 조용히 끊기면 엔진은 한참 동안 끊김을 모른다)
+    o.peersAllInterrupted = [this] { rt->checkNow(); };
+    o.checkReachable = [] (const juce::String& host, int port, std::function<void (bool)> done)
+    {
+        juce::Thread::launch ([host, port, done]
+        {
+            juce::StreamingSocket sock;
+            const bool ok = sock.connect (host, port, 3000);
+            sock.close();
+            juce::MessageManager::callAsync ([done, ok] { done (ok); });
+        });
+    };
     jamSession = std::make_unique<JamSession> (*engineImpl, appStore, sched, std::move (o));
+    jamSession->addListener (this);
     homeMonitorGate = std::make_unique<HomeMonitorGate> (*authController, *jamSession);
+}
+
+void MeonCore::updateConnection()
+{
+    connWatch.update (ConnectionWatch::inputFor (appStore.state().link, jamSession != nullptr && jamSession->isJamServerDown()));
+}
+
+void MeonCore::jamServerLinkChanged()
+{
+    updateConnection();
+}
+
+void MeonCore::notice (const Notice& n)
+{
+    if (n.kind == Notice::Kind::roomLostWhileDisconnected) connWatch.roomLost();
 }
 
 void MeonCore::authStepChanged (AuthController::Step s)
@@ -191,6 +221,7 @@ RttReporter::Target MeonCore::defaultRttTarget() const
 
 void MeonCore::stateChanged (StateKey k)
 {
+    if (k == StateKey::link) updateConnection();
     if (k != StateKey::currentRoom || rtt == nullptr) return;
     const auto t = RttReporter::targetFor (appStore.state().currentRoom, defaultRttTarget());
     if (! (rtt->target() == t)) rtt->setTarget (t);
@@ -203,6 +234,7 @@ MeonCore::~MeonCore()
     appStore.onRoomLeftOnQuit = nullptr;
     rtt.reset();
     homeMonitorGate.reset();
+    if (jamSession != nullptr) jamSession->removeListener (this);
     jamSession.reset();
     engineImpl.reset();
     accountController.reset();

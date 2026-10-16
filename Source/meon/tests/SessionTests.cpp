@@ -152,17 +152,17 @@ public:
             expectEquals (link.opens, 3);
         }
 
-        beginTest ("silent connection is closed and reopened after 45 s");
+        beginTest ("silent connection: the 20 s ping gets no answer for 6 s -> closed and reopened");
         {
             ManualScheduler clock;
             StubLink link;
             Realtime rt (link, clock, 0);
             rt.connect ([] { return juce::String ("t"); });
             link.sink->transportOpened();
-            clock.advance (40000);
-            expectEquals (link.closes, 0, "40초까지는 기다린다 (서버도 45초)");
-            clock.advance (25000);
-            expectEquals (link.closes, 1, "아무것도 오지 않으면 닫는다");
+            clock.advance (Realtime::heartbeatMs + Realtime::pongTimeoutMs - 100);
+            expectEquals (link.closes, 0, "ping 을 보낸 뒤 6초까지는 기다린다");
+            clock.advance (200);
+            expectEquals (link.closes, 1, "답이 없으면 닫는다 (와이파이가 조용히 끊긴 경우)");
             clock.advance (1000);
             expectEquals (link.opens, 2, "그리고 다시 연다");
         }

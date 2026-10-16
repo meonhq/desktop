@@ -435,11 +435,6 @@ HomeScreen::~HomeScreen()
 
 
 //==============================================================================
-bool HomeScreen::showDisconnected() const
-{
-    return core.store().state().link == core::Realtime::Link::reconnecting;
-}
-
 HomeScreen::UpdateHooks::State HomeScreen::updateState() const
 {
     return update.state ? update.state() : UpdateHooks::State::none;
@@ -460,7 +455,7 @@ bool HomeScreen::showUpdate() const
 
 int HomeScreen::bannersHeight() const
 {
-    return (showDisconnected() ? 37 : 0) + (showUpdate() ? 38 : 0);
+    return showUpdate() ? 38 : 0;   // 연결 끊김은 배너가 아니라 토스트 (AppRoot::connectionToastChanged)
 }
 
 void HomeScreen::refreshHeader()
@@ -806,24 +801,6 @@ void HomeScreen::paint (juce::Graphics& g)
     g.fillRect (0, headerLineY, getWidth(), 1);
 
     int y = headerLineY + 1;
-    if (showDisconnected())
-    {
-        g.setColour (col::accentSoft);
-        g.fillRect (0, y, getWidth(), 36);
-        g.setColour (juce::Colour (0xFFF0DE8Au));
-        g.fillRect (0, y + 36, getWidth(), 1);
-        const auto f1 = font (500, 13.0f);
-        const auto t1 = TXT ("연결 끊김 · 재연결 중");
-        g.setColour (col::ink);
-        g.setFont (f1);
-        const int w1 = (int) std::ceil (textWidth (f1, t1)) + 1;
-        g.drawText (t1, metric::padX, y, w1, 36, juce::Justification::centredLeft, false);
-        g.setColour (col::inkSub);
-        g.setFont (font (400, 12.0f));
-        g.drawText (TXT ("방 목록과 친구 상태가 잠시 멈춰 있어요"), metric::padX + w1 + 9, y, getWidth() - w1 - 50, 36,
-                    juce::Justification::centredLeft, true);
-        y += 37;
-    }
     if (showUpdate())
     {
         g.setColour (col::hoverBg);
@@ -874,7 +851,7 @@ void HomeScreen::resized()
 
     // 배너 버튼
     {
-        const int top = headerLineY + 1 + (showDisconnected() ? 37 : 0);
+        const int top = headerLineY + 1;
         int x = getWidth() - metric::padX;
         if (updateNow.isVisible())
         {

@@ -64,6 +64,7 @@ public:
         virtual void jamStatsChanged() {}       // 핑 등 (0.4초마다)
         virtual void jamSilenceChanged (bool warning) { juce::ignoreUnused (warning); }   // 입력 경고(무음·장치 없음 판정)가 켜지거나 꺼짐
         virtual void jamFileChanged() {}        // 파일 열기·닫기·재생·정지
+        virtual void jamServerLinkChanged() {}  // 합주 서버(AOO) 연결이 끊기거나 다시 붙음 (isJamServerDown)
     };
 
     struct Options
@@ -77,6 +78,10 @@ public:
         FakeMeonServer* fake = nullptr;           // 가짜 기간에만
         /** 예상 지연 보정 자료를 보낸다 (POST /telemetry/latency, API 5.10). 입장 한 번에 많아야 한 번 */
         std::function<void (const LatencyProbe::Report&)> sendLatency;
+        /** 합주 서버(AOO)에 닿는지 확인한다 (TCP 접속, 별도 스레드). 결과는 메시지 스레드로. 비어 있으면 확인하지 않는다 */
+        std::function<void (const juce::String& host, int port, std::function<void (bool reachable)>)> checkReachable;
+        /** 합주 상대의 소리가 모두 끊겼다: 내 인터넷이 끊겼을 수 있으니 서버 실시간 연결도 확인한다 (Realtime::checkNow) */
+        std::function<void()> peersAllInterrupted;
     };
 
     JamSession (Engine&, AppStore&, Scheduler&, Options);
@@ -88,6 +93,10 @@ public:
     Phase getPhase() const { return phase; }
     bool isInRoom() const { return phase == Phase::inRoom; }
     bool isEngineConnected() const { return engine.isConnected(); }
+    /** 방 안에서 합주 서버(AOO)와 끊김: 엔진이 끊김을 알렸거나, 상대 소리가 모두 끊긴 채 합주 서버에 닿지 않음.
+        와이파이가 조용히 끊기면 엔진은 한참(TCP 시간 초과) 끊김을 모르기 때문에 두 번째로 확인한다 */
+    bool isJamServerDown() const { return serverLost || serverUnreachable; }
+    static constexpr int reachCheckEveryMs = 5000;
     juce::String roomId() const { return currentRoomId; }
 
     // 멤버 (나 포함, 서버 목록 순)
@@ -207,6 +216,13 @@ private:
     bool needRejoin = false;
     void scheduleReconnect();
     void reconnectEngine();
+    // 상대 소리가 모두 끊겼을 때 합주 서버에 닿는지 확인 (연결 끊김 표시)
+    bool peersSilent = false, serverUnreachable = false, reachChecking = false;
+    int reachTask = 0;
+    bool lastServerDown = false;
+    void updatePeersSilent (bool);
+    void checkReach();
+    void serverLinkMaybeChanged();
     // 다른 기기가 들어간 방으로 옮겨졌을 때(hello) 이번 입장에만 건 송출 정지. 나갈 때 원래대로 (설정 파일은 그대로)
     std::optional<bool> restoreSendMuted;
 

@@ -10,7 +10,8 @@ namespace meon::ui
 {
 
 class AppRoot : public juce::Component,
-                private core::AppStore::Listener
+                private core::AppStore::Listener,
+                private core::ConnectionWatch::Listener
 {
 public:
     AppRoot (core::MeonCore&, HomeScreen::UpdateHooks);
@@ -22,7 +23,9 @@ public:
     HomeScreen* getHome() { return home.get(); }
     void showJoinFailure (const core::ApiError&);
     void showJoinFailure (core::HomeController::JoinFailure);
-    void addInfoToast (const juce::String& title, const juce::String& sub);
+    void addInfoToast (const juce::String& title, const juce::String& sub, Toast::Kind kind = Toast::Kind::normal);
+    /** 개발용 미리 보기 (--screen=home:roomlost): 서버 알림이 온 것처럼 토스트를 띄운다 */
+    void previewNotice (const core::Notice& n) { notice (n); }
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -46,6 +49,9 @@ private:
 
     void stateChanged (core::StateKey) override;
     void notice (const core::Notice&) override;
+    /** 연결 끊김 토스트: 경고 "연결이 끊겼어요" → 같은 자리에서 일반 토스트 "다시 연결됐어요" → 3초 뒤 닫힘 */
+    void connectionToastChanged (core::ConnectionWatch::Toast) override;
+    juce::Component::SafePointer<Toast> connectionToast;
 };
 
 } // namespace meon::ui

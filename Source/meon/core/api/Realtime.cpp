@@ -126,7 +126,8 @@ void Realtime::disconnect()
     wanted = false;
     scheduler.cancel (heartbeatTask);
     scheduler.cancel (reconnectTask);
-    heartbeatTask = reconnectTask = 0;
+    scheduler.cancel (pongTask);
+    heartbeatTask = reconnectTask = pongTask = 0;
     if (transportOpen)
     {
         transportOpen = false;
@@ -159,6 +160,37 @@ void Realtime::resync()
         transport.send (json::obj ({ { "type", "resync" } }));
 }
 
+void Realtime::checkNow()
+{
+    if (! transportOpen || link != Link::online || pongTask != 0) return;
+    if (scheduler.nowMs() - lastCheckMs < checkGapMs) return;
+    lastCheckMs = scheduler.nowMs();
+    AppLog::write ("realtime", LOGTXT ("연결 확인 (ping)"));
+    sendPing();
+}
+
+void Realtime::sendPing()
+{
+    transport.send (json::obj ({ { "type", "ping" } }));
+    if (pongTask != 0) return;   // 이미 답을 기다리는 중
+    const auto sentAt = scheduler.nowMs();
+    std::weak_ptr<bool> weak = alive;
+    pongTask = scheduler.post (pongTimeoutMs, [this, weak, sentAt]
+    {
+        if (weak.expired()) return;
+        pongTask = 0;
+        if (! transportOpen || lastReceivedMs >= sentAt) return;
+        dropDeadLink (LOGTXT ("ping 을 보내고 ") + juce::String (pongTimeoutMs / 1000) + LOGTXT ("초 동안 답이 없음"));
+    });
+}
+
+void Realtime::dropDeadLink (const juce::String& why)
+{
+    AppLog::write ("realtime", why + LOGTXT (" → 다시 연결"));
+    transport.close();
+    transportClosed (0);
+}
+
 void Realtime::scheduleHeartbeat()
 {
     scheduler.cancel (heartbeatTask);
@@ -169,12 +201,10 @@ void Realtime::scheduleHeartbeat()
         // 끊긴 줄 모르는 연결(공유기가 조용히 끊은 경우 등): 서버의 pong 도 오지 않으면 닫고 다시 연결한다
         if (scheduler.nowMs() - lastReceivedMs > silenceLimitMs)
         {
-            AppLog::write ("realtime", LOGTXT ("서버에서 ") + juce::String (silenceLimitMs / 1000) + LOGTXT ("초 넘게 아무것도 오지 않음 → 다시 연결"));
-            transport.close();
-            transportClosed (0);
+            dropDeadLink (LOGTXT ("서버에서 ") + juce::String (silenceLimitMs / 1000) + LOGTXT ("초 넘게 아무것도 오지 않음"));
             return;
         }
-        transport.send (json::obj ({ { "type", "ping" } }));
+        sendPing();
         scheduleHeartbeat();
     });
 }
@@ -251,7 +281,8 @@ void Realtime::transportClosed (int code)
 {
     transportOpen = false;
     scheduler.cancel (heartbeatTask);
-    heartbeatTask = 0;
+    scheduler.cancel (pongTask);
+    heartbeatTask = pongTask = 0;
 
     // 닫는 코드별 동작 (API 10.1). 1008(인증 실패)은 앞서 온 error 메시지가 이미 처리했다 (wanted = false)
     if (code == closeReplaced)
