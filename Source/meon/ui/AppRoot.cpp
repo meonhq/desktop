@@ -117,7 +117,9 @@ void AppRoot::notice (const core::Notice& n)
         case K::kicked:     addInfoToast (TXT ("방에서 내보내졌어요"), n.roomTitle); break;
         case K::roomClosed: addInfoToast (TXT ("방장이 방을 닫았어요"), n.roomTitle); break;
         case K::movedToOtherRoom: addInfoToast (TXT ("다른 기기에서 들어간 방으로 연결됐어요"), n.roomTitle); break;
-        case K::roomLostWhileDisconnected: addInfoToast (TXT ("연결이 오래 끊겨서 방에서 나왔어요"), n.roomTitle); break;
+        case K::roomLostWhileDisconnected:
+            addInfoToast (TXT ("방에서 나왔어요"), TXT ("연결이 오래 끊겨서 방에서 나왔어요"), Toast::Kind::warning);
+            break;
         default: break;   // 초대는 store.invites 로, 승인 수락은 currentRoom 으로 처리된다
     }
 }
@@ -193,19 +195,26 @@ void AppRoot::connectionToastChanged (core::ConnectionWatch::Toast state)
     }
     if (connectionToast == nullptr)
     {
-        // 다른 토스트와 같은 모양·자리 (아래에서 위로 쌓기). 닫기 버튼 없이, 상태가 바뀔 때만 바뀌고 닫힌다
+        // 다른 토스트와 같은 자리 (아래에서 위로 쌓기). 닫기 버튼 없이, 상태가 바뀔 때만 바뀌고 닫힌다
         auto* t = toasts.insert (0, new Toast ({}, {}));
         t->setClosable (false);
         connectionToast = t;
         addAndMakeVisible (t);
-        layoutToasts();
     }
-    connectionToast->setTitle (state == T::lost ? TXT ("연결이 끊겼어요 · 다시 연결하는 중이에요") : TXT ("다시 연결됐어요"));
+    // 끊긴 동안은 경고 토스트, 다시 붙으면 같은 자리에서 일반 토스트 한 줄로 바뀐다 (높이가 달라서 다시 쌓는다)
+    // 설명은 문장마다 줄을 나눈다 (글자 단위로 줄바꿈하는 플랫폼에서 "중이/에요" 처럼 끊기지 않게)
+    if (state == T::lost)
+        connectionToast->setContent (Toast::Kind::warning, TXT ("연결이 끊겼어요"),
+                                     TXT ("인터넷 연결을 확인해 주세요.") + "\n" + TXT ("다시 연결하는 중이에요"));
+    else
+        connectionToast->setContent (Toast::Kind::normal, TXT ("다시 연결됐어요"), {});
+    layoutToasts();
 }
 
-void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub)
+void AppRoot::addInfoToast (const juce::String& title, const juce::String& sub, Toast::Kind kind)
 {
     auto* t = toasts.insert (0, new Toast (title, sub));
+    t->setContent (kind, title, sub);
     juce::Component::SafePointer<Toast> sp (t);
     t->onClose = [this, sp] { if (sp != nullptr) removeToast (sp.getComponent()); };
     addAndMakeVisible (t);
@@ -236,8 +245,9 @@ void AppRoot::layoutToasts()
     int y = getHeight() - 12;
     for (auto* t : toasts)
     {
-        y -= Toast::height;
-        t->setBounds (getWidth() - 12 - Toast::width, y, Toast::width, Toast::height);
+        const int h = t->heightForWidth (Toast::width);
+        y -= h;
+        t->setBounds (getWidth() - 12 - Toast::width, y, Toast::width, h);
         t->toFront (false);
         y -= metric::gap;
     }

@@ -452,8 +452,8 @@ void MeonEditor::applyHomePreview()
         {
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
-            if (safe != nullptr && p == "jam:disc")      // 연결 끊김 토스트 (서버 실시간 연결이 끊긴 지 2초)
-                if (auto* fake = safe->core.fakeServer()) fake->devDropLink (60);
+            if (safe != nullptr && (p == "jam:disc" || p == "jam:discback"))   // 연결 끊김 토스트 (끊긴 채 / 4초 뒤 다시 붙음)
+                if (auto* fake = safe->core.fakeServer()) fake->devDropLink (p == "jam:disc" ? 60 : 4);
             if (safe == nullptr || p != "jam:host") return;
             if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();   // 입장 요청 하나
         });
@@ -466,18 +466,26 @@ void MeonEditor::applyHomePreview()
         for (int i = 0; i < 8; ++i) if (name == tabNames[i]) tab = i;
         openSettings (tab);
     }
-    else if (p == "disc")   // 연결 끊김 토스트
+    else if (p.startsWith ("disc") || p.startsWith ("roomlost"))
     {
-        if (auto* fake = core.fakeServer()) fake->devDropLink (60);
-    }
-    else if (p == "discinvite")   // 초대 토스트 위에 연결 끊김 토스트가 쌓인 모습 (초대가 3초 뒤 도착한 다음 끊는다)
-    {
-        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        // 연결 끊김 토스트. disc: 끊긴 채, discback: 4초 끊겼다 다시 붙음 ("다시 연결됐어요"), roomlost: 오래 끊겨 방에서 나옴.
+        // 뒤에 invite 가 붙으면 초대 토스트가 먼저 떠 있을 때 (초대가 3초 뒤 도착한 다음)
+        const bool invite = p.endsWith ("invite");
+        const auto what = p.upToFirstOccurrenceOf ("invite", false, false);
+        if (invite)
+            if (auto* fake = core.fakeServer()) fake->devInviteMe();
         juce::Component::SafePointer<MeonEditor> safe (this);
-        juce::Timer::callAfterDelay (4000, [safe]
+        juce::Timer::callAfterDelay (invite ? 4000 : 1, [safe, what]
         {
-            if (safe != nullptr)
-                if (auto* fake = safe->core.fakeServer()) fake->devDropLink (60);
+            if (safe == nullptr) return;
+            if (what == "roomlost")
+            {
+                core::Notice n;
+                n.kind = core::Notice::Kind::roomLostWhileDisconnected;
+                if (safe->appRoot != nullptr) safe->appRoot->previewNotice (n);
+            }
+            else if (auto* fake = safe->core.fakeServer())
+                fake->devDropLink (what == "discback" ? 4 : 60);
         });
     }
 }

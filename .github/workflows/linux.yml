@@ -59,8 +59,10 @@ jobs:
           mkdir -p "$HOME"
           for size in 1280x800 900x600; do
             W=${size%x*}; H=${size#*x}
-            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:sendoff home:homemon home:friendreq home:profile home:profilereq home:disc home:discinvite jam jam:host jam:sendoff jam:disc settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
-              D=3000; [ "$s" = "home:toast" ] && D=6000; case "$s" in jam*|settings*|home:disc) D=5000;; home:discinvite) D=8000;; esac
+            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:sendoff home:homemon home:friendreq home:profile home:profilereq home:disc home:discinvite home:discback home:discbackinvite home:roomlost home:roomlostinvite jam jam:host jam:sendoff jam:disc jam:discback settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+              # 연결 끊김 토스트: discback 은 4초 끊겼다 다시 붙은 뒤 "다시 연결됐어요" 가 떠 있는 동안, invite 는 초대 토스트가 4초 먼저
+              D=3000; [ "$s" = "home:toast" ] && D=6000
+              case "$s" in home:discback|jam:discback) D=9500;; home:discbackinvite) D=13500;; home:discinvite) D=8000;; home:roomlostinvite) D=7000;; jam*|settings*|home:disc) D=5000;; esac
               timeout 60 xvfb-run -a -s "-screen 0 1600x1000x24" \
                 "$APP" --nickname=테스트 --screen=$s --window=0,0,$W,$H --no-input --snapshot-delay=$D \
                 --snapshot="$PWD/snapshots/linux_${s//:/_}_${size}.png" || true

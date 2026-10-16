@@ -163,10 +163,15 @@ private:
 class Toast : public juce::Component
 {
 public:
+    /** normal: 흰 면 (초대·알림). warning: 무음 경고 줄과 같은 연한 노란 면(col::accentSoft), 제목(굵게) + 설명, 설명은 줄바꿈 */
+    enum class Kind { normal, warning };
+
     Toast (const juce::String& title, const juce::String& sub, const juce::String& action = {});
-    static constexpr int width = 280, height = 60;
+    static constexpr int width = 280, height = 60;   // height: 한 줄 설명까지의 높이 (경고 설명이 길면 heightForWidth 로 늘어난다)
     std::function<void()> onAction, onClose;
-    void setTitle (const juce::String& t) { title = t; repaint(); }
+    /** 종류와 문구를 바꾼다 (연결 끊김 토스트가 같은 자리에서 "다시 연결됐어요" 로 바뀔 때) */
+    void setContent (Kind k, const juce::String& t, const juce::String& s) { kind = k; title = t; sub = s; resized(); repaint(); }
+    int heightForWidth (int w) const;
     /** 닫기 버튼을 숨긴다 (연결이 끊긴 동안의 토스트: 다시 붙으면 저절로 바뀐다) */
     void setClosable (bool c) { close.setVisible (c); repaint(); }
     juce::String key;   // 초대 ID 등 (지울 때 찾는 용도)
@@ -174,8 +179,11 @@ public:
     void resized() override;
 
 private:
+    Kind kind = Kind::normal;
     juce::String title, sub;
     std::unique_ptr<Button> action;
+    int textRight (int w) const;
+    float subHeight (int w) const;
     IconButton close;
 };
 
