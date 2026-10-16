@@ -3,6 +3,7 @@
 #include "ui/dev/DevJamScreen.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
+#include "ui/Messages.h"
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
 
@@ -440,6 +441,11 @@ void MeonEditor::applyHomePreview()
     {
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (TXT ("방장이 방을 닫았어요"), TXT ("금요일 밤 홍대 밴드 합주"));
+    }
+    else if (p == "toastline")   // 한 줄 토스트 (초대 실패 등)가 초대 토스트 아래에 쌓인 모습
+    {
+        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        appRoot->addInfoToast (ui::msg::inviteFailure (core::ErrorCode::targetOffline), {});
     }
     else if (p == "jam" || p.startsWith ("jam:"))
     {

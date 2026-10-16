@@ -542,8 +542,8 @@ float Toast::subHeight (int w) const
 
 int Toast::heightForWidth (int w) const
 {
-    // 닫기 버튼 없는 한 줄 토스트 ("다시 연결됐어요"): 글자 높이에 위아래 여백만
-    if (sub.isEmpty() && action == nullptr && ! close.isVisible()) return toastTitleY + toastTitleH + toastTitleY;
+    // 한 줄 토스트 ("다시 연결됐어요", 초대 수락 실패 등): 글자 높이에 위아래 여백만
+    if (sub.isEmpty() && action == nullptr) return toastTitleY + toastTitleH + toastTitleY;
     if (kind == Kind::normal || sub.isEmpty()) return height;
     return juce::jmax (height, toastTitleY + toastTitleH + toastSubGap + (int) std::ceil (subHeight (w)) + toastTitleY);
 }
