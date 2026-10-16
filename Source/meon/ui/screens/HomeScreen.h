@@ -8,6 +8,7 @@
 #include "../widgets/Display.h"
 #include "../widgets/Meter.h"
 #include "../widgets/Masonry.h"
+#include "../widgets/FoldAnimator.h"
 #include "../theme/Icons.h"
 #include "../overlays/HomeOverlays.h"
 #include "../overlays/JamOverlays.h"
@@ -43,6 +44,8 @@ public:
     void openFilter();
     void toggleNotifications();
     void openProfile (const core::UserPublic&);
+    /** 개발용 스냅숏: 친구 패널이 접히는 중 e 에 멈춘 화면 (--screen=home:fold=friends:0.5) */
+    void previewFold (float e);
     void closeOverlays();
     bool hasOverlay() const { return modal != nullptr || popover != nullptr; }
 
@@ -98,6 +101,10 @@ private:
     std::unique_ptr<FriendList> friendList;
     juce::Viewport friendViewport;
     bool friendsOpen = true;
+    // 접기·펼치기 (패널 하나뿐인 세로 묶음: 접힌 48 과 펼친 크기 사이를 e 로). 움직이는 동안 목록은 펼친 크기로 한 번만 배치
+    FoldAnimator fold { *this, [this] { resized(); } };
+    const int foldFriends = fold.add ("home-friends", true);
+    juce::Point<int> laidFriends;
 
     // 친구 추가
     Card addCard;

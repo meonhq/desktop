@@ -103,7 +103,16 @@ void Card::setTitle (const juce::String& t, bool canCollapse, bool sideways)
 void Card::setOpen (bool o)
 {
     open = o;
+    fold = o ? 1.0f : 0.0f;
     if (collapse) collapse->setOpen (o);
+    repaint();
+}
+
+void Card::setFoldProgress (float e)
+{
+    if (collapse) collapse->setProgress (e);
+    if (e == fold) return;
+    fold = e;
     repaint();
 }
 
@@ -116,7 +125,12 @@ void Card::setHeaderAccessory (juce::Component* c)
 
 juce::Rectangle<int> Card::contentBounds() const
 {
-    return getLocalBounds().withTrimmedTop (headerHeight() + (title.isEmpty() ? 0 : 1)).reduced (1, 0).withTrimmedBottom (1);
+    return contentBoundsFor (getWidth(), getHeight());
+}
+
+juce::Rectangle<int> Card::contentBoundsFor (int w, int h) const
+{
+    return juce::Rectangle<int> (w, h).withTrimmedTop (headerHeight() + (title.isEmpty() ? 0 : 1)).reduced (1, 0).withTrimmedBottom (1);
 }
 
 void Card::resized()
@@ -142,7 +156,7 @@ void Card::paint (juce::Graphics& g)
         g.setColour (col::ink);
         g.setFont (font (600, 15.0f));
         g.drawText (title, getLocalBounds().withHeight (headerHeight()).reduced (metric::padX, 0), juce::Justification::centredLeft, true);
-        if (open || ! collapsible)
+        if (fold > 0.0f || ! collapsible)   // 접힘(e = 0)이면 구분선 없음
         {
             g.setColour (col::line);
             g.fillRect (1, headerHeight(), getWidth() - 2, 1);

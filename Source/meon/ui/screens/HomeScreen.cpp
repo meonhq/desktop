@@ -390,7 +390,7 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     // 친구
     addAndMakeVisible (friendsCard);
     friendsCard.setTitle (TXT ("친구"), true);
-    friendsCard.onToggle = [this] (bool open) { friendsOpen = open; resized(); };
+    friendsCard.onToggle = [this] (bool open) { friendsOpen = open; fold.setOpen (foldFriends, open); };
     friendList = std::make_unique<FriendList> (*this);
     friendViewport.setViewedComponent (friendList.get(), false);
     friendViewport.setScrollBarsShown (true, false);
@@ -879,13 +879,38 @@ void HomeScreen::resized()
         const int addH = 48 + 1 + addRowH + (addMessage.isNotEmpty() ? noteH + 12 - 6 : 0);
         addCard.setBounds (side.removeFromBottom (addH));
         side.removeFromBottom (metric::gap);
-        friendsCard.setBounds (friendsOpen ? side : side.withHeight (48));
-        friendsCard.setOpen (friendsOpen);
-        friendViewport.setVisible (friendsOpen);
-        const auto fc = friendsCard.contentBounds();
-        friendViewport.setBounds (fc);
-        friendList->setSize (fc.getWidth(), juce::jmax (fc.getHeight(), friendList->preferredHeight()));
-        friendList->resized();
+        const float e = fold.value (foldFriends);
+        if (! fold.isMoving (foldFriends))
+        {
+            laidFriends = {};
+            friendsCard.setBounds (friendsOpen ? side : side.withHeight (48));
+            friendsCard.setOpen (friendsOpen);
+            friendsCard.setFoldProgress (e);
+            friendViewport.setVisible (friendsOpen);
+            friendViewport.setAlpha (1.0f);
+            const auto fc = friendsCard.contentBounds();
+            friendViewport.setBounds (fc);
+            friendList->setSize (fc.getWidth(), juce::jmax (fc.getHeight(), friendList->preferredHeight()));
+            friendList->resized();
+        }
+        else
+        {
+            // 접힌 48 과 펼친 크기 사이. 목록은 펼친 크기로 한 번만 배치하고 카드가 잘라 보인다. 완전히 접히면 숨긴다
+            friendsCard.setBounds (side.withHeight (core::FoldLayout::blendSingle (48, side.getHeight(), e)));
+            friendsCard.setOpen (friendsOpen);
+            friendsCard.setFoldProgress (e);
+            const juce::Point<int> size (side.getWidth(), side.getHeight());
+            if (size != laidFriends)
+            {
+                laidFriends = size;
+                const auto fc = friendsCard.contentBoundsFor (size.x, size.y);
+                friendViewport.setBounds (fc);
+                friendList->setSize (fc.getWidth(), juce::jmax (fc.getHeight(), friendList->preferredHeight()));
+                friendList->resized();
+            }
+            friendViewport.setVisible (e > 0.0f);
+            friendViewport.setAlpha (e);
+        }
 
         const auto ac = addCard.contentBounds();
         addNote.setBounds (ac.getX() + metric::padX, ac.getY() + addRowH - 6, ac.getWidth() - metric::padX * 2, noteH);
@@ -911,7 +936,7 @@ void HomeScreen::resized()
         filterButton->setBounds (metric::padX + titleW + 6, 16, 24, 24);
         roomsLine->setBounds (1, roomsHeaderH, roomsCard.getWidth() - 2, 1);
         roomViewport.setBounds (roomsCard.getLocalBounds().withTrimmedTop (roomsHeaderH + 1).reduced (1, 0).withTrimmedBottom (1));
-        layoutRooms();
+        if (! fold.isMoving (foldFriends)) layoutRooms();   // 친구 패널이 움직이는 동안 공개 방 크기는 그대로다
     }
     {
         auto row = audioCard.contentBounds().reduced (metric::padX, 12);
@@ -941,7 +966,15 @@ void HomeScreen::resized()
         popover->setContent (notifications.get(), notifications->getPreferredHeight());
         popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, juce::jmax (h, popover->getPreferredHeight()));
     }
-    repaint();
+    if (! fold.isMoving (foldFriends)) repaint();   // 움직이는 동안은 옮겨진 카드 자리만 다시 그린다
+}
+
+void HomeScreen::previewFold (float e)
+{
+    friendsOpen = false;
+    if (e < 0.0f) { fold.snap (foldFriends, false); return; }   // 비교용: 애니메이션 없이 접은 화면 (기존 레이아웃)
+    fold.setOpen (foldFriends, false);
+    fold.freeze (foldFriends, false, e);
 }
 
 } // namespace meon::ui

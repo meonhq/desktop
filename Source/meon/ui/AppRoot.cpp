@@ -254,6 +254,8 @@ void AppRoot::layoutToasts()
 }
 
 //==============================================================================
+JamScreen* AppRoot::getJamScreen() { return dynamic_cast<JamScreen*> (jam.get()); }
+
 void AppRoot::showJoinFailure (const core::ApiError& e)
 {
     showJoinFailure (core::HomeController::classify (e));

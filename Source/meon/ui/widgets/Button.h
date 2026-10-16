@@ -102,19 +102,21 @@ private:
     int height;
 };
 
-/** 접기 화살표 (19×19, 12px 화살표). open 이면 아래, 아니면 왼쪽(-90°). 송출·모니터 카드는 90°/-90° */
+/** 접기 화살표 (19×19, 12px 화살표). 각은 접기 진행값 e(접힘 0 ~ 펼침 1)로 정한다:
+    세로 패널 −90° + 90° × e (펼치면 아래), 옆으로 접는 패널(내 오디오·모니터) −90° + 180° × e. 아이콘 중심 기준 회전 */
 class CollapseButton : public juce::Button
 {
 public:
     explicit CollapseButton (bool sideways = false);
+    /** 목표 상태 (툴팁). 각은 e 끝 값으로 맞춘다 (움직이는 동안은 setProgress 가 덮어쓴다) */
     void setOpen (bool);
     bool isOpen() const { return open; }
+    void setProgress (float e);
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
 
 private:
     bool open = true, sideways;
-    float angle = 0.0f, target = 0.0f;
-    juce::VBlankAttachment vblank;
+    float angle = 0.0f;
 };
 
 /** 아이콘 버튼. 24×24 (톱니·닫기, 호버 면 #F5F5F5) 또는 32×32 테두리 (알림·입장 요청, 점 표시) */
