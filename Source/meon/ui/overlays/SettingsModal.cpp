@@ -727,7 +727,7 @@ namespace
                     auto r = getLocalBounds().toFloat();
                     g.setColour (col::accentSoft);
                     g.fillRoundedRectangle (r, metric::radius);
-                    g.setColour (juce::Colour (0xFFF0DE8Au));
+                    g.setColour (meon::col::warnBorder);
                     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
                 }
                 if (paintFn) paintFn (g);

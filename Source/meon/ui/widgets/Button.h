@@ -1,18 +1,18 @@
 // MEON ui - 버튼. 디자인의 버튼 모양을 종류(Kind)로 묶었다.
-//   primary      32px 노랑 (방 만들기·입장·저장)          600 13px
+//   primary      32px 포인트 (방 만들기·입장·저장)          600 13px
 //   secondary    32px 흰 면 + #D5D5D5 (방 나가기)         600 13px #1A1A1A
 //   quiet        32px 투명 + #D5D5D5 (설정)               500 13px #767676
-//   large        40px 노랑, 폭 가득 (온보딩)               600 13px
+//   large        40px 포인트, 폭 가득 (온보딩)               600 13px
 //   dangerOutline 32px 흰 면 + #F2C4C0, 빨간 글자 (방 닫기)
 //   small        19px #FCFCFC + #E0E0E0 (관리·거절·복사…)  400 12px #767676
-//   smallPrimary 19px 노랑 (수락·확인)                     500 12px
+//   smallPrimary 19px 포인트 (수락·확인)                     500 12px
 //   smallDanger  19px 빨간 글자 (친구 삭제·차단·내보내기)
 //   largeSecondary 40px 흰 면 + #D5D5D5 (온보딩 "이전")      600 13px #767676
 //   cancel       32px 흰 면 + #D5D5D5 (취소·거절·중복 확인)  600 13px #767676 → 호버 #1A1A1A
 //   link         글자만 (전송)                             500 13px #767676 → 호버 #1A1A1A
 //   linkSmall    글자만 (비밀번호를 잊었나요?)             500 12px #767676 → 호버 #1A1A1A
 //   linkUnderline 밑줄 글자 (회원가입·로그인·코드 다시 받기) 500 12px #1A1A1A
-// 상태: 켬(toggled)·대기(pending, 노란 연한 면)·비활성. 두 번 눌러 확정(setConfirm)도 여기서 한다.
+// 상태: 켬(toggled)·대기(pending, 연한 포인트 면)·비활성. 두 번 눌러 확정(setConfirm)도 여기서 한다.
 #pragma once
 
 #include "../theme/Tokens.h"
@@ -37,19 +37,19 @@ public:
     void setKind (Kind);
     Kind getKind() const { return kind; }
 
-    /** 작은 버튼의 켬 상태 (음소거·송출 정지): 노란 면 */
+    /** 작은 버튼의 켬 상태 (음소거·송출 정지): 포인트 면 */
     void setOn (bool);
     bool isOn() const { return on; }
 
-    /** 대기 상태 (초대 3초): 연한 노랑 면 + 노란 테두리 */
+    /** 대기 상태 (초대 3초): 연한 포인트 면 + 포인트 테두리 */
     void setPending (bool);
 
     /** 비활성 모양 (클릭은 막지 않는다. 막으려면 setEnabled) */
     void setDimmed (bool);
 
-    /** 두 번 눌러 확정: 첫 클릭에 armedText 와 빨간(또는 노란) 면으로 바뀌고, 다시 누르면 onClick.
+    /** 두 번 눌러 확정: 첫 클릭에 armedText 와 빨간(또는 포인트 색) 면으로 바뀌고, 다시 누르면 onClick.
         다른 곳을 누르거나 3초가 지나면 되돌아간다. */
-    void setConfirm (const juce::String& armedText, bool yellow = false);
+    void setConfirm (const juce::String& armedText, bool accent = false);
     bool isArmed() const { return armed; }
     void disarm();
 
@@ -77,7 +77,7 @@ protected:
 
 private:
     Kind kind;
-    bool on = false, pending = false, dimmed = false, armed = false, confirm = false, confirmYellow = false, flashing = false;
+    bool on = false, pending = false, dimmed = false, armed = false, confirm = false, confirmAccent = false, flashing = false;
     juce::String normalText, armedText;
     int fixedWidth = 0;
 

@@ -47,11 +47,11 @@ void Button::setOn (bool b)         { if (on != b) { on = b; repaint(); } }
 void Button::setPending (bool b)    { if (pending != b) { pending = b; repaint(); } }
 void Button::setDimmed (bool b)     { if (dimmed != b) { dimmed = b; setMouseCursor (b ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor); repaint(); } }
 
-void Button::setConfirm (const juce::String& text, bool yellow)
+void Button::setConfirm (const juce::String& text, bool accent)
 {
     confirm = true;
     armedText = text;
-    confirmYellow = yellow;
+    confirmAccent = accent;
     normalText = getButtonText();
 }
 
@@ -148,7 +148,7 @@ Button::Look Button::currentLook() const
             if (armed) return { col::danger, col::danger, col::white, 400 };
             return { col::softBg, col::line, col::danger, 400 };
         case Kind::small:
-            if (armed) return confirmYellow ? Look { col::accent, col::accent, col::ink, 400 } : Look { col::danger, col::danger, col::white, 400 };
+            if (armed) return confirmAccent ? Look { col::accent, col::accent, col::ink, 400 } : Look { col::danger, col::danger, col::white, 400 };
             if (on) return { col::accent, col::accent, col::ink, 400 };
             if (pending) return { col::accentSoft, col::accent, col::ink, 400 };
             if (disabled) return { col::softBg, col::line, col::inkFaint, 400 };

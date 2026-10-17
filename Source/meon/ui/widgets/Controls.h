@@ -24,7 +24,7 @@ private:
     double startMs = 0.0, durMs = 0.0;
 };
 
-/** 토글 스위치 26×16, 켬 #FFD700 / 끔 #E0E0E0, 손잡이 12px 흰 원, 0.15s */
+/** 토글 스위치 26×16, 켬 포인트 #FFD8E4 / 끔 #E0E0E0, 손잡이 12px 흰 원, 0.15s */
 class Toggle : public juce::Component
 {
 public:
@@ -79,7 +79,7 @@ private:
     int itemWidth (int i) const;
 };
 
-/** dB 슬라이더 (디자인의 볼륨 막대). 높이 19, 트랙 4px #E0E0E0, 채움 #FFD700(꺼짐이면 #D5D5D5), 손잡이 19px 흰 원.
+/** dB 슬라이더 (디자인의 볼륨 막대). 높이 19, 트랙 4px #E0E0E0, 채움 포인트 #FFD8E4(꺼짐이면 #D5D5D5), 손잡이 19px 흰 원.
     0.5 dB 단위, ±1 dB 안이면 0, 더블클릭 0 dB, 드래그 중 위 말풍선 "+1.5 dB", 휠 없음.
     linear 모드는 0~1 위치 (파일 재생 위치). */
 class DbSlider : public juce::Component, public juce::SettableTooltipClient

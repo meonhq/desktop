@@ -167,6 +167,7 @@ public:
     }
 
     const std::vector<Message>& getMessages() const { return messages; }
+    const juce::String& group() const { return groupName; }   // 개발용 미리 보기가 받은 메시지를 흉내 낼 때
     int getUnread() const { return unread; }
     void markRead() { unread = 0; }
 

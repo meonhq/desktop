@@ -118,7 +118,7 @@ private:
     juce::StringArray values;
 };
 
-/** 체크 상자 16×16 (약관 동의). 켬: 노란 면 + 체크 */
+/** 체크 상자 16×16 (약관 동의). 켬: 포인트 면 + 체크 */
 class Checkbox : public juce::Button
 {
 public:
