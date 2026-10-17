@@ -46,7 +46,7 @@ namespace
 }
 
 //==============================================================================
-/** 무음 경고 줄 (노란 면 #FFF8D6, 위 구분선): "입력 신호가 없어요 · 설정에서 입력 채널을 확인해 주세요" + 설정 열기.
+/** 무음 경고 줄 (연한 핑크 면 #FFF0F4, 위 구분선): "입력 신호가 없어요 · 설정에서 입력 채널을 확인해 주세요" + 설정 열기.
     입력 장치는 있는데 소리가 안 들어올 때만 (5초 −60 dBFS). 장치 없음 안내는 띄우지 않는다 (2026-10-15 사용자 결정) */
 struct JamScreen::SilenceRow : juce::Component
 {
@@ -370,7 +370,7 @@ struct JamScreen::MemberList : juce::Component
 };
 
 //==============================================================================
-/** 채팅 목록. 시스템(가운데 회색 "오후 9:02 · …"), 남(이름 + 본문 15px), 나(오른쪽 노란 말풍선 220, 실패 줄) */
+/** 채팅 목록. 시스템(가운데 회색 "오후 9:02 · …"), 남(아바타 30 + 9 + 이름·본문 15px), 나(오른쪽 연한 핑크 말풍선 220, 실패 줄) */
 struct JamScreen::ChatView : juce::Component
 {
     explicit ChatView (JamScreen& o) : owner (o) {}
@@ -380,7 +380,19 @@ struct JamScreen::ChatView : juce::Component
         core::ChatChannel::Message msg;
         juce::Rectangle<int> bounds, resendArea;
         juce::TextLayout layout;
+        juce::String part;   // 남의 메시지: 보낸 사람의 지금 파트 (방을 나갔거나 모르면 비어 있음 → 빈 원)
     };
+    static constexpr int avatarSize = 30, avatarGap = 9;
+
+    /** 보낸 사람의 파트: 지금 방 멤버 정보에서. 없으면 빈 문자열 */
+    juce::String partOf (const juce::String& userId) const
+    {
+        const auto& room = owner.core.store().state().currentRoom;
+        if (room)
+            for (auto& rm : room->members)
+                if (rm.user.id == userId) return rm.user.part.value_or (juce::String());
+        return {};
+    }
     std::vector<Item> items;
 
     static juce::TextLayout makeLayout (const juce::String& text, int width, juce::Colour ink, float px, int weight)
@@ -434,10 +446,13 @@ struct JamScreen::ChatView : juce::Component
             }
             else
             {
-                it.layout = makeLayout (m.text, inner, col::ink, 15.0f, 400);
+                // 남의 메시지: 왼쪽 아바타 30(위쪽 정렬) + 9, 이름·본문은 오른쪽 남은 폭 (줄바꿈 폭도 39 줄어든다)
+                const int textW = juce::jmax (1, inner - avatarSize - avatarGap);
+                it.layout = makeLayout (m.text, textW, col::ink, 15.0f, 400);
+                it.part = partOf (m.fromUser);
                 const int h = 16 + 3 + (int) std::ceil (it.layout.getHeight());
-                it.bounds = { 18, y, inner, h };
-                y += h + 14;
+                it.bounds = { 18 + avatarSize + avatarGap, y, textW, h };
+                y += juce::jmax (h, avatarSize) + 14;
             }
             items.push_back (std::move (it));
         }
@@ -488,6 +503,10 @@ struct JamScreen::ChatView : juce::Component
             }
             else
             {
+                // 아바타: 테두리 1px #E0E0E0, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음
+                Avatar::paintCircle (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
+                                                                (float) avatarSize, (float) avatarSize),
+                                     it.part, 16.0f, col::ink, true);
                 g.setColour (col::inkSub);
                 g.setFont (font (600, 13.0f));
                 g.drawText (owner.memberName (m.fromUser), it.bounds.withHeight (16), juce::Justification::centredLeft, true);

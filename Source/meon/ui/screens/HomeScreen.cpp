@@ -34,7 +34,7 @@ struct HomeScreen::Separator : juce::Component
     void paint (juce::Graphics& g) override { g.fillAll (col::line); }
 };
 
-/** 필터 버튼 24×24 (아이콘 14px). 필터가 켜져 있으면 진한 색 + 노란 점 */
+/** 필터 버튼 24×24 (아이콘 14px). 필터가 켜져 있으면 진한 색 + 포인트 색 점 */
 struct HomeScreen::FilterButton : juce::Button
 {
     FilterButton() : juce::Button ("filter") { setMouseCursor (juce::MouseCursor::PointingHandCursor); setTooltip (TXT ("필터")); }

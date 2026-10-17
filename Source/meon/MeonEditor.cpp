@@ -456,6 +456,41 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (ui::msg::inviteFailure (core::ErrorCode::targetOffline), {});
     }
+    else if (p == "jam:chat")   // 멤버가 있는 공개 방에 들어가 상대 메시지 여러 개(연달아·긴 글·나간 사람) + 내 말풍선
+    {
+        const core::Room* pick = nullptr;
+        for (auto& r : core.store().state().publicRooms)
+            if (! r.isApproval() && r.memberCount < r.capacity && (pick == nullptr || r.memberCount > pick->memberCount))
+                pick = &r;
+        if (pick == nullptr) return;
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        core.home().joinRoom (pick->id, [safe] (core::Result<core::JoinResult>)
+        {
+            juce::Timer::callAfterDelay (800, [safe]
+            {
+                if (safe == nullptr) return;
+                auto* jam = safe->core.jam();
+                const auto& st = safe->core.store().state();
+                if (jam == nullptr || ! st.currentRoom) return;
+                juce::StringArray others;
+                for (auto& m : st.currentRoom->members)
+                    if (! st.me || m.user.id != st.me->id) others.add (m.user.id);
+                if (others.isEmpty()) return;
+                auto& chat = jam->chat();
+                int n = 0;
+                auto say = [&] (const juce::String& from, const juce::String& text)
+                {
+                    chat.received ({ chat.group(), from, "id:preview" + juce::String (++n), text });
+                };
+                say (others[0], TXT ("다들 들어오셨네요! 오늘은 셋리스트 순서대로 가 볼게요"));
+                say (others[0], TXT ("첫 곡 템포 92로 맞춰 주세요"));
+                if (others.size() > 1) say (others[1], TXT ("넵 좋아요. 브릿지에서 한 번 쉬고 들어가는 거 맞죠? 지난번에 거기서 다들 엇갈려서 이번엔 제가 손으로 신호 드릴게요"));
+                chat.sendText (TXT ("좋아요, 저는 준비됐어요"));
+                if (others.size() > 2) say (others[2], TXT ("드럼 소리 잘 들려요?"));
+                say ("u_left_preview", TXT ("저는 먼저 나갈게요 (방을 나간 사람: 파트를 몰라 빈 원)"));
+            });
+        });
+    }
     else if (p == "jam:ping")   // 멤버가 있는 공개 방에 들어가 멤버 행에 낮고 높은 핑을 보인다
     {
         const core::Room* pick = nullptr;

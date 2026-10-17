@@ -42,10 +42,8 @@ juce::Colour Avatar::statusColour (Status s)
 void Avatar::paint (juce::Graphics& g)
 {
     auto r = juce::Rectangle<float> (size, size).withCentre (getLocalBounds().toFloat().getCentre());
-    g.setColour (col::line);
-    g.drawEllipse (r.reduced (0.5f), 1.0f);
     // 아이콘은 이름과 같은 색 (박힌 #1A1A1A 를 쓰지 않는다). 흐린 상태도 이름의 #AAAAAA 와 같게
-    icons::drawPart (g, part, r, iconPx, dimmed ? col::inkFaint : ink);
+    paintCircle (g, r, part, iconPx, dimmed ? col::inkFaint : ink, false);
     if (status != Status::none)
     {
         // right:-1 bottom:-1, 9×9, 흰 테두리 2px
@@ -55,6 +53,20 @@ void Avatar::paint (juce::Graphics& g)
         g.setColour (col::white);
         g.drawEllipse (dot.reduced (1.0f), 2.0f);
     }
+}
+
+void Avatar::paintCircle (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& partKey, float iconPx,
+                          juce::Colour inkColour, bool whiteFill)
+{
+    if (whiteFill)
+    {
+        g.setColour (col::white);
+        g.fillEllipse (r);
+    }
+    g.setColour (col::line);
+    g.drawEllipse (r.reduced (0.5f), 1.0f);
+    if (partKey.isNotEmpty())
+        icons::drawPart (g, partKey, r, iconPx, inkColour);   // 얇은 아이콘 (PartWeight::thin)
 }
 
 void Avatar::mouseUp (const juce::MouseEvent& e)

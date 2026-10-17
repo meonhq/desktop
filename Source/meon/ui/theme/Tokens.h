@@ -1,5 +1,5 @@
 // MEON ui - 디자인 토큰 (docs/design/MEON_Lab.dc.html 의 값 그대로).
-// 노랑(#FFD700)은 면(배경·채움·테두리)에만 쓰고 글자에는 쓰지 않는다.
+// 포인트 핑크(#FFD8E4)는 면(배경·채움·테두리)에만 쓰고 글자에는 쓰지 않는다.
 #pragma once
 
 #include <JuceHeader.h>
@@ -15,9 +15,9 @@ namespace col
     const juce::Colour inkFaint     { 0xFFAAAAAAu };   // 비활성·안내·placeholder
     const juce::Colour inkGhost     { 0xFFCCCCCCu };   // 초기화 버튼(바꾼 값 없음)
     const juce::Colour white        { 0xFFFFFFFFu };
-    const juce::Colour accent       { 0xFFFFD700u };   // 노랑 면
-    const juce::Colour accentHover  { 0xFFEBC600u };
-    const juce::Colour accentSoft   { 0xFFFFF8D6u };   // 선택 칩·경고 면·내 말풍선
+    const juce::Colour accent       { 0xFFFFD8E4u };   // 포인트 핑크 면
+    const juce::Colour accentHover  { 0xFFF5C2D2u };
+    const juce::Colour accentSoft   { 0xFFFFF0F4u };   // 연한 핑크: 선택 칩·경고 면·내 말풍선
     const juce::Colour line         { 0xFFE0E0E0u };   // 카드 테두리·구분선
     const juce::Colour field        { 0xFFD5D5D5u };   // 입력·버튼 테두리
     const juce::Colour softBg       { 0xFFFCFCFCu };   // 작은 버튼·미터 상자 배경

@@ -1,5 +1,5 @@
 // MEON - 디자인 토큰 (색, 글꼴, 치수)
-// 값은 디자인 명세(MEON Yellow.dc.html 공통 스펙)에서 그대로 가져온다. 임의로 추가한 값은 주석에 [임의] 표시.
+// 값은 디자인 명세(MEON Yellow.dc.html 공통 스펙, 포인트 색은 "합주 최종.dc.html")에서 그대로 가져온다. 임의로 추가한 값은 주석에 [임의] 표시.
 #pragma once
 
 #include <JuceHeader.h>
@@ -12,14 +12,14 @@ namespace meon
 
 namespace col
 {
-    // 노랑(accent, accentDown, warnBg, warnBorder)은 배경·채우기에만 쓴다. 글자에는 쓰지 않는다.
+    // 포인트 핑크(accent, accentDown, warnBg, warnBorder)는 배경·채우기에만 쓴다. 글자에는 쓰지 않는다.
     // 글자 회색은 세 단계뿐: ink #1A1A1A(제목·주요) / inkSub #767676(본문·보조·링크) / disabled #AAAAAA(비활성)
     // (#8F7200 포인트 글자, #4A4A4A 본문 글자는 폐기 → inkSub)
-    const juce::Colour accent      { 0xFFFFD700u };  // 포인트 (유일한 컬러, 노랑 시안)
-    const juce::Colour accentDown  { 0xFFEBC600u };  // 포인트 눌림
-    const juce::Colour onAccent    { 0xFF1A1A1Au };  // 노랑 면 위 글자·아이콘
-    const juce::Colour warnBg      { 0xFFFFF8D6u };  // 경고 배경
-    const juce::Colour warnBorder  { 0xFFF0DE8Au };  // 경고 테두리
+    const juce::Colour accent      { 0xFFFFD8E4u };  // 포인트 (유일한 컬러, 핑크)
+    const juce::Colour accentDown  { 0xFFF5C2D2u };  // 포인트 눌림
+    const juce::Colour onAccent    { 0xFF1A1A1Au };  // 포인트 면 위 글자·아이콘
+    const juce::Colour warnBg      { 0xFFFFF0F4u };  // 경고 배경
+    const juce::Colour warnBorder  { 0xFFF2B8CAu };  // 경고 테두리
     const juce::Colour ink         { 0xFF1A1A1Au };  // 제목·주요 텍스트
     const juce::Colour inkSub      { 0xFF767676u };  // 본문·보조 텍스트, 링크 (흰 바탕 대비 4.5:1)
     const juce::Colour disabled    { 0xFFAAAAAAu };  // 비활성

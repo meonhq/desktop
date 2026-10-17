@@ -8,7 +8,7 @@ namespace meon::ui
 {
 
 /** 핑 배지 (폭 48, 높이 19, 모서리 5, 400 12px). 연한 회색 면(badgeBg) + #767676 글자, 테두리 없음.
-    핑 값과 상관없이 같은 모양 (예전의 18ms 초과 노란 면은 쓰지 않는다, 2026-10-16). text 가 "나" 같은 글자면 그대로 */
+    핑 값과 상관없이 같은 모양 (예전의 18ms 초과 포인트 색 면은 쓰지 않는다, 2026-10-16). text 가 "나" 같은 글자면 그대로 */
 class PingBadge : public juce::Component
 {
 public:
@@ -21,7 +21,7 @@ private:
 };
 
 /** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #E0E0E0.
-    상태 점(9px, 흰 테두리 2px): 온라인 #FFD700, 방에 있음 #1A1A1A, 오프라인 #D5D5D5 */
+    상태 점(9px, 흰 테두리 2px): 온라인 포인트 #FFD8E4, 방에 있음 #1A1A1A, 오프라인 #D5D5D5 */
 class Avatar : public juce::Component
 {
 public:
@@ -41,6 +41,10 @@ public:
     }
 
     static juce::Colour statusColour (Status);
+    /** 원 + 파트 아이콘만 그린다 (채팅처럼 구성 요소 없이 직접 그리는 곳). partKey 가 비면 아이콘 없는 빈 원.
+        whiteFill: 원 안을 흰색으로 (나중에 프로필 사진이 생기면 이 자리에 들어간다) */
+    static void paintCircle (juce::Graphics&, juce::Rectangle<float> circle, const juce::String& partKey, float iconPx,
+                             juce::Colour ink, bool whiteFill);
 
 private:
     float size, iconPx;
