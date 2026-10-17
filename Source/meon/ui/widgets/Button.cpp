@@ -243,26 +243,25 @@ void DiscordButton::paintButton (juce::Graphics& g, bool highlighted, bool)
 
 //==============================================================================
 CollapseButton::CollapseButton (bool side)
-    : juce::Button ({}), sideways (side),
-      vblank (this, [this]
-      {
-          if (std::abs (angle - target) < 0.001f) return;
-          // 0.15s 회전 (VBlank 마다 남은 각의 일정 비율)
-          angle += (target - angle) * 0.35f;
-          if (std::abs (angle - target) < 0.01f) angle = target;
-          repaint();
-      })
+    : juce::Button ({}), sideways (side)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    target = angle = sideways ? juce::MathConstants<float>::halfPi : 0.0f;
+    setProgress (1.0f);
 }
 
 void CollapseButton::setOpen (bool o)
 {
     open = o;
-    const float half = juce::MathConstants<float>::halfPi;
-    target = open ? (sideways ? half : 0.0f) : -half;
     setTooltip (open ? TXT ("접기") : TXT ("펼치기"));
+    setProgress (open ? 1.0f : 0.0f);
+}
+
+void CollapseButton::setProgress (float e)
+{
+    const float half = juce::MathConstants<float>::halfPi;
+    const float a = -half + (sideways ? 2.0f * half : half) * e;
+    if (a == angle) return;
+    angle = a;
     repaint();
 }
 

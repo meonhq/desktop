@@ -46,6 +46,13 @@ namespace col
     const juce::Colour meterCover   { 0xFFE5E5EAu };
 }
 
+/** 접기·펼치기 (채팅·친구·내 오디오·모니터·홈 친구가 모두 이 값을 읽는다. ui/widgets/FoldAnimator) */
+namespace motion
+{
+    constexpr int foldDurationMs = 180;
+    constexpr double foldEase[4] = { 0.2, 0.0, 0.0, 1.0 };   // cubic-bezier(0.2, 0, 0, 1)
+}
+
 namespace metric
 {
     constexpr int padX = 18;            // 좌우 여백
