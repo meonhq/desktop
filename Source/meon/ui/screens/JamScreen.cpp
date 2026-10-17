@@ -557,7 +557,7 @@ struct JamScreen::ChatDecor : juce::Component
 
     void paint (juce::Graphics& g) override
     {
-        if (! owner.chatOpen) return;
+        if (! owner.chatInput.isVisible()) return;   // 접힘 (접히는 동안은 보인다)
         if (owner.chatViewport.isVisible())   // resized() 가 목록 아래 1px 를 비워 둔다
         {
             const auto vb = owner.chatViewport.getBounds();
@@ -875,8 +875,8 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     addAndMakeVisible (monCard);
     sendCard.setTitle (TXT ("내 오디오"), true, true);
     monCard.setTitle (TXT ("모니터"), true, true);
-    sendCard.onToggle = [this] (bool o) { sendOpen = o; resized(); };
-    monCard.onToggle = [this] (bool o) { monOpen = o; resized(); };
+    sendCard.onToggle = [this] (bool o) { sendOpen = o; toggleFold (foldSend, o); };
+    monCard.onToggle = [this] (bool o) { monOpen = o; toggleFold (foldMon, o); };
     for (auto* comp : std::initializer_list<juce::Component*> { &sendMute, &sendGain, &inputMeter })
         sendCard.addAndMakeVisible (comp);
     for (auto* comp : std::initializer_list<juce::Component*> { &monMute, &master, &outputMeter })
@@ -900,7 +900,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     // 채팅
     addAndMakeVisible (chatCard);
     chatCard.setTitle (TXT ("채팅"), true);
-    chatCard.onToggle = [this] (bool o) { chatOpen = o; resized(); };
+    chatCard.onToggle = [this] (bool o) { chatOpen = o; toggleFold (foldChat, o); };
     chatView = std::make_unique<ChatView> (*this);
     chatViewport.setViewedComponent (chatView.get(), false);
     chatViewport.setScrollBarsShown (true, false);
@@ -920,7 +920,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     // 친구
     addAndMakeVisible (friendsCard);
     friendsCard.setTitle (TXT ("친구"), true);
-    friendsCard.onToggle = [this] (bool o) { friendsOpen = o; resized(); };
+    friendsCard.onToggle = [this] (bool o) { friendsOpen = o; toggleFold (foldFriends, o); };
     friendList = std::make_unique<FriendList>();
     friendViewport.setViewedComponent (friendList.get(), false);
     friendViewport.setScrollBarsShown (true, false);
@@ -1046,9 +1046,18 @@ void JamScreen::refreshChat()
     const int w = chatViewport.getWidth() - (chatViewport.isVerticalScrollBarShown() ? chatViewport.getScrollBarThickness() : 0);
     if (w <= 0) return;
     const int h = chatView->layoutFor (w);
+    chatContentH = h;
     chatView->setSize (w, juce::jmax (chatViewport.getHeight(), h));
     if (chatAtBottom) chatViewport.setViewPosition (0, chatView->getHeight() - chatViewport.getHeight());
     chatView->repaint();
+}
+
+void JamScreen::fitChatView()
+{
+    const int w = chatViewport.getWidth() - (chatViewport.isVerticalScrollBarShown() ? chatViewport.getScrollBarThickness() : 0);
+    if (w <= 0 || w != chatView->getWidth() || chatContentH == 0) { refreshChat(); return; }
+    chatView->setSize (w, juce::jmax (chatViewport.getHeight(), chatContentH));
+    if (chatAtBottom) chatViewport.setViewPosition (0, chatView->getHeight() - chatViewport.getHeight());
 }
 
 void JamScreen::sendChat()
@@ -1148,71 +1157,149 @@ void JamScreen::resized()
     const int sideW = plugin ? 240 : 320;
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
+    const bool vMoving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
+    const bool hMoving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
     {
         filePlayer->setBounds (side.removeFromBottom (filePlayer->preferredHeight (side.getWidth())));
         side.removeFromBottom (metric::gap);
         const int closedH = 48;
-        int chatH, frH;
         const int avail = side.getHeight() - metric::gap;
-        if (chatOpen && friendsOpen) { chatH = avail - avail / 2; frH = avail / 2; }
-        else if (chatOpen)           { frH = closedH; chatH = avail - frH; }
-        else if (friendsOpen)        { chatH = closedH; frH = avail - chatH; }
-        else                         { chatH = frH = closedH; }
-        chatCard.setBounds (side.removeFromTop (chatH));
+        sideAvail = avail;
+        const float eChat = fold.value (foldChat), eFr = fold.value (foldFriends);
+        core::FoldLayout::Pair hs;
+        if (! vMoving)
+            hs = core::FoldLayout::verticalPair (avail, closedH, chatOpen, friendsOpen);
+        else
+        {
+            // 움직이는 동안: 네 끝 상태(둘 다 열림·하나만 열림 ×2·둘 다 닫힘)를 두 e 로 이중 선형 보간
+            core::FoldLayout::Pair L[2][2];
+            for (int a = 0; a < 2; ++a)
+                for (int b = 0; b < 2; ++b)
+                    L[a][b] = core::FoldLayout::verticalPair (avail, closedH, a == 1, b == 1);
+            hs = core::FoldLayout::blend (L, eChat, eFr, foldFillV);
+        }
+        chatCard.setBounds (side.removeFromTop (hs.first));
         side.removeFromTop (metric::gap);
-        friendsCard.setBounds (side.removeFromTop (frH));
+        friendsCard.setBounds (side.removeFromTop (hs.second));
         chatCard.setOpen (chatOpen);
+        chatCard.setFoldProgress (eChat);
         friendsCard.setOpen (friendsOpen);
+        friendsCard.setFoldProgress (eFr);
 
         // 채팅 안: 목록 + 입력 줄 (12·18, 높이 44)
-        auto cb = chatCard.contentBounds();
-        chatViewport.setVisible (chatOpen);
-        chatInput.setVisible (chatOpen);
-        chatSend.setVisible (chatOpen);
-        auto inputRow = cb.removeFromBottom (44);
-        chatViewport.setBounds (cb.withTrimmedBottom (1));
-        chatDecor->setBounds (chatCard.getLocalBounds());
-        chatDecor->toFront (false);
-        chatDecor->repaint();
-        auto ir = inputRow.reduced (metric::padX, 12);
-        const int sw = chatSend.getIdealWidth();
-        chatSend.setBounds (ir.removeFromRight (sw));
-        ir.removeFromRight (8);
-        chatInput.setBounds (ir);
-        refreshChat();
+        auto chatContent = [this] (bool visible, float alpha)
+        {
+            for (auto* comp : std::initializer_list<juce::Component*> { &chatViewport, &chatInput, &chatSend })
+                comp->setVisible (visible);
+            for (auto* comp : std::initializer_list<juce::Component*> { &chatViewport, &chatInput, &chatSend, chatDecor.get() })
+                comp->setAlpha (alpha);
+        };
+        if (! vMoving)
+        {
+            laidChat = {};
+            chatContent (chatOpen, 1.0f);
+            if (! hMoving)   // 아래쪽 행이 움직이는 동안 오른쪽 열 크기는 그대로다 (채팅을 매 프레임 다시 배치하지 않는다)
+            {
+                layoutChatContent (chatCard.getWidth(), chatCard.getHeight());
+                refreshChat();
+            }
+        }
+        else if (fold.isMoving (foldChat))
+        {
+            // 접히는·펼쳐지는 채팅: 내용은 시작·끝 중 큰 크기로 한 번만 배치하고 카드가 잘라 보인다. 완전히 접히면 숨긴다
+            const juce::Point<int> size (chatCard.getWidth(), juce::jmax (foldChatH, hs.first));
+            if (size != laidChat) { laidChat = size; layoutChatContent (size.x, size.y); fitChatView(); }
+            chatContent (eChat > 0.0f, eChat);
+        }
+        else
+        {
+            // 열린 채로 옆(친구) 때문에 크기만 바뀜: 목록 칸과 입력 줄만 따라가고 메시지는 다시 배치하지 않는다
+            laidChat = {};
+            chatContent (chatOpen, 1.0f);
+            layoutChatContent (chatCard.getWidth(), chatCard.getHeight());
+            fitChatView();
+        }
 
-        auto fb = friendsCard.contentBounds();
-        friendViewport.setVisible (friendsOpen);
-        friendViewport.setBounds (fb);
-        friendList->setSize (fb.getWidth(), juce::jmax (fb.getHeight(), friendList->preferredHeight()));
-        friendList->resized();
+        if (! vMoving)
+        {
+            laidFriends = {};
+            friendViewport.setVisible (friendsOpen);
+            friendViewport.setAlpha (1.0f);
+            if (! hMoving) layoutFriendsContent (friendsCard.getWidth(), friendsCard.getHeight());
+        }
+        else if (fold.isMoving (foldFriends))
+        {
+            const juce::Point<int> size (friendsCard.getWidth(), juce::jmax (foldFriendsH, hs.second));
+            if (size != laidFriends) { laidFriends = size; layoutFriendsContent (size.x, size.y); }
+            friendViewport.setVisible (eFr > 0.0f);
+            friendViewport.setAlpha (eFr);
+        }
+        else
+        {
+            laidFriends = {};
+            friendViewport.setVisible (friendsOpen);
+            friendViewport.setAlpha (1.0f);
+            friendViewport.setBounds (friendsCard.contentBounds());   // 목록은 그대로 (끝나면 기존 배치)
+        }
     }
 
     // 왼쪽: 멤버 (위) · 내 오디오 + 모니터 (아래)
     {
-        const int closedW = 150;
-        int sendW, monW;
         const int availW = area.getWidth() - metric::gap;
-        if (sendOpen && monOpen)  { sendW = availW - availW / 2; monW = availW / 2; }
-        else if (sendOpen)        { monW = juce::jmin (availW / 2, 84 + 36 + 120); sendW = availW - monW; }
-        else if (monOpen)         { sendW = juce::jmin (availW / 2, 84 + 36 + 120); monW = availW - sendW; }
-        else                      { sendW = monW = juce::jmin (availW / 2, 84 + 36 + 120); juce::ignoreUnused (closedW); }
-        const int warnH = silenceRowH (sendW - 2);   // 카드 테두리 안쪽 폭
+        bottomAvail = availW;
+        const float eSend = fold.value (foldSend), eMon = fold.value (foldMon);
+        // 미터 폭: 열리면 150 (좁거나 플러그인이면 행의 1/3, 84~150), 접히면 행 전체
+        auto meterW = [this] (int rowW, bool open)
+        {
+            return open ? ((plugin || rowW < 400) ? juce::jlimit (84, 150, rowW / 3) : 150) : rowW;
+        };
+        static constexpr int rowInset = 2 + metric::padX * 2;   // 카드 테두리 + 좌우 여백
+        core::FoldLayout::Pair ws;
+        int warnH, sendMeterW, monMeterW;
+        if (! hMoving)
+        {
+            ws = core::FoldLayout::horizontalPair (availW, sendOpen, monOpen);
+            warnH = silenceRowH (ws.first - 2);   // 카드 테두리 안쪽 폭
+            sendMeterW = meterW (ws.first - rowInset, sendOpen);
+            monMeterW = meterW (ws.second - rowInset, monOpen);
+        }
+        else
+        {
+            // 움직이는 동안: 폭·무음 경고 줄 높이·미터 폭을 네 끝 상태에서 이중 선형 보간 (e 가 0·1 이면 기존 값 그대로)
+            core::FoldLayout::Pair L[2][2];
+            int W[2][2], MS[2][2], MM[2][2];
+            for (int a = 0; a < 2; ++a)
+                for (int b = 0; b < 2; ++b)
+                {
+                    L[a][b] = core::FoldLayout::horizontalPair (availW, a == 1, b == 1);
+                    W[a][b] = silenceRowH (L[a][b].first - 2);
+                    MS[a][b] = meterW (L[a][b].first - rowInset, a == 1);
+                    MM[a][b] = meterW (L[a][b].second - rowInset, b == 1);
+                }
+            ws = core::FoldLayout::blend (L, eSend, eMon, foldFillH);
+            warnH = core::FoldLayout::blendValue (W, eSend, eMon);
+            sendMeterW = core::FoldLayout::blendValue (MS, eSend, eMon);
+            monMeterW = core::FoldLayout::blendValue (MM, eSend, eMon);
+        }
+        const int sendW = ws.first, monW = ws.second;
         auto bottom = area.removeFromBottom (bottomCardH + warnH);
         area.removeFromBottom (metric::padX);
         sendCard.setBounds (bottom.removeFromLeft (sendW));
         bottom.removeFromLeft (metric::gap);
         monCard.setBounds (bottom.removeFromLeft (monW).withHeight (bottomCardH));
         sendCard.setOpen (sendOpen);
+        sendCard.setFoldProgress (eSend);
         monCard.setOpen (monOpen);
+        monCard.setFoldProgress (eMon);
 
-        auto layoutRow = [] (juce::Rectangle<int> row, bool open, Button& b, DbSlider& s, MeterBox& m, bool pluginSize)
+        auto layoutRow = [] (juce::Rectangle<int> row, bool open, int mw, Button& b, DbSlider& s, MeterBox& m)
         {
             row = row.reduced (metric::padX, 12);
-            const int mw = open ? ((pluginSize || row.getWidth() < 400) ? juce::jlimit (84, 150, row.getWidth() / 3) : 150) : row.getWidth();
             m.setBounds (row.removeFromRight (mw).withSizeKeepingCentre (mw, metric::smallH));
             b.setVisible (open);
             s.setVisible (open);
+            b.setAlpha (1.0f);
+            s.setAlpha (1.0f);
             if (! open) return;
             row.removeFromRight (12);
             const int bw = b.getIdealWidth();
@@ -1220,24 +1307,120 @@ void JamScreen::resized()
             row.removeFromLeft (12);
             s.setBounds (row.withSizeKeepingCentre (row.getWidth(), metric::smallH));
         };
+        // 접히는·펼쳐지는 카드: 내용 행을 카드 오른쪽 끝에 붙인다. 미터는 끝까지 보이고(투명도 그대로),
+        // 버튼·슬라이더는 시작·끝 중 넓은 쪽의 열린 배치 크기 그대로 미터 왼쪽에 붙어 잘려 들어가며 투명도 e
+        auto layoutRowFolding = [&meterW] (juce::Rectangle<int> row, float e, int mw, int contentW, Button& b, DbSlider& s, MeterBox& m)
+        {
+            row = row.reduced (metric::padX, 12);
+            const auto meter = juce::Rectangle<int> (row.getRight() - mw, row.getY(), mw, row.getHeight()).withSizeKeepingCentre (mw, metric::smallH);
+            m.setBounds (meter);
+            const int openRowW = contentW - rowInset;
+            const int bw = b.getIdealWidth();
+            const int sw = juce::jmax (0, openRowW - meterW (openRowW, true) - 12 - bw - 12);
+            const int sx = meter.getX() - 12 - sw;
+            s.setBounds (sx, meter.getY(), sw, metric::smallH);
+            b.setBounds (sx - 12 - bw, meter.getY(), bw, metric::smallH);
+            b.setVisible (e > 0.0f);
+            s.setVisible (e > 0.0f);
+            b.setAlpha (e);
+            s.setAlpha (e);
+        };
         auto sc = sendCard.contentBounds();
-        layoutRow (sc.removeFromTop (43), sendOpen, sendMute, sendGain, inputMeter, plugin);
+        const auto sendRow = sc.removeFromTop (43);
+        if (fold.isMoving (foldSend))
+            layoutRowFolding (sendRow, eSend, sendMeterW, juce::jmax (foldSendW, sendW), sendMute, sendGain, inputMeter);
+        else
+            layoutRow (sendRow, sendOpen, sendMeterW, sendMute, sendGain, inputMeter);
         const bool warn = jam.isInputSilent();
         silenceRow->setVisible (warn);
         silenceRow->repaint();
-        if (warn) silenceRow->setBounds (sc.withHeight (warnH));
-        layoutRow (monCard.contentBounds().removeFromTop (43), monOpen, monMute, master, outputMeter, plugin);
+        // 무음 경고 줄: 움직이는 동안은 끝 상태 폭으로 한 번 줄바꿈해 두고 카드가 잘라 보인다 (높이만 보간)
+        if (warn) silenceRow->setBounds (hMoving ? sc.withWidth (foldWarnW).withHeight (silenceRowH (foldWarnW)) : sc.withHeight (warnH));
+        const auto monRow = monCard.contentBounds().removeFromTop (43);
+        if (fold.isMoving (foldMon))
+            layoutRowFolding (monRow, eMon, monMeterW, juce::jmax (foldMonW, monW), monMute, master, outputMeter);
+        else
+            layoutRow (monRow, monOpen, monMeterW, monMute, master, outputMeter);
 
         const int listH = memberList->rows.size() * rowH;
         membersCard.setBounds (area.withHeight (juce::jmin (area.getHeight(), listH + 2)));
         memberViewport.setBounds (membersCard.getLocalBounds().reduced (1));
         memberList->setSize (memberViewport.getWidth() - (listH + 2 > area.getHeight() ? memberViewport.getScrollBarThickness() : 0), listH);
-        memberList->resized();
+        if (! (vMoving || hMoving)) memberList->resized();   // 움직이는 동안은 크기가 바뀔 때만 (setSize 가 부른다)
     }
     if (modal != nullptr) modal->setBounds (getLocalBounds());
     if (popover != nullptr && requestList != nullptr)
         popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + requestList->getPreferredHeight());
-    repaint();
+    // 움직이는 동안은 화면 전체를 다시 그리지 않는다 (옮겨진 카드 자리만 JUCE 가 다시 그린다)
+    if (! (vMoving || hMoving)) repaint();
+}
+
+void JamScreen::layoutChatContent (int cardW, int cardH)
+{
+    auto cb = chatCard.contentBoundsFor (cardW, cardH);
+    auto inputRow = cb.removeFromBottom (44);
+    chatViewport.setBounds (cb.withTrimmedBottom (1));
+    chatDecor->setBounds (0, 0, cardW, cardH);
+    chatDecor->toFront (false);
+    chatDecor->repaint();
+    auto ir = inputRow.reduced (metric::padX, 12);
+    const int sw = chatSend.getIdealWidth();
+    chatSend.setBounds (ir.removeFromRight (sw));
+    ir.removeFromRight (8);
+    chatInput.setBounds (ir);
+}
+
+void JamScreen::layoutFriendsContent (int cardW, int cardH)
+{
+    const auto fb = friendsCard.contentBoundsFor (cardW, cardH);
+    friendViewport.setBounds (fb);
+    friendList->setSize (fb.getWidth(), juce::jmax (fb.getHeight(), friendList->preferredHeight()));
+    friendList->resized();
+}
+
+void JamScreen::toggleFold (int panel, bool open)
+{
+    // 움직이는 동안 내용을 배치할 크기 = 지금 크기와 끝 크기 중 큰 쪽 (이미 움직이는 중이면 그때 정한 크기와도)
+    if (panel == foldChat || panel == foldFriends)
+    {
+        const bool moving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
+        const auto end = core::FoldLayout::verticalPair (sideAvail, 48, chatOpen, friendsOpen);
+        foldChatH = juce::jmax (moving ? foldChatH : 0, chatCard.getHeight(), end.first);
+        foldFriendsH = juce::jmax (moving ? foldFriendsH : 0, friendsCard.getHeight(), end.second);
+        foldFillV = chatCard.getHeight() + friendsCard.getHeight() == sideAvail && (chatOpen || friendsOpen);
+    }
+    else
+    {
+        const bool moving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
+        const auto end = core::FoldLayout::horizontalPair (bottomAvail, sendOpen, monOpen);
+        foldSendW = juce::jmax (moving ? foldSendW : 0, sendCard.getWidth(), end.first);
+        foldMonW = juce::jmax (moving ? foldMonW : 0, monCard.getWidth(), end.second);
+        foldFillH = sendCard.getWidth() + monCard.getWidth() == bottomAvail && (sendOpen || monOpen);
+        foldWarnW = end.first - 2;
+    }
+    fold.setOpen (panel, open);
+}
+
+void JamScreen::devToggleFold (const juce::String& panel)
+{
+    if (panel == "chat")         { chatOpen = ! chatOpen; toggleFold (foldChat, chatOpen); }
+    else if (panel == "friends") { friendsOpen = ! friendsOpen; toggleFold (foldFriends, friendsOpen); }
+    else if (panel == "send")    { sendOpen = ! sendOpen; toggleFold (foldSend, sendOpen); }
+    else if (panel == "mon")     { monOpen = ! monOpen; toggleFold (foldMon, monOpen); }
+}
+
+void JamScreen::previewFold (const juce::String& panel, float e)
+{
+    const int i = panel == "chat" ? foldChat : panel == "friends" ? foldFriends : panel == "send" ? foldSend : panel == "mon" ? foldMon : -1;
+    if (i < 0) return;
+    // 열린 상태에서 접기 시작한 것처럼 (내용 크기를 정한 뒤) e 에 멈춘다
+    if (i == foldChat) chatOpen = false;
+    if (i == foldFriends) friendsOpen = false;
+    if (i == foldSend) sendOpen = false;
+    if (i == foldMon) monOpen = false;
+    if (e < 0.0f) { fold.snap (i, false); return; }   // 비교용: 애니메이션 없이 접은 화면 (기존 레이아웃)
+    toggleFold (i, false);
+    fold.freeze (i, false, e);
 }
 
 void JamScreen::showModal (std::unique_ptr<Modal> m)
@@ -1334,7 +1517,7 @@ bool JamScreen::handleShortcut (const juce::KeyPress& k)
     if (c == 'n') { jam.setMonitorMuted (! jam.isMonitorMuted()); refreshAudio(); return true; }
     if (k.getKeyCode() == juce::KeyPress::returnKey)
     {
-        if (! chatOpen) { chatOpen = true; resized(); }
+        if (! chatOpen) { chatOpen = true; toggleFold (foldChat, true); }
         chatInput.focus();
         return true;
     }

@@ -3,6 +3,7 @@
 #include "ui/dev/DevJamScreen.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
+#include "ui/screens/JamScreen.h"
 #include "ui/Messages.h"
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
@@ -446,6 +447,10 @@ void MeonEditor::applyHomePreview()
     {
         core.store().setMyRtt (8);
     }
+    else if (p.startsWith ("fold="))   // 친구 패널이 접히는 중 e 에 멈춘 화면 (fold=friends:0.5)
+    {
+        home->previewFold (p.fromLastOccurrenceOf (":", false, false).getFloatValue());
+    }
     else if (p == "toastline")   // 한 줄 토스트 (초대 실패 등)가 초대 토스트 아래에 쌓인 모습
     {
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
@@ -516,6 +521,40 @@ void MeonEditor::applyHomePreview()
         {
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
+            if (safe != nullptr && (p.startsWith ("jam:fold=") || p == "jam:chatfill"))
+            {
+                // 접기 미리 보기 (jam:fold=chat:0.25 — 채팅 40줄을 채운 뒤 그 패널이 접히는 중 e 에 멈춤),
+                // jam:chatfill — 채팅 300줄을 채운 뒤 채팅·친구·내 오디오·모니터를 1초 간격으로 한 번씩 접었다 펼친다
+                //                (채팅이 많을 때 프레임 확인: 앱 로그의 "접기 애니메이션" 줄)
+                juce::Timer::callAfterDelay (800, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    auto* jam = safe->core.jam();
+                    auto* screen = safe->appRoot->getJamScreen();
+                    if (jam == nullptr || screen == nullptr) return;
+                    const int n = p == "jam:chatfill" ? 300 : 40;
+                    for (int i = 1; i <= n; ++i)
+                        jam->chat().sendText (TXT ("미리 보기 메시지 ") + juce::String (i) + (i % 3 == 0 ? TXT (" · 조금 길게 써서 두 줄로 넘어가는지 보는 문장이에요") : juce::String()));
+                    if (p == "jam:chatfill")
+                    {
+                        const char* order[] = { "chat", "chat", "friends", "friends", "send", "send", "mon", "mon" };
+                        for (int k = 0; k < 8; ++k)
+                        {
+                            const juce::String panel (order[k]);
+                            juce::Timer::callAfterDelay (1000 * (k + 1), [safe, panel]
+                            {
+                                if (safe != nullptr && safe->appRoot != nullptr)
+                                    if (auto* s = safe->appRoot->getJamScreen()) s->devToggleFold (panel);
+                            });
+                        }
+                    }
+                    if (p.startsWith ("jam:fold="))
+                    {
+                        const auto spec = p.fromFirstOccurrenceOf ("jam:fold=", false, false);
+                        screen->previewFold (spec.upToFirstOccurrenceOf (":", false, false), spec.fromLastOccurrenceOf (":", false, false).getFloatValue());
+                    }
+                });
+            }
             if (safe != nullptr && (p == "jam:disc" || p == "jam:discback"))   // 연결 끊김 토스트 (끊긴 채 / 4초 뒤 다시 붙음)
                 if (auto* fake = safe->core.fakeServer()) fake->devDropLink (p == "jam:disc" ? 60 : 4);
             if (safe == nullptr || p != "jam:host") return;

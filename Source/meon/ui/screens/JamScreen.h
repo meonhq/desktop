@@ -11,6 +11,7 @@
 #include "../widgets/Controls.h"
 #include "../widgets/Display.h"
 #include "../widgets/Meter.h"
+#include "../widgets/FoldAnimator.h"
 #include "../theme/Icons.h"
 #include "../../core/MeonCore.h"
 #include "../overlays/JamOverlays.h"
@@ -40,6 +41,10 @@ public:
     void resized() override;
 
     static constexpr int rowH = 59;
+    /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */
+    void previewFold (const juce::String& panel, float e);
+    /** 개발용: 누른 것처럼 접거나 펼친다 (--screen=jam:chatfill 의 프레임 확인) */
+    void devToggleFold (const juce::String& panel);
     juce::String memberName (const juce::String& userId) const;
 private:
     mutable std::map<juce::String, juce::String> knownNames;   // 나간 멤버의 채팅 줄도 이름으로 (마지막으로 본 이름)
@@ -115,6 +120,8 @@ private:
     void refreshHeader();
     void refreshAudio();
     void refreshChat();
+    void fitChatView();   // 폭이 그대로면 메시지는 다시 배치하지 않고 칸 높이·스크롤만 (접기·펼치기 중)
+    int chatContentH = 0;
 
     void stateChanged (core::StateKey) override;
     void jamPhaseChanged (core::JamSession::Phase) override { rebuildMembers(); }
@@ -124,6 +131,19 @@ private:
     void jamFileChanged() override;
     void chatChanged() override { refreshChat(); }
     void timerCallback() override;
+
+    // 접기·펼치기 (오른쪽 열: 채팅·친구 세로, 아래쪽 행: 내 오디오·모니터 가로). 움직이는 동안 내용은 시작·끝 크기 중
+    // 큰 쪽으로 한 번만 배치하고 카드가 잘라 보인다 (foldContent*). 끝나면 기존 레이아웃 코드로 돌아간다
+    void toggleFold (int panel, bool open);
+    void layoutChatContent (int cardW, int cardH);
+    void layoutFriendsContent (int cardW, int cardH);
+    int sideAvail = 0, bottomAvail = 0;   // 지난 resized 의 묶음 안 크기 (간격 뺀 값)
+    int foldChatH = 0, foldFriendsH = 0, foldSendW = 0, foldMonW = 0, foldWarnW = 0;
+    bool foldFillV = true, foldFillH = true;   // 이번 움직임의 시작·끝이 모두 묶음을 채우는지 (FoldLayout::blend)
+    juce::Point<int> laidChat, laidFriends;   // 움직이는 동안 배치해 둔 크기 (같으면 다시 배치하지 않는다)
+    FoldAnimator fold { *this, [this] { resized(); } };
+    const int foldChat = fold.add ("chat", true), foldFriends = fold.add ("friends", true),
+              foldSend = fold.add ("send", true), foldMon = fold.add ("mon", true);
 };
 
 } // namespace meon::ui

@@ -136,6 +136,7 @@ endif()
 # MEON core: 화면 없는 로직 (서버 API, 가짜 서버, 상태, 모델). 앱·플러그인과 단위 테스트가 같이 쓴다.
 set(MEON_CORE_SOURCES
     Source/meon/core/util/Scheduler.h
+    Source/meon/core/util/Fold.h
     Source/meon/core/api/ApiTypes.h
     Source/meon/core/api/ApiError.h
     Source/meon/core/api/ApiJson.h
@@ -209,6 +210,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/widgets/Meter.cpp
     Source/meon/ui/widgets/Display.h
     Source/meon/ui/widgets/Display.cpp
+    Source/meon/ui/widgets/FoldAnimator.h
+    Source/meon/ui/widgets/FoldAnimator.cpp
     Source/meon/ui/widgets/Masonry.h
     Source/meon/ui/Messages.h
     Source/meon/ui/Links.h
@@ -354,7 +357,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
     if (APPLE)
         list (APPEND HEADER_INCLUDES deps/mac/include)
         list (APPEND LIB_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/deps/mac/lib)
-        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsMac.mm Source/meon/MeonKeyRepeat_mac.mm)
+        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsMac.mm Source/meon/MeonKeyRepeat_mac.mm Source/meon/MeonReduceMotion_mac.mm)
     elseif (WIN32)
         # ASIO SDK (Steinberg, 2.3.4 부터 GPLv3 이중 라이선스). 기본 위치: 저장소 옆 ../asiosdk
         if (NOT ASIO_SDK_PATH)
@@ -432,6 +435,8 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonEmoji.cpp
         Source/meon/MeonEmoji.h
         Source/meon/MeonKeyRepeat.h
+        Source/meon/MeonReduceMotion.h
+        Source/meon/MeonReduceMotion.cpp
         Source/meon/MeonParts.cpp
         Source/meon/MeonParts.h
         Source/meon/MeonEarGuard.cpp
@@ -737,6 +742,7 @@ if (MEON_TESTS)
         Source/meon/tests/ValidationTests.cpp
         Source/meon/tests/FakeServerTests.cpp
         Source/meon/tests/ConnectionTests.cpp
+        Source/meon/tests/FoldTests.cpp
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp

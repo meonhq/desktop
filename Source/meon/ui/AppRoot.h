@@ -9,6 +9,8 @@
 namespace meon::ui
 {
 
+class JamScreen;
+
 class AppRoot : public juce::Component,
                 private core::AppStore::Listener,
                 private core::ConnectionWatch::Listener
@@ -21,6 +23,8 @@ public:
     std::function<void (int tab)> onOpenSettings;
 
     HomeScreen* getHome() { return home.get(); }
+    /** 방 안이면 합주 화면 (개발용 미리 보기) */
+    JamScreen* getJamScreen();
     void showJoinFailure (const core::ApiError&);
     void showJoinFailure (core::HomeController::JoinFailure);
     void addInfoToast (const juce::String& title, const juce::String& sub, Toast::Kind kind = Toast::Kind::normal);

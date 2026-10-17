@@ -76,9 +76,13 @@ public:
     void setTitle (const juce::String&, bool collapsible = false, bool sidewaysArrow = false);
     void setOpen (bool);
     bool isOpen() const { return open; }
+    /** 접기·펼치기 진행값 e (접힘 0 ~ 펼침 1): 화살표 각과 머리말 아래 구분선. setOpen 뒤에 부른다 */
+    void setFoldProgress (float e);
     int headerHeight() const { return title.isEmpty() ? 0 : 48; }
     /** 머리말 아래 내용 영역 (구분선 아래) */
     juce::Rectangle<int> contentBounds() const;
+    /** 카드가 w×h 일 때의 내용 영역 (움직이는 동안 내용을 끝 크기로 한 번만 배치할 때) */
+    juce::Rectangle<int> contentBoundsFor (int w, int h) const;
     std::function<void (bool open)> onToggle;
     /** 머리말 오른쪽 (접기 버튼 왼쪽)에 붙는 구성 요소 */
     void setHeaderAccessory (juce::Component*);
@@ -89,7 +93,8 @@ public:
 
 private:
     juce::String title;
-    bool open = true, collapsible = false;
+    bool open = true, collapsible = false, sidewaysFold = false;
+    float fold = 1.0f;
     std::unique_ptr<CollapseButton> collapse;
     juce::Component* accessory = nullptr;
 };
