@@ -1,6 +1,8 @@
 #include "JamScreen.h"
 #include "../Messages.h"
 #include "../../core/api/ApiJson.h"
+#include "../../core/util/ChatLinks.h"
+#include "../Links.h"
 
 namespace meon::ui
 {
@@ -380,6 +382,8 @@ struct JamScreen::ChatView : juce::Component
         core::ChatChannel::Message msg;
         juce::Rectangle<int> bounds, resendArea;
         juce::TextLayout layout;
+        juce::Rectangle<float> textArea;            // layout 을 그리는 자리 (밑줄·링크 판정도 같은 자리)
+        std::vector<juce::Range<int>> links;        // 본문 속 링크 (core::findLinks)
         juce::String part;   // 남의 메시지: 보낸 사람의 지금 파트 (방을 나갔거나 모르면 비어 있음 → 빈 원)
     };
     static constexpr int avatarSize = 30, avatarGap = 9;
@@ -395,10 +399,42 @@ struct JamScreen::ChatView : juce::Component
     }
     std::vector<Item> items;
 
-    static juce::TextLayout makeLayout (const juce::String& text, int width, juce::Colour ink, float px, int weight)
+    // 링크 글자색은 inkSub + 밑줄 (리메이크 전 채팅과 같음). k 번째 링크는 알파를 255 − k 로 칠해 둔다 (눈에 띄지 않는 차이).
+    // 네이티브 레이아웃(CoreText·DirectWrite)이 돌려주는 run 의 글자 범위는 플랫폼마다 단위가 달라서, run 색으로 링크를 찾는다.
+    static constexpr int maxTaggedLinks = 64;
+    static juce::Colour linkColour (int k) { return col::inkSub.withAlpha ((juce::uint8) (255 - k)); }
+
+    /** run 색 → 링크 번호 (링크가 아니면 -1) */
+    static int linkIndexOf (juce::Colour c)
+    {
+        const auto base = col::inkSub;
+        if (std::abs ((int) c.getRed() - (int) base.getRed()) > 2 || std::abs ((int) c.getGreen() - (int) base.getGreen()) > 2
+            || std::abs ((int) c.getBlue() - (int) base.getBlue()) > 2)
+            return -1;
+        const int k = 255 - (int) c.getAlpha();
+        return k >= 0 && k < maxTaggedLinks ? k : -1;
+    }
+
+    static juce::TextLayout makeLayout (const juce::String& text, int width, juce::Colour ink, float px, int weight,
+                                        const std::vector<juce::Range<int>>& links = {})
     {
         juce::AttributedString a;
-        a.append (text, font (weight, px), ink);
+        const auto f = font (weight, px);
+        if (links.empty())
+            a.append (text, f, ink);
+        else
+        {
+            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다
+            int pos = 0;
+            for (size_t k = 0; k < links.size(); ++k)
+            {
+                const auto r = links[k];
+                if (r.getStart() > pos) a.append (text.substring (pos, r.getStart()), f, ink);
+                a.append (text.substring (r.getStart(), r.getEnd()), f, (int) k < maxTaggedLinks ? linkColour ((int) k) : ink);
+                pos = r.getEnd();
+            }
+            if (pos < text.length()) a.append (text.substring (pos), f, ink);
+        }
         a.setLineSpacing (px * 0.5f);
         a.setWordWrap (juce::AttributedString::byChar);
         juce::TextLayout t;
@@ -428,14 +464,16 @@ struct JamScreen::ChatView : juce::Component
             else if (m.kind == K::mine)
             {
                 const int maxText = juce::jmin (bubbleMaxW, inner) - 24;
-                auto probe = makeLayout (m.text, maxText, col::ink, 15.0f, 400);
+                it.links = core::findLinks (m.text);
+                auto probe = makeLayout (m.text, maxText, col::ink, 15.0f, 400, it.links);
                 float tw = 0.0f;
                 for (int i = 0; i < probe.getNumLines(); ++i)
                     tw = juce::jmax (tw, probe.getLine (i).getLineBoundsX().getLength());
                 const int bw = juce::jmin (maxText, (int) std::ceil (tw) + 1);
-                it.layout = makeLayout (m.text, bw, col::ink, 15.0f, 400);
+                it.layout = makeLayout (m.text, bw, col::ink, 15.0f, 400, it.links);
                 const int h = (int) std::ceil (it.layout.getHeight()) + 16;
                 it.bounds = { 18 + inner - (bw + 24), y, bw + 24, h };
+                it.textArea = it.bounds.toFloat().reduced (12.0f, 8.0f);
                 y += h;
                 if (m.delivery == core::ChatChannel::Message::Delivery::failed)
                 {
@@ -448,10 +486,12 @@ struct JamScreen::ChatView : juce::Component
             {
                 // 남의 메시지: 왼쪽 아바타 30(위쪽 정렬) + 9, 이름·본문은 오른쪽 남은 폭 (줄바꿈 폭도 39 줄어든다)
                 const int textW = juce::jmax (1, inner - avatarSize - avatarGap);
-                it.layout = makeLayout (m.text, textW, col::ink, 15.0f, 400);
+                it.links = core::findLinks (m.text);
+                it.layout = makeLayout (m.text, textW, col::ink, 15.0f, 400, it.links);
                 it.part = partOf (m.fromUser);
                 const int h = 16 + 3 + (int) std::ceil (it.layout.getHeight());
                 it.bounds = { 18 + avatarSize + avatarGap, y, textW, h };
+                it.textArea = it.bounds.withTrimmedTop (19).toFloat();
                 y += juce::jmax (h, avatarSize) + 14;
             }
             items.push_back (std::move (it));
@@ -485,7 +525,8 @@ struct JamScreen::ChatView : juce::Component
                 g.setColour (col::accentSoft);
                 g.fillPath (p);
                 g.fillPath (corner);
-                it.layout.draw (g, b.reduced (12.0f, 8.0f));
+                it.layout.draw (g, it.textArea);
+                paintLinkUnderlines (g, it);
                 if (m.delivery == core::ChatChannel::Message::Delivery::failed)
                 {
                     const auto f = font (400, 12.0f);
@@ -510,7 +551,8 @@ struct JamScreen::ChatView : juce::Component
                 g.setColour (col::inkSub);
                 g.setFont (font (600, 13.0f));
                 g.drawText (owner.memberName (m.fromUser), it.bounds.withHeight (16), juce::Justification::centredLeft, true);
-                it.layout.draw (g, it.bounds.withTrimmedTop (19).toFloat());
+                it.layout.draw (g, it.textArea);
+                paintLinkUnderlines (g, it);
             }
         }
         if (items.empty())
@@ -530,11 +572,60 @@ struct JamScreen::ChatView : juce::Component
         return { (float) it.resendArea.getRight() - w2 - 2.0f, (float) it.resendArea.getY(), w2 + 2.0f, 16.0f };
     }
 
+    /** 링크 run 아래 밑줄 (두께·위치는 JUCE TextLayout 의 밑줄과 같은 비율, 리메이크 전 채팅과 같음) */
+    static void paintLinkUnderlines (juce::Graphics& g, const Item& it)
+    {
+        if (it.links.empty()) return;
+        const float th = juce::jmax (1.0f, font (400, 15.0f).getDescent() * 0.3f);
+        const auto o = it.textArea.getTopLeft();
+        for (auto& line : it.layout)
+            for (auto* run : line.runs)
+                if (linkIndexOf (run->colour) >= 0)
+                {
+                    const auto xs = run->getRunBoundsX();
+                    g.setColour (run->colour);
+                    g.fillRect (juce::Rectangle<float> (o.x + line.lineOrigin.x + xs.getStart(), o.y + line.lineOrigin.y + th * 2.0f, xs.getLength(), th));
+                }
+    }
+
+    /** p 위에 있는 링크 글 (없으면 빈 문자열). 시스템 메시지에는 링크가 없다 */
+    juce::String linkAt (juce::Point<float> p) const
+    {
+        for (auto& it : items)
+        {
+            if (it.links.empty() || ! it.bounds.toFloat().contains (p)) continue;
+            const auto o = it.textArea.getTopLeft();
+            for (auto& line : it.layout)
+            {
+                const auto ys = line.getLineBoundsY();
+                if (p.y < o.y + ys.getStart() || p.y >= o.y + ys.getEnd()) continue;
+                for (auto* run : line.runs)
+                {
+                    const int k = linkIndexOf (run->colour);
+                    if (k < 0 || k >= (int) it.links.size()) continue;
+                    const auto xs = run->getRunBoundsX();
+                    const float x0 = o.x + line.lineOrigin.x + xs.getStart();
+                    if (p.x >= x0 && p.x < x0 + xs.getLength())
+                        return it.msg.text.substring (it.links[(size_t) k].getStart(), it.links[(size_t) k].getEnd());
+                }
+            }
+            return {};
+        }
+        return {};
+    }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
         for (auto& it : items)
             if (resendLink (it).contains (e.position))
+            {
                 owner.jam.chat().resend (it.msg.id);
+                return;
+            }
+        // 링크: 누르면 바로 기본 브라우저로 연다 (끌거나 우클릭이면 열지 않는다)
+        if (e.mouseWasDraggedSinceMouseDown() || e.mods.isPopupMenu()) return;
+        if (const auto link = linkAt (e.position); link.isNotEmpty())
+            links::open (core::browserUrl (link));
     }
 
     void mouseMove (const juce::MouseEvent& e) override
@@ -542,6 +633,7 @@ struct JamScreen::ChatView : juce::Component
         bool onLink = false;
         for (auto& it : items)
             onLink = onLink || resendLink (it).contains (e.position);
+        onLink = onLink || linkAt (e.position).isNotEmpty();
         setMouseCursor (onLink ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
 
