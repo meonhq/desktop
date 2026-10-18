@@ -456,7 +456,8 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (ui::msg::inviteFailure (core::ErrorCode::targetOffline), {});
     }
-    else if (p == "jam:chat")   // 멤버가 있는 공개 방에 들어가 상대 메시지 여러 개(연달아·긴 글·나간 사람) + 내 말풍선
+    else if (p == "jam:chat" || p == "jam:links")   // 멤버가 있는 공개 방에 들어가 상대 메시지 여러 개(연달아·긴 글·나간 사람) + 내 말풍선
+                                                    // jam:links — 같은 방에서 링크가 든 메시지 (남·나, 문장 끝 마침표·괄호·한글 뒤·여러 개·줄바꿈되는 긴 링크)
     {
         const core::Room* pick = nullptr;
         for (auto& r : core.store().state().publicRooms)
@@ -464,9 +465,9 @@ void MeonEditor::applyHomePreview()
                 pick = &r;
         if (pick == nullptr) return;
         juce::Component::SafePointer<MeonEditor> safe (this);
-        core.home().joinRoom (pick->id, [safe] (core::Result<core::JoinResult>)
+        core.home().joinRoom (pick->id, [safe, p] (core::Result<core::JoinResult>)
         {
-            juce::Timer::callAfterDelay (800, [safe]
+            juce::Timer::callAfterDelay (800, [safe, p]
             {
                 if (safe == nullptr) return;
                 auto* jam = safe->core.jam();
@@ -482,6 +483,14 @@ void MeonEditor::applyHomePreview()
                 {
                     chat.received ({ chat.group(), from, "id:preview" + juce::String (++n), text });
                 };
+                if (p == "jam:links")
+                {
+                    say (others[0], TXT ("오늘 악보는 https://example.com/score.pdf 에 올려 뒀어요."));
+                    say (others[0], TXT ("참고 영상(www.example.org/live) 이랑 https://example.net/a, http://example.com/b 도 봐 주세요"));
+                    chat.sendText (TXT ("확인했어요https://example.com/setlist 여기 셋리스트예요"));
+                    chat.sendText (TXT ("긴 주소도 줄바꿈돼요 https://example.com/very/long/path/that/keeps/going/and/going?with=query&and=more"));
+                    return;
+                }
                 say (others[0], TXT ("다들 들어오셨네요! 오늘은 셋리스트 순서대로 가 볼게요"));
                 say (others[0], TXT ("첫 곡 템포 92로 맞춰 주세요"));
                 if (others.size() > 1) say (others[1], TXT ("넵 좋아요. 브릿지에서 한 번 쉬고 들어가는 거 맞죠? 지난번에 거기서 다들 엇갈려서 이번엔 제가 손으로 신호 드릴게요"));
