@@ -2,7 +2,7 @@
 //   방에 들어가면(REST 입장 성공 → store.setCurrentRoom) Connection 으로 AOO 서버에 접속 → 그룹 입장
 //   room.updated 마다 Connection.members 로 엔진 허용 목록(E1)·채팅 상대를 갱신
 //   방에서 나오면(나가기·추방·방 닫힘) 그룹을 나가고 접속을 끊는다
-// 멤버별 상태(PeerState), 무음 경고(SilenceDetector), 채팅(ChatChannel), 세션 로그도 여기서.
+// 멤버별 상태(PeerState), 입력 무음 감지(SilenceDetector, 세션 로그용), 채팅(ChatChannel), 세션 로그도 여기서.
 // 가짜 기간: 실제 AOO 상대를 가짜 서버의 방 멤버로 올린다 (FakeAooDirectory 역할, 프로필은 채팅 태그로 교환).
 #pragma once
 
@@ -62,7 +62,6 @@ public:
         virtual void jamPhaseChanged (Phase) {}
         virtual void jamMembersChanged() {}     // 목록·상태
         virtual void jamStatsChanged() {}       // 핑 등 (0.4초마다)
-        virtual void jamSilenceChanged (bool warning) { juce::ignoreUnused (warning); }   // 입력 경고(무음·장치 없음 판정)가 켜지거나 꺼짐
         virtual void jamFileChanged() {}        // 파일 열기·닫기·재생·정지
         virtual void jamServerLinkChanged() {}  // 합주 서버(AOO) 연결이 끊기거나 다시 붙음 (isJamServerDown)
     };
@@ -155,7 +154,7 @@ public:
     float sendLevel (int ch) const    { return engine.sendLevel (ch); }
     float monitorLevel (int ch) const { return engine.monitorLevel (ch); }
     int sendChannelCount() const      { return engine.sendChannelCount(); }
-    bool isInputSilent() const        { return silence.warningKind() == SilenceDetector::Kind::silent; }   // 장치는 있는데 소리가 없음
+    bool isInputSilent() const        { return silence.warningKind() == SilenceDetector::Kind::silent; }   // 장치는 있는데 소리가 없음 (로그용, 화면 안내 없음)
     bool isInputMissing() const       { return silence.warningKind() == SilenceDetector::Kind::noInput; }  // 입력 장치(채널)가 없음 (로그용, 화면 안내 없음)
     /** 출력 장치 없음 (로그용, 화면 안내 없음): 방 안에서 출력 장치가 동작하지 않는 상태가 5초 이어지면 true, 장치가 열리면 바로 false */
     bool isOutputMissing() const      { return outputMissing; }

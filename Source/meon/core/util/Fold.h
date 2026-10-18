@@ -175,7 +175,7 @@ struct FoldLayout
         return { ia, (int) std::lround (fa + fb) - ia };
     }
 
-    /** 네 끝 상태의 값 하나(무음 경고 줄 높이 등)를 같은 가중치로 보간 */
+    /** 네 끝 상태의 값 하나(미터 폭 등)를 같은 가중치로 보간 */
     static int blendValue (const int (&V)[2][2], double ea, double eb)
     {
         double f = 0.0;

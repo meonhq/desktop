@@ -488,7 +488,7 @@ int EngineLink::inputChannelCount() const
     int start = 0, count = 0;
     if (processor.getInputGroupCount() < 1 || ! const_cast<SonobusAudioProcessor&> (processor).getInputGroupChannelStartAndCount (0, start, count))
         return 0;
-    // 열린 장치가 없거나, 장치에 켜진 입력 채널이 없으면 입력 없음 (무음 경고를 띄우지 않고 로그에 inputMissing 으로 남긴다)
+    // 열린 장치가 없거나, 장치에 켜진 입력 채널이 없으면 입력 없음 (로그에 inputMissing 으로 남긴다)
     if (deviceManager)
     {
         auto* dm = deviceManager();

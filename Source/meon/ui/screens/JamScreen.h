@@ -1,5 +1,5 @@
 // MEON ui - 합주 화면 (디자인 L1). 헤더(로고 · 방 이름 · 비공개 · 입장 코드+복사 · 설정 · 방 나가기),
-// 서버 연결 끊김 배너(Q16), 멤버 행(상태·음소거·볼륨·패닝·초기화·핑·미터), 내 오디오(송출·무음 경고)·모니터,
+// 서버 연결 끊김 배너(Q16), 멤버 행(상태·음소거·볼륨·패닝·초기화·핑·미터), 내 오디오(송출)·모니터,
 // 채팅(전달 확인·실패 표시·남은 글자), 친구(초대 3초), 파일 플레이어.
 // 방장 전용(방 설정·입장 요청·관리)은 R7 에서 붙인다.
 #pragma once
@@ -29,7 +29,7 @@ public:
     explicit JamScreen (core::MeonCore&);
     ~JamScreen() override;
 
-    std::function<void()> onOpenSettings, onOpenAudioSettings;
+    std::function<void()> onOpenSettings;
     /** 프로필 창에서 다른 방에 들어가거나 요청하다 실패 (입장 실패 상자, AppRoot) */
     std::function<void (const core::ApiError&)> onJoinFailure;
 
@@ -87,9 +87,6 @@ private:
     DbSlider sendGain { -30.0f, 10.0f }, master { -30.0f, 6.0f };
     MeterBox inputMeter { TXT ("입력 미터") }, outputMeter { TXT ("출력 미터") };
     bool sendOpen = true, monOpen = true;
-    struct SilenceRow;
-    std::unique_ptr<SilenceRow> silenceRow;   // 입력 신호 없음 경고 (내 오디오 카드 안, 미터 아래)
-    int silenceRowH (int width) const;   // 경고가 없으면 0. 좁으면 설명을 두 줄로 내려 높아진다
 
     // 채팅
     Card chatCard;
@@ -127,7 +124,6 @@ private:
     void jamPhaseChanged (core::JamSession::Phase) override { rebuildMembers(); }
     void jamMembersChanged() override { rebuildMembers(); refreshChat(); }
     void jamStatsChanged() override;
-    void jamSilenceChanged (bool) override { resized(); repaint(); }
     void jamFileChanged() override;
     void chatChanged() override { refreshChat(); }
     void timerCallback() override;
@@ -138,7 +134,7 @@ private:
     void layoutChatContent (int cardW, int cardH);
     void layoutFriendsContent (int cardW, int cardH);
     int sideAvail = 0, bottomAvail = 0;   // 지난 resized 의 묶음 안 크기 (간격 뺀 값)
-    int foldChatH = 0, foldFriendsH = 0, foldSendW = 0, foldMonW = 0, foldWarnW = 0;
+    int foldChatH = 0, foldFriendsH = 0, foldSendW = 0, foldMonW = 0;
     bool foldFillV = true, foldFillH = true;   // 이번 움직임의 시작·끝이 모두 묶음을 채우는지 (FoldLayout::blend)
     juce::Point<int> laidChat, laidFriends;   // 움직이는 동안 배치해 둔 크기 (같으면 다시 배치하지 않는다)
     FoldAnimator fold { *this, [this] { resized(); } };

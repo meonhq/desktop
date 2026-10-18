@@ -192,7 +192,7 @@ public:
             expect (d2.update (16900, true, false, 1, -100.0f) == SilenceDetector::Change::none);
             expect (d2.update (17000, true, false, 1, -100.0f) == SilenceDetector::Change::started);
             expect (d2.warningKind() == K::silent);
-            // 무음 경고 중 장치가 빠지면 무음은 바로 해제, 5초 뒤 장치 없음
+            // 무음 판정 중 장치가 빠지면 무음은 바로 해제, 5초 뒤 장치 없음
             expect (d2.update (17500, true, false, 0, -100.0f) == SilenceDetector::Change::ended);
             expect (d2.lastKind() == K::silent);
             expect (d2.update (22500, true, false, 0, -100.0f) == SilenceDetector::Change::started);
@@ -905,7 +905,7 @@ public:
             clock.advance (3500);
             for (auto& m : jam.members()) if (m.userId == "u_peer") expect (m.state == PeerState::State::interrupted && m.dropCount == 1);
 
-            // 무음 경고: 송출 정지 중에는 없음 → 켜면 5초 뒤 경고
+            // 무음 판정(로그용, 화면 경고 없음): 송출 정지 중에는 없음 → 켜면 5초 뒤 silent
             clock.advance (6000);
             expect (! jam.isInputSilent());
             jam.setSendMuted (false);
@@ -921,7 +921,7 @@ public:
             clock.advance (JamSession::tickMs);
             expect (! jam.isInputSilent());
 
-            // 입력 장치가 없음 (채널 0, 레벨 −100 dB, 보내기 켜짐) → 5초 뒤 로그용 inputMissing. 무음 경고(화면)는 뜨지 않는다
+            // 입력 장치가 없음 (채널 0, 레벨 −100 dB, 보내기 켜짐) → 5초 뒤 로그용 inputMissing. 무음(silent)으로는 판정하지 않는다
             engine.inLevel = 0.0f;
             engine.inputChannels = 0;
             clock.advance (5600);

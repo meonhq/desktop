@@ -37,7 +37,7 @@ public:
     bool isPluginMode() const               { return pluginMode; }
     juce::AudioDeviceManager* deviceManager() const { return getAudioDeviceManager ? getAudioDeviceManager() : nullptr; }
 
-    /** tab: 0 계정 … (ui::SettingsModal::Tab 순서). 무음 경고의 "설정 열기"는 오디오 탭 */
+    /** tab: 0 계정 … (ui::SettingsModal::Tab 순서) */
     void openSettings (int tab = 0);
     ui::SettingsModal::UpdateHooks settingsUpdateHooks();
     void closeSettings();
