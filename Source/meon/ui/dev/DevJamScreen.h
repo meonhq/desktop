@@ -1,6 +1,6 @@
 // MEON ui - 개발용 합주 확인 화면 (--dev-jam, 개발 빌드만). R4 의 새 합주 로직(JamSession)을 두 컴퓨터로 확인한다.
 // 비공개 방 만들기 / 코드로 입장 / 나가기, 멤버 상태(연결 중·연결됨·끊김·연결 실패)·핑·끊김 횟수·미터·음소거·볼륨,
-// 내 입력 미터·송출 정지·입력 채널·무음 경고, 간단한 채팅(전달 실패 표시), 세션 로그 위치.
+// 내 입력 미터·송출 정지·입력 채널, 간단한 채팅(전달 실패 표시), 세션 로그 위치.
 // 디자인 화면이 아니다 (R6 에서 진짜 합주 화면이 들어온다).
 #pragma once
 
@@ -47,7 +47,6 @@ private:
     Meter inputMeter, sendMeter, monitorMeter;
     Text inputLabel { TXT ("입력 (처리 뒤)"), 400, 12.0f, col::inkSub }, sendLabel { TXT ("송신"), 400, 12.0f, col::inkSub },
          monitorLabel { TXT ("모니터"), 400, 12.0f, col::inkSub };
-    Text silence { TXT ("입력 신호가 없어요 · 설정에서 입력 채널을 확인해 주세요"), 500, 12.0f, col::ink };
     Select inputStart;
     Choice inputMode { Choice::Style::small };
     Button audioSettings { Button::Kind::small, TXT ("오디오 장치…") };
@@ -84,7 +83,6 @@ private:
     void jamPhaseChanged (core::JamSession::Phase) override { refresh(); }
     void jamMembersChanged() override { rebuildRows(); refresh(); }
     void jamStatsChanged() override;
-    void jamSilenceChanged (bool) override { refresh(); }
     void stateChanged (core::StateKey) override { refresh(); }
     void chatChanged() override { refreshChat(); }
     void timerCallback() override { refresh(); }

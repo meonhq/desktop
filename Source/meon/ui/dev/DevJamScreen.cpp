@@ -109,7 +109,7 @@ DevJamScreen::DevJamScreen (core::MeonCore& c) : core (c), jam (*c.jam())
     setOpaque (true);
     for (auto* x : std::initializer_list<juce::Component*> { &title, &account, &status, &create, &code, &join, &leave, &joinNote, &roomInfo,
                                                              &meTitle, &sendMute, &inputMeter, &sendMeter, &monitorMeter, &inputLabel,
-                                                             &sendLabel, &monitorLabel, &silence, &inputStart, &inputMode, &audioSettings,
+                                                             &sendLabel, &monitorLabel, &inputStart, &inputMode, &audioSettings,
                                                              &bufferMode, &selfMonLabel, &selfMonitor, &master, &masterLabel,
                                                              &chatInput, &chatNote, &logPath, &openLogs })
         addAndMakeVisible (x);
@@ -160,7 +160,6 @@ DevJamScreen::DevJamScreen (core::MeonCore& c) : core (c), jam (*c.jam())
     resend.onPress = [this] { if (failedId.isNotEmpty()) jam.chat().resend (failedId); };
     openLogs.onPress = [this] { jam.log().getFolder().createDirectory(); jam.log().getFolder().startAsProcess(); };
 
-    silence.setVisible (false);
     jam.addListener (this);
     core.store().addListener (this);
     jam.chat().addListener (this);
@@ -310,7 +309,6 @@ void DevJamScreen::refresh()
     const bool muted = jam.isSendMuted();
     sendMute.setOn (muted);
     sendMute.setButtonText (muted ? TXT ("송출 재개") : TXT ("송출 정지"));
-    silence.setVisible (jam.isInputSilent());
     auto f = jam.log().getFile();
     logPath.setText (TXT ("세션 로그: ") + (f != juce::File() ? f.getFullPathName() : jam.log().getFolder().getFullPathName()));
     repaint();
@@ -381,8 +379,6 @@ void DevJamScreen::resized()
     line (monitorLabel, monitorMeter);
     auto l2 = side.removeFromTop (28);
     sendMute.setBounds (l2.removeFromLeft (80).withSizeKeepingCentre (80, 19));
-    l2.removeFromLeft (9);
-    silence.setBounds (l2);
     auto l3 = side.removeFromTop (36);
     inputStart.setBounds (l3.removeFromLeft (100).withSizeKeepingCentre (100, 32));
     l3.removeFromLeft (9);
@@ -426,11 +422,6 @@ void DevJamScreen::paint (juce::Graphics& g)
         g.setColour (l.contains (TXT ("⚠")) ? col::danger : col::ink);
         g.drawText (l, juce::Rectangle<float> ((float) chatArea.getX(), y, (float) chatArea.getWidth(), 18.0f), juce::Justification::centredLeft, true);
         y += 18.0f;
-    }
-    if (silence.isVisible())
-    {
-        g.setColour (col::accentSoft);
-        g.fillRoundedRectangle (silence.getBounds().toFloat().expanded (4.0f, 2.0f), 4.0f);
     }
 }
 

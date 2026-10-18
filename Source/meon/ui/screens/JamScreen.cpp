@@ -48,68 +48,6 @@ namespace
 }
 
 //==============================================================================
-/** 무음 경고 줄 (연한 핑크 면 #FFF0F4, 위 구분선): "입력 신호가 없어요 · 설정에서 입력 채널을 확인해 주세요" + 설정 열기.
-    입력 장치는 있는데 소리가 안 들어올 때만 (5초 −60 dBFS). 장치 없음 안내는 띄우지 않는다 (2026-10-15 사용자 결정) */
-struct JamScreen::SilenceRow : juce::Component
-{
-    SilenceRow() { addAndMakeVisible (open); }
-
-    // 넓으면 한 줄 (제목 · 설명 · 버튼, 높이 37). 설명이 다 안 들어가면 설명을 제목 아래로 내린다 (플러그인 900px 등)
-    static constexpr int oneLineH = 37, padY = 10, titleH = 17, descLineH = 16;
-    juce::String title() const { return TXT ("입력 신호가 없어요"); }
-    juce::String desc() const  { return TXT ("설정에서 입력 채널을 확인해 주세요"); }
-    static juce::Font titleFont() { return font (500, 13.0f); }
-    static juce::Font descFont()  { return font (400, 12.0f); }
-    int titleW() const { return (int) std::ceil (textWidth (titleFont(), title())) + 1; }
-    bool fitsOneLine (int w) const
-    {
-        return metric::padX + titleW() + 9 + (int) std::ceil (textWidth (descFont(), desc())) + 1 + 9 + open.getIdealWidth() + metric::padX <= w;
-    }
-    int descHeight (int w) const
-    {
-        return (int) std::ceil (meon::paragraphHeightWithEmoji (desc(), descFont(), (float) (w - metric::padX * 2), (float) descLineH));
-    }
-    int heightFor (int w) const { return fitsOneLine (w) ? oneLineH : 1 + padY + titleH + 3 + descHeight (w) + padY; }
-
-    void paint (juce::Graphics& g) override
-    {
-        g.setColour (col::accentSoft);
-        g.fillRect (getLocalBounds());
-        g.setColour (col::line);
-        g.fillRect (0, 0, getWidth(), 1);
-        const int w1 = titleW();
-        g.setColour (col::ink);
-        g.setFont (titleFont());
-        if (fitsOneLine (getWidth()))
-        {
-            g.drawText (title(), metric::padX, 1, w1, getHeight() - 1, juce::Justification::centredLeft, false);
-            g.setColour (col::inkSub);
-            g.setFont (descFont());
-            g.drawText (desc(), metric::padX + w1 + 9, 1, open.getX() - 9 - (metric::padX + w1 + 9), getHeight() - 1,
-                        juce::Justification::centredLeft, false);
-            return;
-        }
-        g.drawText (title(), metric::padX, 1 + padY, w1, titleH, juce::Justification::centredLeft, false);
-        meon::drawParagraphWithEmoji (g, desc(), descFont(), col::inkSub,
-                                      juce::Rectangle<float> ((float) metric::padX, (float) (1 + padY + titleH + 3),
-                                                              (float) (getWidth() - metric::padX * 2), (float) descHeight (getWidth())),
-                                      (float) descLineH, juce::Justification::topLeft);
-    }
-    void resized() override
-    {
-        const int w = open.getIdealWidth();
-        const int y = fitsOneLine (getWidth()) ? (getHeight() - metric::smallH) / 2 + 1 : 1 + padY + (titleH - metric::smallH) / 2;
-        open.setBounds (getWidth() - metric::padX - w, y, w, metric::smallH);
-    }
-    Button open { Button::Kind::small, TXT ("설정 열기") };
-};
-
-int JamScreen::silenceRowH (int width) const
-{
-    return jam.isInputSilent() ? silenceRow->heightFor (width) : 0;
-}
-
-//==============================================================================
 /** 입장 코드 상자 (높이 32, 테두리 #E0E0E0, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
 struct JamScreen::CodeBox : juce::Component
 {
@@ -973,8 +911,6 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
         sendCard.addAndMakeVisible (comp);
     for (auto* comp : std::initializer_list<juce::Component*> { &monMute, &master, &outputMeter })
         monCard.addAndMakeVisible (comp);
-    silenceRow = std::make_unique<SilenceRow>();
-    sendCard.addChildComponent (*silenceRow);
     sendMute.setTooltip (TXT ("다른 사람에게 보내는 내 소리"));
     monMute.setTooltip (TXT ("내가 듣는 모든 소리"));
     sendGain.setTitle (TXT ("송출 레벨 · 더블클릭하면 0 dB"));
@@ -983,7 +919,6 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     monMute.onPress = [this] { jam.setMonitorMuted (! jam.isMonitorMuted()); refreshAudio(); };
     sendGain.onChange = [this] (float db) { jam.setSendGainDb (db); };
     master.onChange = [this] (float db) { jam.setMasterDb (db); };
-    silenceRow->open.onPress = [this] { if (onOpenAudioSettings) onOpenAudioSettings(); };
     // 송출 정지 중에는 보내는 신호가 0 이므로 입력 레벨을 회색으로 보여 준다 (refreshAudio)
     inputMeter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()),
                                 [this] (int ch) { return jam.isSendMuted() ? jam.inputLevel (ch) : jam.sendLevel (ch); });
@@ -1186,7 +1121,6 @@ void JamScreen::timerCallback()
     // 초대 카운트다운·파일 위치·남은 글자
     for (auto* r : friendList->rows) r->refresh();
     if (jam.hasFile()) filePlayer->refresh();
-    if (silenceRow->isVisible() != jam.isInputSilent()) resized();
 }
 
 //==============================================================================
@@ -1347,38 +1281,35 @@ void JamScreen::resized()
         };
         static constexpr int rowInset = 2 + metric::padX * 2;   // 카드 테두리 + 좌우 여백
         core::FoldLayout::Pair ws;
-        int warnH, sendMeterW, monMeterW;
+        int sendMeterW, monMeterW;
         if (! hMoving)
         {
             ws = core::FoldLayout::horizontalPair (availW, sendOpen, monOpen);
-            warnH = silenceRowH (ws.first - 2);   // 카드 테두리 안쪽 폭
             sendMeterW = meterW (ws.first - rowInset, sendOpen);
             monMeterW = meterW (ws.second - rowInset, monOpen);
         }
         else
         {
-            // 움직이는 동안: 폭·무음 경고 줄 높이·미터 폭을 네 끝 상태에서 이중 선형 보간 (e 가 0·1 이면 기존 값 그대로)
+            // 움직이는 동안: 폭·미터 폭을 네 끝 상태에서 이중 선형 보간 (e 가 0·1 이면 기존 값 그대로)
             core::FoldLayout::Pair L[2][2];
-            int W[2][2], MS[2][2], MM[2][2];
+            int MS[2][2], MM[2][2];
             for (int a = 0; a < 2; ++a)
                 for (int b = 0; b < 2; ++b)
                 {
                     L[a][b] = core::FoldLayout::horizontalPair (availW, a == 1, b == 1);
-                    W[a][b] = silenceRowH (L[a][b].first - 2);
                     MS[a][b] = meterW (L[a][b].first - rowInset, a == 1);
                     MM[a][b] = meterW (L[a][b].second - rowInset, b == 1);
                 }
             ws = core::FoldLayout::blend (L, eSend, eMon, foldFillH);
-            warnH = core::FoldLayout::blendValue (W, eSend, eMon);
             sendMeterW = core::FoldLayout::blendValue (MS, eSend, eMon);
             monMeterW = core::FoldLayout::blendValue (MM, eSend, eMon);
         }
         const int sendW = ws.first, monW = ws.second;
-        auto bottom = area.removeFromBottom (bottomCardH + warnH);
+        auto bottom = area.removeFromBottom (bottomCardH);
         area.removeFromBottom (metric::padX);
         sendCard.setBounds (bottom.removeFromLeft (sendW));
         bottom.removeFromLeft (metric::gap);
-        monCard.setBounds (bottom.removeFromLeft (monW).withHeight (bottomCardH));
+        monCard.setBounds (bottom.removeFromLeft (monW));
         sendCard.setOpen (sendOpen);
         sendCard.setFoldProgress (eSend);
         monCard.setOpen (monOpen);
@@ -1423,11 +1354,6 @@ void JamScreen::resized()
             layoutRowFolding (sendRow, eSend, sendMeterW, juce::jmax (foldSendW, sendW), sendMute, sendGain, inputMeter);
         else
             layoutRow (sendRow, sendOpen, sendMeterW, sendMute, sendGain, inputMeter);
-        const bool warn = jam.isInputSilent();
-        silenceRow->setVisible (warn);
-        silenceRow->repaint();
-        // 무음 경고 줄: 움직이는 동안은 끝 상태 폭으로 한 번 줄바꿈해 두고 카드가 잘라 보인다 (높이만 보간)
-        if (warn) silenceRow->setBounds (hMoving ? sc.withWidth (foldWarnW).withHeight (silenceRowH (foldWarnW)) : sc.withHeight (warnH));
         const auto monRow = monCard.contentBounds().removeFromTop (43);
         if (fold.isMoving (foldMon))
             layoutRowFolding (monRow, eMon, monMeterW, juce::jmax (foldMonW, monW), monMute, master, outputMeter);
@@ -1488,7 +1414,6 @@ void JamScreen::toggleFold (int panel, bool open)
         foldSendW = juce::jmax (moving ? foldSendW : 0, sendCard.getWidth(), end.first);
         foldMonW = juce::jmax (moving ? foldMonW : 0, monCard.getWidth(), end.second);
         foldFillH = sendCard.getWidth() + monCard.getWidth() == bottomAvail && (sendOpen || monOpen);
-        foldWarnW = end.first - 2;
     }
     fold.setOpen (panel, open);
 }

@@ -224,7 +224,7 @@ void JamSession::exit (const String& reason)
     connection = {};
     applyMonitor();   // 방 밖: 셀프 모니터 끔 (다시 들어가면 설정값대로)
     setPhase (Phase::idle);
-    listeners.call ([] (Listener& l) { l.jamMembersChanged(); l.jamSilenceChanged (false); });
+    listeners.call ([] (Listener& l) { l.jamMembersChanged(); });
 }
 
 void JamSession::roomUpdated (const RoomDetail& room)
@@ -603,14 +603,12 @@ void JamSession::tick()
             sessionLog.addEvent (isInputMissing() ? "inputMissingStart" : "inputSilenceStart",
                                  "channels " + engine.inputChannelText() + ", " + engine.audioDescription()
                                      + ", sendGainDb " + String (prefs.sendGainDb, 1));
-        listeners.call ([] (Listener& l) { l.jamSilenceChanged (true); });
     }
     else if (sChange == SilenceDetector::Change::ended)
     {
         if (sessionLog.isActive())
             sessionLog.addEvent (silence.lastKind() == SilenceDetector::Kind::noInput ? "inputMissingEnd" : "inputSilenceEnd",
                                  String (silence.lastDurationMs() / 1000.0, 1) + " s");
-        listeners.call ([] (Listener& l) { l.jamSilenceChanged (false); });
     }
 
     updateOutputMissing (now);
@@ -827,7 +825,7 @@ void JamSession::setSendMuted (bool b)
             if (p.connected) { ++total; if (p.sendActive) ++sending; }
         sessionLog.addEvent (b ? "sendMuted" : "sendUnmuted", "sendingTo " + String (sending) + "/" + String (total));
     }
-    // 송출 정지를 켜면 무음 경고는 지우고 판정을 처음부터
+    // 송출 정지를 켜면 무음 판정을 끝내고 처음부터 센다 (로그용)
     tick();
 }
 

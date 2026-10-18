@@ -163,7 +163,7 @@ private:
 class Toast : public juce::Component
 {
 public:
-    /** normal: 흰 면 (초대·알림). warning: 무음 경고 줄과 같은 연한 핑크 면(col::accentSoft), 제목(굵게) + 설명, 설명은 줄바꿈 */
+    /** normal: 흰 면 (초대·알림). warning: 연한 핑크 면(col::accentSoft), 제목(굵게) + 설명, 설명은 줄바꿈 */
     enum class Kind { normal, warning };
 
     Toast (const juce::String& title, const juce::String& sub, const juce::String& action = {});
