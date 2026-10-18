@@ -318,6 +318,105 @@ public:
             o.logFolder.deleteRecursively();
         }
 
+        beginTest ("chat log: .txt per room entry (no file without messages), header / lines / end, resend & duplicates once, ack & profile skipped, multi-line indent");
+        {
+            ManualScheduler clock;
+            FakeMeonServer::Options fo;
+            fo.latencyMs = 0;
+            fo.scripts = false;
+            FakeMeonServer server { clock, fo };
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            MeonApi api { server, 0 };
+            Realtime rt { server, clock, 0 };
+            AppStore store;
+            rt.addListener (&store);
+            auto run = [&] (auto&& fn) { fn(); clock.advance (50); };
+            run ([&] { api.signup ("chatlog@example.com", "chatlog_keys", "abcd123!", true, [] (auto) {}); });
+            run ([&] { api.verifyEmail (server.getLastMailedCode(), [] (auto) {}); });
+            MePatch p; p.nickname = juce::String::fromUTF8 ("승찬"); p.part = juce::String ("keys");
+            run ([&] { api.patchMe (p, [&] (Result<Me> r) { store.setMe (r.get()); }); });
+            rt.connect ([&] { return api.getTokens().accessToken; });
+            clock.advance (100);
+
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-chatlog");
+            o.logFolder.deleteRecursively();
+            o.fake = &server;
+            // 벽시계 주입: 2026-10-18 21:03:10 부터 부를 때마다 5초씩
+            int tick = 0;
+            o.wallClock = [&tick] { return juce::Time (2026, 9, 18, 21, 3, 10) + juce::RelativeTime::seconds (5.0 * tick++); };
+            JamSession jam (engine, store, clock, o);
+            const auto chatDir = o.logFolder.getChildFile ("chat");
+            auto chatFiles = [&] { return chatDir.findChildFiles (juce::File::findFiles, false, "*.txt"); };
+            auto enter = [&]
+            {
+                run ([&] { api.joinRoom ("r_f_3", [&] (Result<JoinResult> r) { store.setCurrentRoom (r.get().room); }); });
+                engine.finishConnect();
+                engine.finishJoin();
+            };
+            auto leave = [&] { store.setCurrentRoom (std::nullopt); clock.advance (50); };
+
+            // 1) 입장 → 메시지 0개 → 퇴장: 파일이 없다
+            enter();
+            expect (jam.isInRoom());
+            leave();
+            expect (! jam.isInRoom());
+            expectEquals (chatFiles().size(), 0);
+
+            // 2) 다시 입장: 내 메시지 1 + 상대 메시지 1(여러 줄) + 시스템 줄 1
+            enter();
+            expect (jam.isInRoom());
+            server.remotePeerJoined ("u_realpeer", juce::String::fromUTF8 ("민준"), "bass", false);
+            clock.advance (50);
+            expect (jam.chat().sendText (juce::String::fromUTF8 ("안녕하세요")) == ChatChannel::SendResult::sent);
+            const auto myId = jam.chat().getMessages().back().id;
+            jam.chat().received ({ engine.group, "u_realpeer", "id:abc123", juce::String::fromUTF8 ("반가워요\n오늘은\n세 곡") });
+            jam.chat().addSystem (juce::String::fromUTF8 ("서연님이 입장했어요"));
+            // 기록되지 않는 것: ack·profile, 다시 보내기, 다시 받은 같은 메시지, 전달 실패 표시
+            jam.chat().received ({ engine.group, "u_realpeer", "ack:" + myId, {} });
+            jam.chat().received ({ engine.group, "u_realpeer", "profile", "{\"nickname\":\"x\"}" });
+            clock.advance (3100);   // (이미 확인됐으므로 실패 표시 없음) 다시 보내기
+            jam.chat().resend (myId);
+            jam.chat().received ({ engine.group, "u_realpeer", "id:abc123", juce::String::fromUTF8 ("반가워요\n오늘은\n세 곡") });
+            expectEquals (chatFiles().size(), 1);
+            const auto file = chatFiles()[0];
+            // 세션 로그와 같은 이름
+            expect (jam.log().getFile().getFileNameWithoutExtension() == file.getFileNameWithoutExtension(), file.getFileName());
+            // 퇴장 전에도 (강제 종료 대비) 그때까지의 줄이 파일에 있다
+            expect (file.loadFileAsString().contains (juce::String::fromUTF8 ("민준: 반가워요")));
+            leave();
+
+            const auto expected = juce::String::fromUTF8 (
+                "# Meon 채팅 기록\n"
+                "# 방: 어쿠스틱 커버 연습\n"
+                "# 시작: 2026-10-18 21:03:15\n"
+                "[21:03:20] 승찬: 안녕하세요\n"
+                "[21:03:25] 민준: 반가워요\n"
+                "  오늘은\n"
+                "  세 곡\n"
+                "[21:03:30] * 서연님이 입장했어요\n"
+                "# 끝: 2026-10-18 21:03:35\n");
+            expectEquals (file.loadFileAsString(), expected);
+
+            // 3) 퇴장 후 다시 입장 → 새 파일
+            enter();
+            expect (jam.chat().sendText ("again") != ChatChannel::SendResult::failed);
+            leave();
+            expectEquals (chatFiles().size(), 2);
+            for (auto& f : chatFiles())
+                if (f != file) expect (f.loadFileAsString().contains ("again") && ! f.loadFileAsString().contains (juce::String::fromUTF8 ("반가워요")));
+
+            // 형식: 이름을 모르면 user id, 시스템 줄은 이름을 안 쓴다
+            expectEquals (ChatLog::formatLine (juce::Time (2026, 9, 18, 9, 5, 7), ChatLog::Kind::other, "u_x", "a\r\nb"),
+                          juce::String ("[09:05:07] u_x: a\n  b\n"));
+            expectEquals (ChatLog::formatLine (juce::Time (2026, 9, 18, 9, 5, 7), ChatLog::Kind::system, "ignored", "hi"),
+                          juce::String ("[09:05:07] * hi\n"));
+
+            rt.removeListener (&store);
+            o.logFolder.deleteRecursively();
+        }
+
         beginTest ("R11 PR3: 4000 cuts only AOO, hello overwrite (same / other room / null), AOO server reconnect");
         {
             ManualScheduler clock;

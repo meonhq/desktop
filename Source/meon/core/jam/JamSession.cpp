@@ -13,7 +13,8 @@ static float toDb (float lin) { return juce::Decibels::gainToDecibels (lin, -100
 JamSession::JamSession (Engine& e, AppStore& s, Scheduler& sc, Options o)
     : engine (e), store (s), scheduler (sc), options (std::move (o)), prefs (options.prefs),
       chatChannel (sc, [this] (const EngineChat& c) { return engine.sendChat (c); }),
-      sessionLog (options.logFolder)
+      sessionLog (options.logFolder),
+      chatLog (options.logFolder == juce::File() ? juce::File() : options.logFolder.getChildFile ("chat"), options.wallClock)
 {
     masterDb = prefs.keepMasterVolume ? prefs.masterDb : 0.0f;
     engine.addListener (this);
@@ -216,6 +217,7 @@ void JamSession::exit (const String& reason)
     if (silence.isWarning()) silence.update (scheduler.nowMs(), false, false, 0, 0.0f);
     outputMissing = false;
     outputMissingSince = -1;
+    chatLog.end();
     chatChannel.end();
     latencyProbe.reset();
     peerStates.clear();
@@ -432,6 +434,12 @@ void JamSession::engineGroupJoined (bool ok, const String& group, const String& 
     sessionLog.begin (currentRoomId, myId, options.plugin, audio);
     sessionLog.addEvent ("joined", connection.groupName);
     lastSampleAt = scheduler.nowMs();
+    {
+        // 채팅 기록: 같은 입장의 세션 로그와 같은 이름 (파일은 첫 메시지 때 만든다)
+        const auto& room = store.state().currentRoom;
+        chatLog.begin (sessionLog.getFile().getFileNameWithoutExtension(),
+                       room ? room->title : String(), room ? room->inviteCode.value_or (String()) : String());
+    }
     chatChannel.begin (connection.groupName, myId);
     applyAllowed();
     setPhase (Phase::inRoom);
@@ -478,6 +486,24 @@ void JamSession::chatProfile (const String& user, const var& profile)
     if (options.fake == nullptr) return;
     options.fake->remotePeerJoined (user, profile.getProperty ("nickname", "").toString(),
                                     profile.getProperty ("part", "").toString(), (bool) profile.getProperty ("host", false));
+}
+
+void JamSession::chatMessageAdded (const ChatChannel::Message& m)
+{
+    using K = ChatChannel::Message::Kind;
+    if (m.kind == K::system)
+    {
+        // "○○님이 입장했어요": 그때 이름을 몰랐으면(가짜 기간 프로필이 늦음) 앞에 user id 를 붙인다 (화면은 나중 이름으로 다시 씀)
+        auto text = m.text;
+        if (m.fromUser.isNotEmpty() && nameOf (m.fromUser).isEmpty()) text = m.fromUser + text;
+        chatLog.add (ChatLog::Kind::system, {}, text);
+        return;
+    }
+    String name;
+    if (m.kind == K::mine) { if (const auto& me = store.state().me) name = me->nickname.value_or (String()); }
+    else name = nameOf (m.fromUser);
+    if (name.isEmpty()) name = m.fromUser;
+    chatLog.add (m.kind == K::mine ? ChatLog::Kind::mine : ChatLog::Kind::other, name, m.text);
 }
 
 void JamSession::chatAckMissing (const String& id, const juce::StringArray& missing)
