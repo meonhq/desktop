@@ -205,11 +205,11 @@ void MeonApi::sendRefresh (int attempt)
             // 다른 프로세스(독립 앱·플러그인)가 갱신 중: 끝나면 그쪽이 저장한 새 토큰을 읽어서 쓴다
             if (attempt < 40)
             {
-                if (attempt == 0) AppLog::write ("auth", LOGTXT ("다른 MEON(앱·플러그인)이 토큰을 갱신하는 중이라 기다림"));
+                if (attempt == 0) AppLog::write ("auth", LOGTXT ("다른 Meon(앱·플러그인)이 토큰을 갱신하는 중이라 기다림"));
                 coordinator->retryLater (250, [this, weak, attempt] { if (! weak.expired()) sendRefresh (attempt + 1); });
                 return;
             }
-            AppLog::write ("auth", LOGTXT ("다른 MEON 의 토큰 갱신이 10초 넘게 끝나지 않아 잠금 없이 갱신"));
+            AppLog::write ("auth", LOGTXT ("다른 Meon의 토큰 갱신이 10초 넘게 끝나지 않아 잠금 없이 갱신"));
         }
         else
             coordinatorLocked = true;
@@ -217,7 +217,7 @@ void MeonApi::sendRefresh (int attempt)
         const auto stored = coordinator->storedRefreshToken();
         if (stored.isNotEmpty() && stored != tokens.refreshToken)
         {
-            AppLog::write ("auth", LOGTXT ("다른 MEON 이 바꿔 둔 로그인 토큰으로 갱신"));
+            AppLog::write ("auth", LOGTXT ("다른 Meon이 바꿔 둔 로그인 토큰으로 갱신"));
             tokens.refreshToken = stored;
         }
     }

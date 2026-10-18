@@ -885,7 +885,7 @@ namespace
             bufRow.controlW = bufMode.getPreferredWidth();
             earRow.controlW = ear.getPreferredWidth();
             selfRow.desc = core.isPlugin() ? TXT ("플러그인으로 쓸 때는 DAW에서 이미 내 소리를 듣고 있어서 기본이 꺼짐이에요")
-                                           : TXT ("내 소리를 MEON에서 함께 들을지 정해요");
+                                           : TXT ("내 소리를 Meon에서 함께 들을지 정해요");
             if (auto* jam = core.jam())
             {
                 const auto& p = jam->getPrefs();
@@ -1225,12 +1225,12 @@ namespace
 
         static juce::String licText()
         {
-            return TXT ("MEON은 SonoBus 소스 코드를 수정해 만든 프로그램으로, GPL v3에 따라 같은 라이선스로 배포되고 수정한 소스 코드를 공개해요. 이 프로그램은 어떠한 보증도 제공하지 않아요.");
+            return TXT ("Meon은 SonoBus 소스 코드를 수정해 만든 프로그램으로, GPL v3에 따라 같은 라이선스로 배포되고 수정한 소스 코드를 공개해요. 이 프로그램은 어떠한 보증도 제공하지 않아요.");
         }
 
         void tick() override
         {
-            const juce::String ver = "MEON " + juce::String (MEON_BUILD_VERSION) + " (build " + juce::String (core.buildNumber()) + ")";
+            const juce::String ver = "Meon " + juce::String (MEON_BUILD_VERSION) + " (build " + juce::String (core.buildNumber()) + ")";
             juce::String desc = ver + (core.isPlugin() ? TXT (" · 플러그인") : TXT (" · 독립 앱"));
             juce::String label;
             const int latest = juce::jmax (update.latestBuild ? update.latestBuild() : 0, core.store().state().config.latestBuild);
@@ -1238,7 +1238,7 @@ namespace
             {
                 // Q18: 플러그인은 스스로 업데이트하지 못한다
                 if (latest > core.buildNumber() && core.buildNumber() > 0)
-                    desc = ver + TXT (" · 새 버전(build ") + juce::String (latest) + TXT (")이 있어요 · MEON 앱에서 업데이트해 주세요");
+                    desc = ver + TXT (" · 새 버전(build ") + juce::String (latest) + TXT (")이 있어요 · Meon 앱에서 업데이트해 주세요");
             }
             else if (update.state)
             {
