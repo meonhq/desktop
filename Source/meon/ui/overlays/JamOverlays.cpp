@@ -200,12 +200,10 @@ ManageMemberModal::ManageMemberModal (core::MeonCore& c, const core::JamSession:
     for (auto* comp : std::initializer_list<juce::Component*> { &avatar, &hand, &kick })
         body.addAndMakeVisible (comp);
     hand.setConfirm (TXT ("한 번 더 누르면 넘겨요"), true);
-    kick.setConfirm (TXT ("한 번 더 누르면 내보내요"));
     const auto id = m.userId;
     hand.onPress = [this, id] { core.room().transferHost (id); if (onClose) onClose(); };
     kick.onPress = [this, id] { core.room().kick (id); if (onClose) onClose(); };
     hand.onStateChange = [this] { body.resized(); };
-    kick.onStateChange = [this] { body.resized(); };
     setContent (&body, 18 + 48 + 18);
 }
 
