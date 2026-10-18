@@ -940,7 +940,7 @@ struct UpdateView : StepView
         auto& u = owner.update;
         canUpdate = ! meonCore().isPlugin() && u.state != nullptr && u.start != nullptr;
         title.desc.setText (meonCore().isPlugin()
-            ? TXT ("이 버전으로는 서버에 연결할 수 없어요. MEON 앱에서 업데이트해 주세요")
+            ? TXT ("이 버전으로는 서버에 연결할 수 없어요. Meon 앱에서 업데이트해 주세요")
             : TXT ("이 버전으로는 서버에 연결할 수 없어요. 새 버전으로 업데이트하면 로그인한 그대로 이어서 쓸 수 있어요"));
         addAndMakeVisible (title);
         title.addAndMakeVisible (title.desc);
@@ -1021,7 +1021,7 @@ struct UpdateView : StepView
 struct ReplacedView : StepView
 {
     TitleBlock title { TXT ("다른 곳에서 접속했어요"),
-                       TXT ("같은 계정으로 다른 곳(MEON 앱이나 플러그인)에서 접속해서 여기 연결이 끊겼어요. 여기서 계속 쓰려면 다시 연결해 주세요. 그러면 다른 곳의 연결이 끊겨요") };
+                       TXT ("같은 계정으로 다른 곳(Meon 앱이나 플러그인)에서 접속해서 여기 연결이 끊겼어요. 여기서 계속 쓰려면 다시 연결해 주세요. 그러면 다른 곳의 연결이 끊겨요") };
     Button again { Button::Kind::large, TXT ("여기서 다시 연결") };
     Button logout { Button::Kind::linkSmall, TXT ("로그아웃") };
 
