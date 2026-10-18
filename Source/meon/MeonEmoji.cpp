@@ -13,6 +13,7 @@
 #endif
 
 #include "MeonEmoji.h"
+#include "core/util/EmojiCluster.h"
 
 #include <map>
 
@@ -20,49 +21,7 @@ namespace meon::emoji
 {
 
 //==============================================================================
-static bool isModifier (juce::juce_wchar c)
-{
-    return c == 0xFE0E || c == 0xFE0F                 // 텍스트/이모지 표시 선택자
-        || (c >= 0x1F3FB && c <= 0x1F3FF)             // 피부색
-        || c == 0x20E3                                // 키캡
-        || (c >= 0xE0020 && c <= 0xE007F);            // 태그 (지역 깃발)
-}
-
-static bool isRegionalIndicator (juce::juce_wchar c) { return c >= 0x1F1E6 && c <= 0x1F1FF; }
-
-static bool isEmojiBase (juce::juce_wchar c)
-{
-    return c >= 0x10000                               // 보조 평면 (이모지 대부분. Pretendard 에는 없다)
-        || (c >= 0x2300 && c <= 0x23FF) || (c >= 0x2600 && c <= 0x27BF) || (c >= 0x2B00 && c <= 0x2BFF)
-        || c == 0x200D || isModifier (c);
-}
-
-int clusterEnd (const juce::String& text, int start)
-{
-    const int n = text.length();
-    if (start >= n)
-        return start;
-
-    const auto c = text[start];
-    const bool followedBySelector = start + 1 < n && (text[start + 1] == 0xFE0F || text[start + 1] == 0x20E3);   // ❤️, #️⃣
-    if (! isEmojiBase (c) && ! followedBySelector)
-        return start;
-
-    int j = start + 1;
-    if (isRegionalIndicator (c) && j < n && isRegionalIndicator (text[j]))   // 국기는 두 글자
-        ++j;
-
-    while (j < n)
-    {
-        if (isModifier (text[j]))
-            ++j;
-        else if (text[j] == 0x200D && j + 1 < n)   // ZWJ 로 이어진 다음 글자까지 (👨‍👩‍👧)
-            j += 2;
-        else
-            break;
-    }
-    return j;
-}
+int clusterEnd (const juce::String& text, int start) { return core::emojiClusterEnd (text, start); }
 
 //==============================================================================
 // 이모지 그림 만들기: 글자 크기 px 로 그려서 투명하지 않은 영역만 잘라 둔다.

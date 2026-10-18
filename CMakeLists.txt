@@ -137,6 +137,8 @@ endif()
 set(MEON_CORE_SOURCES
     Source/meon/core/util/Scheduler.h
     Source/meon/core/util/Fold.h
+    Source/meon/core/util/EmojiCluster.h
+    Source/meon/core/util/ChatLinks.h
     Source/meon/core/api/ApiTypes.h
     Source/meon/core/api/ApiError.h
     Source/meon/core/api/ApiJson.h
@@ -743,6 +745,7 @@ if (MEON_TESTS)
         Source/meon/tests/FakeServerTests.cpp
         Source/meon/tests/ConnectionTests.cpp
         Source/meon/tests/FoldTests.cpp
+        Source/meon/tests/ChatLinkTests.cpp
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp
