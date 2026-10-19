@@ -25,6 +25,9 @@ public:
     HomeScreen* getHome() { return home.get(); }
     /** 방 안이면 합주 화면 (개발용 미리 보기) */
     JamScreen* getJamScreen();
+    /** 방 최소화 (합주 최종 디자인 5): 방에는 그대로 있고 화면만 홈 + 아래 막대로. 합주 화면은 지우지 않고 숨긴다 */
+    void setMinimized (bool);
+    bool isMinimized() const { return minimized; }
     void showJoinFailure (const core::ApiError&);
     void showJoinFailure (core::HomeController::JoinFailure);
     void addInfoToast (const juce::String& title, const juce::String& sub, Toast::Kind kind = Toast::Kind::normal);
@@ -37,6 +40,7 @@ public:
     bool handleShortcut (const juce::KeyPress&);
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     HomeScreen::UpdateHooks update;
     std::unique_ptr<HomeScreen> home;
@@ -45,8 +49,10 @@ private:
     std::unique_ptr<juce::Component> roomClosed;   // 내가 방을 닫은 뒤 덮개
     juce::OwnedArray<Toast> toasts;   // 아래에서 위로 (0 = 맨 아래)
     juce::String shownRoomId;
+    bool minimized = false;   // 방 안이면서 홈을 보는 중 (방에 있는지는 store.currentRoom)
 
     void updateScreen();
+    void applyScreen();   // 방 안: minimized 에 따라 홈(+막대)과 합주 화면 중 하나를 보인다
     void syncInviteToasts();
     void removeToast (Toast*);
     void layoutToasts();

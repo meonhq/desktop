@@ -368,21 +368,13 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
     {
         // 버그 27: 친구 목록·방 목록 카드와 같은 상태·같은 규칙 ("요청 보냄" 동안은 아무것도 하지 않는다)
         if (! profile || ! profile->room || joinState() == core::HomeController::FriendJoin::requested) return;
-        std::weak_ptr<bool> weak = alive;
-        core.home().joinFriendRoom (*profile->room, [this, weak] (core::Result<core::JoinResult> r)
+        if (beforeJoin && ! inJam && core.store().state().currentRoom)
         {
-            if (weak.expired()) return;
-            if (! r.ok())
-            {
-                // 다른 입장 버튼과 같이 입장 실패 상자로 (이 창은 닫는다)
-                auto failed = onJoinFailure;
-                const auto err = r.err();
-                if (onClose) onClose();
-                if (failed) failed (err);
-                return;
-            }
-            refresh();   // 승인 방이면 "요청 보냄". 바로 입장이면 합주 화면으로 바뀌며 이 창도 닫힌다
-        });
+            std::weak_ptr<bool> weak = alive;
+            beforeJoin (false, profile->room->id, [this, weak] { if (! weak.expired()) joinFriendRoomNow(); });
+            return;
+        }
+        joinFriendRoomNow();
     };
     accept.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().acceptFriendRequest (rid, reloader()); };
     decline.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().declineFriendRequest (rid, reloader()); };
@@ -392,6 +384,26 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
     refresh();
     load();
     startTimer (1000);
+}
+
+void ProfileModal::joinFriendRoomNow()
+{
+    if (! profile || ! profile->room) return;
+    std::weak_ptr<bool> weak = alive;
+    core.home().joinFriendRoom (*profile->room, [this, weak] (core::Result<core::JoinResult> r)
+    {
+        if (weak.expired()) return;
+        if (! r.ok())
+        {
+            // 다른 입장 버튼과 같이 입장 실패 상자로 (이 창은 닫는다)
+            auto failed = onJoinFailure;
+            const auto err = r.err();
+            if (onClose) onClose();
+            if (failed) failed (err);
+            return;
+        }
+        refresh();   // 승인 방이면 "요청 보냄". 바로 입장이면 합주 화면으로 바뀌며 이 창도 닫힌다
+    });
 }
 
 core::HomeController::FriendJoin ProfileModal::joinState() const

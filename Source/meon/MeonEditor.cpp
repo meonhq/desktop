@@ -1,6 +1,7 @@
 #include "MeonEditor.h"
 #include "ui/dev/WidgetGallery.h"
 #include "ui/dev/DevJamScreen.h"
+#include "ui/dev/UiSelfTest.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
 #include "ui/screens/JamScreen.h"
@@ -92,6 +93,8 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
             devHomePreview = scr == "home" ? juce::String ("home") : scr.fromFirstOccurrenceOf (":", false, false);
         else if (scr == "jam" || scr.startsWith ("jam:") || scr.startsWith ("settings"))
             devHomePreview = scr;   // 합주 화면(가짜 계정으로 비공개 방)·설정 탭 스냅숏
+        if (meon::devOptions().containsKey ("uitest"))
+            devHomePreview = "uitest";   // 화면 자가 테스트 (가짜 계정으로 자동 가입한 홈에서 시작)
     }
    #endif
     core.auth().addListener (this);
@@ -413,6 +416,24 @@ void MeonEditor::applyHomePreview()
     if (appRoot == nullptr) return;
     auto* home = appRoot->getHome();
     const auto p = devHomePreview;
+    if (p == "uitest")
+    {
+        // 화면 자가 테스트: 끝나면 앱을 닫고 실패 수를 종료 코드로 (linux.yml)
+        uiTest = std::make_unique<ui::UiSelfTest> (core, *appRoot, meon::devOptions()["uitest"]);
+        uiTest->onDone = [] (int failures)
+        {
+            juce::MessageManager::callAsync ([failures]
+            {
+                if (auto* app = juce::JUCEApplicationBase::getInstance())
+                {
+                    app->setApplicationReturnValue (failures == 0 ? 0 : 1);
+                    app->systemRequestedQuit();
+                }
+            });
+        };
+        uiTest->start();
+        return;
+    }
     if (p == "create")      home->openCreateRoom();
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
@@ -521,13 +542,34 @@ void MeonEditor::applyHomePreview()
     }
     else if (p == "jam" || p.startsWith ("jam:"))
     {
+        // jam:mini — 방 최소화 (홈 + 아래 막대, 배지 0). jam:minihost — 방장 + 긴 방 이름 + 입장 요청 1 + 새 채팅 3.
+        // jam:miniarm — minihost 에서 막대의 나가기를 한 번 누른 상태 (방장 툴팁). jam:miniconfirm / jam:minicreate — 최소화 중
+        // 공개 방 '바로 입장' / '방 만들기' 를 누른 확인 모달
+        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm";
         core::CreateRoom c;
-        c.type = p == "jam:host" ? "public" : "private";
-        if (p == "jam:host") c.entryMode = juce::String ("approval");
-        c.title = TXT ("준호의 새벽 합주");
+        c.type = hostRoom ? "public" : "private";
+        if (hostRoom) c.entryMode = juce::String ("approval");
+        c.title = p == "jam:minihost" || p == "jam:miniarm" ? TXT ("금요일 밤 홍대 밴드 합주 셋리스트 처음부터 끝까지")
+                                                            : TXT ("준호의 새벽 합주");
         juce::Component::SafePointer<MeonEditor> safe (this);
-        core.home().createRoom (c, [safe, p] (core::Result<core::RoomDetail>)
+        core.home().createRoom (c, [safe, p, hostRoom] (core::Result<core::RoomDetail>)
         {
+            if (safe != nullptr && p.startsWith ("jam:mini"))
+            {
+                if (hostRoom)
+                    if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();
+                juce::Timer::callAfterDelay (800, [safe, p, hostRoom]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    safe->appRoot->setMinimized (true);
+                    if (auto* jam = safe->core.jam(); jam != nullptr && hostRoom)
+                        for (int i = 1; i <= 3; ++i)   // 최소화한 뒤 받은 채팅 (막대의 "새 채팅 3")
+                            jam->chat().received ({ jam->chat().group(), "u_left_preview", "id:mini" + juce::String (i), TXT ("미리 보기 채팅 ") + juce::String (i) });
+                    if (auto* home = safe->appRoot->getHome())
+                        home->devPreviewRoomBar (p.fromFirstOccurrenceOf ("jam:mini", false, false));
+                });
+                return;
+            }
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
             if (safe != nullptr && (p.startsWith ("jam:fold=") || p == "jam:chatfill"))

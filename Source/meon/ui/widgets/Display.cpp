@@ -268,6 +268,41 @@ bool Modal::keyPressed (const juce::KeyPress& k)
 }
 
 //==============================================================================
+namespace
+{
+    float digitCell (const juce::Font& f)
+    {
+        float w = 0.0f;
+        for (char c = '0'; c <= '9'; ++c) w = juce::jmax (w, textWidth (f, juce::String::charToString (c)));
+        return w;
+    }
+}
+
+float tabularWidth (const juce::Font& f, const juce::String& s)
+{
+    const float cell = digitCell (f);
+    float w = 0.0f;
+    for (auto c : s) w += juce::CharacterFunctions::isDigit (c) ? cell : textWidth (f, juce::String::charToString (c));
+    return w;
+}
+
+float drawTabular (juce::Graphics& g, const juce::Font& f, const juce::String& s, float x, float y, float h)
+{
+    const float cell = digitCell (f);
+    g.setFont (f);
+    float cx = x;
+    for (auto c : s)
+    {
+        const auto ch = juce::String::charToString (c);
+        const float cw = textWidth (f, ch);
+        const float w = juce::CharacterFunctions::isDigit (c) ? cell : cw;
+        g.drawText (ch, juce::Rectangle<float> (cx + (w - cw) * 0.5f, y, cw + 1.0f, h), juce::Justification::centredLeft, false);
+        cx += w;
+    }
+    return cx - x;
+}
+
+//==============================================================================
 //==============================================================================
 Tip::Tip() { setInterceptsMouseClicks (false, false); setAlwaysOnTop (true); }
 

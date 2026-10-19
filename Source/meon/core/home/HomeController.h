@@ -44,6 +44,9 @@ public:
     void createRoom (const CreateRoom&, Callback<RoomDetail>);
     /** 지금 방에서 나간다. 엔진은 store 를 따라 바로 나온다 */
     void leaveRoom();
+    /** 방 최소화 중 다른 방에 들어가거나 새 방을 만들기 전: 서버가 나가기를 받아 준 뒤에 방을 비우고 done(ok).
+        실패하면 방은 그대로 두고 done(오류). 이미 방에 없으면(not_in_room) 나간 것으로 본다. 방에 없으면 바로 done(ok) */
+    void leaveRoomThen (Callback<Done> done);
     /** 앱·플러그인을 정상 종료할 때 (MeonCore 소멸자): 방에 있으면 나가기를 보내고 응답을 기다린다 (최대 timeoutMs).
         store 는 바꾸지 않는다 (엔진은 JamSession 소멸이 정리한다). 강제 종료·크래시는 여기를 지나지 않으므로
         30초 안에 다시 켜면 hello 로 같은 방에 돌아간다 (API 5.6).

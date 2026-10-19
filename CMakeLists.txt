@@ -236,6 +236,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/dev/WidgetGallery.cpp
     Source/meon/ui/dev/DevJamScreen.h
     Source/meon/ui/dev/DevJamScreen.cpp
+    Source/meon/ui/dev/UiSelfTest.h
+    Source/meon/ui/dev/UiSelfTest.cpp
 )
 
 # 가짜 서버 초기 데이터 (MeonFixtures::world_json)

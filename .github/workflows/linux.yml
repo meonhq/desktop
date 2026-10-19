@@ -50,6 +50,26 @@ jobs:
           curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo || { echo "::error::가짜 서버가 뜨지 않음"; cat mock.log; exit 1; }
           MEON_TEST_MOCK=http://127.0.0.1:18080 build/MEON_Tests_artefacts/RelWithDebInfo/MEON_Tests
 
+      - name: 화면 자가 테스트
+        # 실제 창(Xvfb)에 마우스·키를 넣어 합주 화면 흐름을 확인한다 (--uitest, 빌드 0 전용: ui/dev/UiSelfTest).
+        # 독립 앱 1280×800 과 플러그인 900×600 을 따로 돈다. 실패가 하나라도 있으면 종료 코드가 0 이 아니다
+        run: |
+          APP=build/MEON_artefacts/RelWithDebInfo/Standalone/meon
+          status=0
+          for mode in app plugin; do
+            export HOME="$RUNNER_TEMP/uitest-$mode"
+            mkdir -p "$HOME"
+            if [ "$mode" = plugin ]; then args="--as-plugin --window=0,0,900,600"; else args="--window=0,0,1280,800"; fi
+            code=0
+            timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --uitest=all $args > "uitest-$mode.log" 2>&1 || code=$?
+            grep "^UITEST" "uitest-$mode.log" || true
+            if [ $code -ne 0 ] || ! grep -q "^UITEST DONE .* 0 failed" "uitest-$mode.log"; then
+              echo "::error::화면 자가 테스트 실패 ($mode, 종료 코드 $code)"
+              status=1
+            fi
+          done
+          exit $status
+
       - name: 화면 스냅숏
         continue-on-error: true
         run: |
@@ -59,7 +79,7 @@ jobs:
           mkdir -p "$HOME"
           for size in 1280x800 900x600; do
             W=${size%x*}; H=${size#*x}
-            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:toastline home:ping home:fold=friends:0.5 home:sendoff home:homemon home:friendreq home:profile home:profilereq home:disc home:discinvite home:discback home:discbackinvite home:roomlost home:roomlostinvite jam jam:host jam:sendoff jam:disc jam:discback jam:ping jam:chat jam:links jam:fold=chat:0.5 jam:fold=send:0.5 settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:toastline home:ping home:fold=friends:0.5 home:sendoff home:homemon home:friendreq home:profile home:profilereq home:disc home:discinvite home:discback home:discbackinvite home:roomlost home:roomlostinvite jam jam:host jam:mini jam:minihost jam:miniarm jam:miniconfirm jam:minicreate jam:sendoff jam:disc jam:discback jam:ping jam:chat jam:links jam:fold=chat:0.5 jam:fold=send:0.5 settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
               # 연결 끊김 토스트: discback 은 4초 끊겼다 다시 붙은 뒤 "다시 연결됐어요" 가 떠 있는 동안, invite 는 초대 토스트가 4초 먼저
               D=3000; case "$s" in home:toast|home:toastline) D=6000;; esac
               case "$s" in home:discback|jam:discback) D=9500;; jam:ping) D=6000;; home:discbackinvite) D=13500;; home:discinvite) D=8000;; home:roomlostinvite) D=7000;; jam*|settings*|home:disc) D=5000;; esac
@@ -69,7 +89,7 @@ jobs:
             done
           done
           # 플러그인 화면 (독립 앱에서 --as-plugin, 900×600)
-          for s in home jam jam:disc jam:ping jam:chat settings:jam; do
+          for s in home jam jam:disc jam:ping jam:chat jam:minihost jam:miniarm settings:jam; do
             timeout 60 xvfb-run -a -s "-screen 0 1600x1000x24" \
               "$APP" --as-plugin --screen=$s --window=0,0,900,600 --no-input --snapshot-delay=5000 \
               --snapshot="$PWD/snapshots/linux_plugin_${s//:/_}_900x600.png" || true

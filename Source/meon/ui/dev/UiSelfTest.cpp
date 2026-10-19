@@ -1,0 +1,505 @@
+#include "UiSelfTest.h"
+#include <csignal>
+#include "../AppRoot.h"
+#include "../screens/HomeScreen.h"
+#include "../screens/JamScreen.h"
+#include "../../core/api/fake/FakeMeonServer.h"
+#include "../../core/model/RoomFilter.h"
+
+namespace meon::ui
+{
+
+UiSelfTest::UiSelfTest (core::MeonCore& c, AppRoot& r, const juce::String& w)
+    : core (c), root (r), which (w.isEmpty() ? juce::String ("all") : w)
+{
+    clock = juce::Time::currentTimeMillis();
+}
+
+UiSelfTest::~UiSelfTest() { stopTimer(); }
+
+void UiSelfTest::start()
+{
+   #if JUCE_LINUX || JUCE_MAC
+    // 이 컨테이너·CI 처럼 AOO 서버(TCP)가 연결을 끊는 곳에서는 엔진이 닫힌 소켓에 쓰다 SIGPIPE 로 앱이 끝난다.
+    // 자가 테스트는 화면을 보는 것이므로 무시한다 (엔진 코드는 그대로)
+    std::signal (SIGPIPE, SIG_IGN);
+   #endif
+    const auto want = [this] (const char* name) { return which == "all" || which == name; };
+    if (want ("leave"))    addLeaveTests();
+    if (want ("minimize")) addMinimizeTests();
+    std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
+    startTimer (20);
+}
+
+//==============================================================================
+void UiSelfTest::add (std::function<void()> run, int waitAfterMs)
+{
+    Step s;
+    s.run = std::move (run);
+    s.waitMs = waitAfterMs;
+    steps.push_back (std::move (s));
+}
+
+void UiSelfTest::waitUntil (const juce::String& label, std::function<bool()> cond, int timeoutMs)
+{
+    Step s;
+    s.label = label;
+    s.until = std::move (cond);
+    s.timeoutMs = timeoutMs;
+    s.waitMs = 0;
+    steps.push_back (std::move (s));
+}
+
+void UiSelfTest::begin (const juce::String& name)
+{
+    add ([this, name] { section = name; std::cerr << "UITEST SECTION " << name << std::endl; }, 0);
+}
+
+void UiSelfTest::timerCallback()
+{
+    const auto now = juce::Time::currentTimeMillis();
+    if (index >= steps.size()) { finish(); return; }
+    auto& s = steps[index];
+    if (s.until)
+    {
+        if (waitStart == 0) waitStart = now;
+        if (s.until())
+        {
+            waitStart = 0;
+            ++index;
+            return;
+        }
+        if (now - waitStart > s.timeoutMs)
+        {
+            expect (false, TXT ("시간 초과: ") + s.label);
+            waitStart = 0;
+            ++index;
+        }
+        return;
+    }
+    if (waitStart == 0)
+    {
+        if (s.run) s.run();
+        waitStart = now;
+    }
+    if (now - waitStart >= s.waitMs)
+    {
+        waitStart = 0;
+        ++index;
+    }
+}
+
+void UiSelfTest::finish()
+{
+    stopTimer();
+    std::cerr << "UITEST DONE " << passes << " passed, " << failures << " failed" << std::endl;
+    if (onDone) onDone (failures);
+}
+
+void UiSelfTest::expect (bool ok, const juce::String& what)
+{
+    if (ok) ++passes; else ++failures;
+    std::cerr << (ok ? "UITEST PASS " : "UITEST FAIL ") << section << " · " << what << std::endl;
+}
+
+//==============================================================================
+juce::ComponentPeer* UiSelfTest::peer() const
+{
+    return root.getPeer();
+}
+
+juce::Point<float> UiSelfTest::toPeer (juce::Component& c, juce::Point<int> local) const
+{
+    auto* p = peer();
+    if (p == nullptr) return {};
+    if (local.x < 0) local = c.getLocalBounds().getCentre();
+    return p->getComponent().getLocalPoint (&c, local).toFloat();
+}
+
+void UiSelfTest::mouse (juce::Point<float> pos, juce::ModifierKeys mods)
+{
+    if (auto* p = peer())
+        p->handleMouseEvent (juce::MouseInputSource::InputSourceType::mouse, pos, mods,
+                             juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation, ++clock);
+}
+
+void UiSelfTest::moveTo (juce::Component& c, juce::Point<int> local)
+{
+    mouse (toPeer (c, local), {});
+}
+
+void UiSelfTest::click (juce::Component& c, juce::Point<int> local)
+{
+    clock += 1000;   // 앞 클릭과 이어진 더블클릭으로 보이지 않게
+    const auto pos = toPeer (c, local);
+    mouse (pos, {});
+    mouse (pos, juce::ModifierKeys::leftButtonModifier);
+    mouse (pos, {});
+}
+
+void UiSelfTest::doubleClick (juce::Component& c, juce::Point<int> local)
+{
+    clock += 1000;
+    const auto pos = toPeer (c, local);
+    mouse (pos, {});
+    for (int i = 0; i < 2; ++i)
+    {
+        mouse (pos, juce::ModifierKeys::leftButtonModifier);
+        mouse (pos, {});
+    }
+}
+
+void UiSelfTest::drag (juce::Component& c, juce::Point<int> from, juce::Point<int> to, int n)
+{
+    clock += 1000;
+    const auto a = toPeer (c, from), b = toPeer (c, to);
+    mouse (a, {});
+    mouse (a, juce::ModifierKeys::leftButtonModifier);
+    for (int i = 1; i <= n; ++i)
+        mouse (a + (b - a) * ((float) i / (float) n), juce::ModifierKeys::leftButtonModifier);
+    mouse (b, {});
+}
+
+void UiSelfTest::key (const juce::KeyPress& k)
+{
+    if (auto* p = peer()) p->handleKeyPress (k);
+}
+
+void UiSelfTest::type (const juce::String& text)
+{
+    for (auto ch : text)
+        key (juce::KeyPress (0, juce::ModifierKeys(), ch));
+}
+
+//==============================================================================
+HomeScreen& UiSelfTest::home() const { return *root.home; }
+JamScreen* UiSelfTest::jam() const   { return root.getJamScreen(); }
+bool UiSelfTest::inRoom() const      { return core.store().state().currentRoom.has_value(); }
+juce::String UiSelfTest::roomId() const
+{
+    const auto& r = core.store().state().currentRoom;
+    return r ? r->id : juce::String();
+}
+
+juce::Button* UiSelfTest::findButton (juce::Component& c, const juce::String& text)
+{
+    for (auto* child : c.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->isShowing() && b->getButtonText() == text)
+            return b;
+        if (auto* found = findButton (*child, text)) return found;
+    }
+    return nullptr;
+}
+
+juce::Button* UiSelfTest::firstButton (juce::Component& c)
+{
+    for (auto* child : c.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->isShowing()) return b;
+        if (auto* found = firstButton (*child)) return found;
+    }
+    return nullptr;
+}
+
+void UiSelfTest::enterNewRoom (bool approval)
+{
+    add ([this, approval]
+    {
+        core::CreateRoom c;
+        c.type = approval ? "public" : "private";
+        if (approval) c.entryMode = juce::String ("approval");
+        c.title = TXT ("자가 테스트 방");
+        core.home().createRoom (c, [] (core::Result<core::RoomDetail>) {});
+    }, 0);
+    waitUntil (TXT ("방에 들어가 합주 화면"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); });
+    wait (300);
+}
+
+void UiSelfTest::minimize()
+{
+    add ([this] { if (auto* j = jam()) click (j->lobby); }, 0);
+    waitUntil (TXT ("최소화 (홈 + 막대)"), [this] { return root.isMinimized() && home().isShowing() && home().hasRoomBar(); });
+    wait (200);
+}
+
+//==============================================================================
+// 4. 방 나가기: 두 번 눌러 확정 (팝업 없음)
+void UiSelfTest::addLeaveTests()
+{
+    begin (TXT ("4 방 나가기"));
+    enterNewRoom (true);
+    add ([this] { click (jam()->leave); });
+    add ([this]
+    {
+        auto* j = jam();
+        expect (j->leave.isArmed() && inRoom(), TXT ("첫 클릭: 나가지 않고 확인 상태"));
+        expect (j->leave.getButtonText() == TXT ("한 번 더 누르면 나가요"), TXT ("확인 문구"));
+        expect (j->tip.isVisible() && j->tip.getTarget() == &j->leave, TXT ("방장: 확인 상태에서 툴팁"));
+        if (j->tip.isVisible())
+            expect (j->tip.getY() == j->leave.getBottom() + 6 && j->tip.getRight() == j->leave.getRight(), TXT ("툴팁: 버튼 아래 6, 오른쪽 끝 맞춤"));
+        click (j->membersCard, { 40, 120 });   // 바깥
+    });
+    add ([this]
+    {
+        auto* j = jam();
+        expect (! j->leave.isArmed() && inRoom(), TXT ("바깥 클릭: 원래대로"));
+        expect (! j->tip.isVisible(), TXT ("바깥 클릭: 툴팁 사라짐"));
+        click (j->leave);
+    }, 3300);
+    add ([this] { expect (! jam()->leave.isArmed() && inRoom(), TXT ("3초가 지나면 원래대로")); });
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("두 번째 클릭으로 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { expect (! inRoom() && ! home().hasRoomBar(), TXT ("두 번째 클릭: 방에서 나가 홈")); });
+}
+
+//==============================================================================
+// 5. 방 최소화
+void UiSelfTest::addMinimizeTests()
+{
+    begin (TXT ("5 최소화: 상태 유지"));
+    enterNewRoom (true);
+    auto state = std::make_shared<std::map<juce::String, juce::var>>();
+    add ([this, state]
+    {
+        auto* j = jam();
+        auto* session = core.jam();
+        // 채팅 40줄 (혼자라 내 목록에만) → 위로 조금 올려 둔다
+        for (int i = 1; i <= 40; ++i) session->chat().sendText (TXT ("자가 테스트 메시지 ") + juce::String (i));
+        click (j->chatInput);
+    }, 300);
+    add ([this] { type (TXT ("draft 쓰는 중")); });
+    add ([this]
+    {
+        if (auto* b = firstButton (jam()->friendsCard)) click (*b);   // 친구 패널 접기
+    }, 700);
+    add ([this] { jam()->chatViewport.setViewPosition (0, 120); });   // 채팅을 위로 올려 둔다 (맨 아래가 아니면 새 메시지를 따라가지 않는다)
+    add ([this, state]
+    {
+        auto* j = jam();
+        auto* session = core.jam();
+        (*state)["room"] = roomId();
+        (*state)["text"] = j->chatInput.getText();
+        (*state)["scroll"] = j->chatViewport.getViewPositionY();
+        (*state)["friendsOpen"] = j->friendsOpen;
+        (*state)["phase"] = (int) session->getPhase();
+        (*state)["msgs"] = (int) session->chat().getMessages().size();
+        expect ((*state)["text"].toString() == TXT ("draft 쓰는 중"), TXT ("채팅 입력에 글을 써 둠"));
+        expect (! j->friendsOpen, TXT ("친구 패널을 접어 둠"));
+        // 셀프 모니터: 끈 채로, 입장 전 듣기는 켠 채로 (최소화한 홈에서 이것으로 바뀌면 안 된다)
+        session->setSelfMonitor (false);
+        session->setHomeMonitor (true);
+        (*state)["selfMon"] = session->isSelfMonitorAudible();
+    });
+    minimize();
+    add ([this, state]
+    {
+        auto* session = core.jam();
+        expect (jam() != nullptr && ! jam()->isVisible(), TXT ("합주 화면은 지우지 않고 숨김"));
+        expect (roomId() == (*state)["room"].toString(), TXT ("방은 그대로"));
+        // 엔진은 방에서 나오지 않는다 (나오면 idle). 가짜 서버 + 닿지 않는 AOO 에서는 connecting 일 수 있다
+        expect (session->getPhase() != core::JamSession::Phase::idle && (int) session->getPhase() >= (int) (*state)["phase"],
+                TXT ("오디오 연결 그대로 (단계 ") + juce::String ((int) (*state)["phase"]) + " -> " + juce::String ((int) session->getPhase()) + ")");
+        expect (session->isSelfMonitorAudible() == (bool) (*state)["selfMon"] && ! session->isHomeMonitorAudible(), TXT ("셀프 모니터 같음 (끔)"));
+        expect (! home().monitorTag.isVisible(), TXT ("홈의 \"내 소리 듣는 중\" 표시 없음"));
+        expect (home().devRoomBar()->getHeight() == HomeScreen::roomBarH && home().devRoomBar()->getBottom() == home().getHeight(), TXT ("막대 57, 아래에 붙음"));
+        expect (home().roomsCard.getBottom() <= home().devRoomBar()->getY(), TXT ("목록은 막대 위로 줄어듦"));
+        expect (home().devRoomBarUnread() == 0, TXT ("새 채팅 0 부터"));
+        // 최소화 중 받은 채팅 2개
+        auto& chat = session->chat();
+        chat.received ({ chat.group(), "u_left_preview", "id:uitest1", TXT ("최소화 중 1") });
+        chat.received ({ chat.group(), "u_left_preview", "id:uitest2", TXT ("최소화 중 2") });
+        root.addInfoToast (TXT ("자가 테스트 토스트"), {});
+    }, 300);
+    add ([this]
+    {
+        expect (home().devRoomBarUnread() == 2, TXT ("막대: 새 채팅 2"));
+        bool found = false;
+        for (auto* t : root.toasts)
+            if (t->getTitle() == TXT ("자가 테스트 토스트"))
+            {
+                found = true;
+                expect (t->getBottom() == root.getHeight() - 69, TXT ("토스트 아래 여백 69"));
+            }
+        expect (found, TXT ("토스트가 뜸"));
+        // 셀프 모니터를 켜도 같은 값
+        core.jam()->setSelfMonitor (true);
+        expect (core.jam()->isSelfMonitorAudible(), TXT ("최소화 중 셀프 모니터 켬 → 들림"));
+        click (*home().devRoomBar(), { 60, 28 });   // 막대 왼쪽 (방 이름)
+    }, 0);
+    waitUntil (TXT ("막대를 누르면 합주 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
+    add ([this, state]
+    {
+        auto* j = jam();
+        auto* session = core.jam();
+        expect (! home().isVisible() && ! home().hasRoomBar(), TXT ("돌아오면 홈·막대 숨김"));
+        expect (session->chat().getUnread() == 0, TXT ("돌아오면 새 채팅 읽음"));
+        expect (j->chatInput.getText() == (*state)["text"].toString(), TXT ("입력 중인 글 그대로"));
+        expect (std::abs (j->chatViewport.getViewPositionY() - (int) (*state)["scroll"]) <= 1,
+                TXT ("채팅 스크롤 그대로 (") + (*state)["scroll"].toString() + " -> " + juce::String (j->chatViewport.getViewPositionY()) + ")");
+        expect (j->friendsOpen == (bool) (*state)["friendsOpen"], TXT ("접기 상태 그대로"));
+        expect ((int) session->chat().getMessages().size() == (int) (*state)["msgs"] + 2, TXT ("최소화 중 받은 채팅이 목록에"));
+        expect (session->isSelfMonitorAudible(), TXT ("돌아와도 셀프 모니터 같음 (켬)"));
+        session->setSelfMonitor (false);
+        session->setHomeMonitor (false);
+    });
+
+    begin (TXT ("5 최소화: 막대의 나가기"));
+    minimize();
+    add ([this] { click ((*home().devRoomBarLeave())); });
+    add ([this]
+    {
+        auto& bar = *home().devRoomBar();
+        auto& leaveB = *home().devRoomBarLeave();
+        expect (leaveB.isArmed() && root.isMinimized() && inRoom(), TXT ("첫 클릭: 막대 그대로, 확인 상태 (막대는 돌아가지 않음)"));
+        expect (leaveB.getButtonText() == TXT ("한 번 더 누르면 나가요"), TXT ("확인 문구"));
+        expect (home().tip.isVisible() && home().tip.getBottom() == home().getLocalPoint (&bar, leaveB.getPosition()).y - 6,
+                TXT ("방장 툴팁: 버튼 위 6"));
+        click (home().roomsCard, { 30, 24 });   // 바깥 (공개 방 제목)
+    });
+    add ([this]
+    {
+        expect (! (*home().devRoomBarLeave()).isArmed() && root.isMinimized(), TXT ("바깥 클릭: 원래대로"));
+        click ((*home().devRoomBarLeave()));
+    });
+    add ([this] { click ((*home().devRoomBarLeave())); }, 0);
+    waitUntil (TXT ("막대에서 두 번 눌러 나감"), [this] { return ! inRoom() && ! home().hasRoomBar(); });
+    add ([this] { expect (! root.isMinimized() && home().isShowing() && jam() == nullptr, TXT ("나가면 막대 사라지고 보통 홈")); });
+
+    begin (TXT ("5 최소화: 다른 방 확인 모달"));
+    enterNewRoom();
+    minimize();
+    auto target = std::make_shared<juce::String>();
+    auto pickCard = [this, target] () -> juce::Button*
+    {
+        const auto& s = core.store().state();
+        for (auto& [room, button] : home().devRoomCards())
+            if (! room.isApproval() && core::rooms::hasRoomFor (room, s.me ? s.me->id : juce::String()) && room.id != roomId())
+            {
+                *target = room.id;
+                return button;
+            }
+        return nullptr;
+    };
+    add ([this, pickCard]
+    {
+        auto* b = pickCard();
+        expect (b != nullptr, TXT ("바로 입장할 공개 방"));
+        if (b != nullptr) click (*b);
+    });
+    add ([this]
+    {
+        expect (home().confirm != nullptr, TXT ("'바로 입장' → 확인 모달"));
+        expect (findButton (home(), TXT ("나가고 들어가기")) != nullptr && findButton (home(), TXT ("취소")) != nullptr, TXT ("[취소] [나가고 들어가기]"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 300);
+    add ([this, pickCard]
+    {
+        expect (home().confirm == nullptr && inRoom() && root.isMinimized(), TXT ("Esc = 취소 (방 그대로)"));
+        if (auto* b = pickCard()) click (*b);
+    }, 300);
+    add ([this]
+    {
+        if (home().confirm != nullptr) click (*home().confirm, { 8, 8 });   // 바깥 (덮개)
+    }, 300);
+    add ([this, pickCard]
+    {
+        expect (home().confirm == nullptr && inRoom(), TXT ("바깥 클릭 = 취소"));
+        if (auto* b = pickCard()) click (*b);
+    }, 300);
+    add ([this] { if (auto* ok = findButton (home(), TXT ("나가고 들어가기"))) click (*ok); }, 0);
+    waitUntil (TXT ("나간 뒤 다른 방으로"), [this, target] { return inRoom() && roomId() == *target && jam() != nullptr && jam()->isShowing(); }, 6000);
+    add ([this] { expect (! root.isMinimized() && ! home().hasRoomBar(), TXT ("새 방은 합주 화면으로 (최소화 아님)")); });
+
+    begin (TXT ("5 최소화: 친구 참여·코드로 입장"));
+    minimize();
+    add ([this]
+    {
+        // 친구 목록의 참여·요청 (승인 방에 있는 친구는 "요청")
+        auto* b = findButton (home().friendsCard, TXT ("요청"));
+        if (b == nullptr) b = findButton (home().friendsCard, TXT ("참여"));
+        expect (b != nullptr, TXT ("친구 목록에 참여·요청 버튼"));
+        if (b != nullptr) click (*b);
+    }, 300);
+    add ([this]
+    {
+        expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 들어가기")) != nullptr, TXT ("친구 참여 → 확인 모달"));
+        if (auto* c = findButton (home(), TXT ("취소"))) click (*c);
+    }, 300);
+    add ([this]
+    {
+        expect (home().confirm == nullptr && inRoom() && root.isMinimized(), TXT ("취소: 방 그대로"));
+        home().openJoinCode();
+    }, 300);
+    add ([this] { type ("Q7K2MX"); }, 200);
+    add ([this] { if (home().modal != nullptr) if (auto* b = findButton (*home().modal, TXT ("입장"))) click (*b); }, 300);
+    add ([this]
+    {
+        expect (home().confirm != nullptr && dynamic_cast<JoinCodeModal*> (home().modal.get()) != nullptr, TXT ("코드로 입장 → 코드 창 위에 확인 모달"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 300);
+    add ([this]
+    {
+        expect (home().confirm == nullptr && dynamic_cast<JoinCodeModal*> (home().modal.get()) != nullptr, TXT ("Esc: 확인 모달만 닫힘 (코드 창은 남음)"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 300);
+    add ([this] { expect (home().modal == nullptr && inRoom() && root.isMinimized(), TXT ("한 번 더 Esc: 코드 창 닫힘, 방 그대로")); });
+
+    begin (TXT ("5 최소화: 새 방 확인 모달"));
+    minimize();
+    add ([this] { click (home().createRoom); }, 300);
+    add ([this]
+    {
+        expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 만들기")) != nullptr, TXT ("'방 만들기' → [취소] [나가고 만들기]"));
+        if (auto* ok = findButton (home(), TXT ("나가고 만들기"))) click (*ok);
+    }, 0);
+    waitUntil (TXT ("나간 뒤 방 만들기 모달"), [this] { return ! inRoom() && dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr; }, 6000);
+    add ([this]
+    {
+        expect (! home().hasRoomBar() && home().confirm == nullptr, TXT ("막대·확인 모달 닫힘, 방 만들기 모달 열림"));
+        home().closeOverlays();
+    });
+
+    begin (TXT ("5 최소화: 내보내짐·방 닫힘"));
+    auto joinFakeRoom = [this, target]
+    {
+        add ([this, target]
+        {
+            const auto& s = core.store().state();
+            for (auto& r : s.publicRooms)
+                if (! r.isApproval() && core::rooms::hasRoomFor (r, s.me ? s.me->id : juce::String()) && r.id != *target)
+                {
+                    *target = r.id;
+                    core.home().joinRoom (r.id, [] (core::Result<core::JoinResult>) {});
+                    return;
+                }
+        }, 0);
+        waitUntil (TXT ("가짜 방장의 방에 들어감"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); }, 6000);
+        wait (300);
+    };
+    joinFakeRoom();
+    minimize();
+    add ([this] { if (auto* f = core.fakeServer()) f->devKickMe(); }, 0);
+    waitUntil (TXT ("최소화 중 내보내짐"), [this] { return ! inRoom(); });
+    add ([this]
+    {
+        expect (! home().hasRoomBar() && ! root.isMinimized() && home().isShowing(), TXT ("내보내지면 막대 사라짐"));
+        bool toast = false;
+        for (auto* t : root.toasts) toast = toast || t->getTitle() == TXT ("방에서 내보내졌어요");
+        expect (toast, TXT ("\"방에서 내보내졌어요\" 토스트"));
+    }, 300);
+    joinFakeRoom();
+    minimize();
+    add ([this] { if (auto* f = core.fakeServer()) f->devCloseMyRoom(); }, 0);
+    waitUntil (TXT ("최소화 중 방 닫힘"), [this] { return ! inRoom(); });
+    add ([this]
+    {
+        expect (! home().hasRoomBar() && ! root.isMinimized() && home().isShowing(), TXT ("방이 닫히면 막대 사라짐"));
+        bool toast = false;
+        for (auto* t : root.toasts) toast = toast || t->getTitle() == TXT ("방장이 방을 닫았어요");
+        expect (toast, TXT ("\"방장이 방을 닫았어요\" 토스트"));
+    }, 300);
+}
+
+} // namespace meon::ui

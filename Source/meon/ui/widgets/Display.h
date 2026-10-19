@@ -136,6 +136,12 @@ private:
     juce::BorderSize<int> insets;
 };
 
+/** 고정폭 숫자 (디자인 font-variant-numeric: tabular-nums). Pretendard 기본 숫자는 폭이 달라서,
+    숫자는 '0'~'9' 중 가장 넓은 폭의 칸 가운데에 그린다 (숫자가 바뀌어도 옆 글자가 흔들리지 않는다) */
+float tabularWidth (const juce::Font&, const juce::String&);
+/** x 에서 시작해 왼쪽 맞춤, 높이 h 의 세로 가운데. 그린 폭을 돌려준다 */
+float drawTabular (juce::Graphics&, const juce::Font&, const juce::String&, float x, float y, float h);
+
 /** 버튼 툴팁 (합주 최종 디자인): 면 #1A1A1A, 글자 500 12px 흰색, 안쪽 4·7, 모서리 4. 마우스를 받지 않는다.
     host(그릴 부모)의 자식이고, target 의 아래(또는 위) 6 에 가운데 또는 오른쪽 끝을 맞춘다 */
 class Tip : public juce::Component

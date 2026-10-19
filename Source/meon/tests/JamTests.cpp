@@ -5,6 +5,8 @@
 #include "../core/auth/TokenStore.h"
 #include "../core/api/MeonApi.h"
 #include "../core/api/Realtime.h"
+#include "../core/home/HomeController.h"
+#include "../core/model/RoomFilter.h"
 #include "MeonFixtures.h"
 
 namespace meon::core
@@ -1008,6 +1010,165 @@ public:
             expect (! engine.connected && engine.group.isEmpty());
             expect (engine.allowEnabled && engine.allowed.isEmpty(), "방 밖: 허용 목록을 빈 채로 켜 둔다 (E5)");
             expect (! engine.file && ! engine.filePlaying && ! jam.hasFile());
+            rt.removeListener (&store);
+            o.logFolder.deleteRecursively();
+        }
+
+        beginTest ("Room minimize (final design 5): home while in a room keeps the room, audio, chat; self-monitor identical; leave-then-proceed; kick / close");
+        {
+            ManualScheduler clock;
+            FakeMeonServer server (clock, [] { FakeMeonServer::Options f; f.latencyMs = 10; f.scripts = false; f.fakeHostsAccept = false; return f; }());
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            // 방 나가기(POST /rooms/{id}/leave)만 네트워크 오류로 만들 수 있는 전송층
+            struct FlakyLeave : RestTransport
+            {
+                FlakyLeave (RestTransport& i, Scheduler& c) : inner (i), clock (c) {}
+                RestTransport& inner;
+                Scheduler& clock;
+                bool failLeave = false;
+                int leaves = 0;
+                void send (const HttpRequest& r, std::function<void (HttpResponse)> done) override
+                {
+                    if (r.path.endsWith ("/leave"))
+                    {
+                        ++leaves;
+                        if (failLeave) { clock.post (10, [done] { done ({}); }); return; }
+                    }
+                    inner.send (r, std::move (done));
+                }
+            } rest (server, clock);
+            MeonApi api { rest, 0 };
+            Realtime rt { server, clock, 0 };
+            AppStore store;
+            rt.addListener (&store);
+            HomeController home { api, rt, store, clock };
+            auto run = [&] (auto&& fn) { fn(); clock.advance (50); };
+            run ([&] { api.signup ("mini@example.com", "mini_keys", "abcd123!", true, [] (auto) {}); });
+            run ([&] { api.verifyEmail (server.getLastMailedCode(), [] (auto) {}); });
+            MePatch p; p.nickname = juce::String ("Mini"); p.part = juce::String ("keys");
+            run ([&] { api.patchMe (p, [&] (Result<Me> r) { store.setMe (r.get()); }); });
+            rt.connect ([&] { return api.getTokens().accessToken; });
+            clock.advance (100);
+
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-minimize");
+            o.logFolder.deleteRecursively();
+            o.fake = &server;
+            o.prefs.selfMonitor = false;   // 방 안 셀프 모니터 끔
+            o.prefs.homeMonitor = true;    // "입장 전에도 내 소리 듣기" 켬: 최소화한 홈에서 이것으로 바뀌면 안 된다
+            o.savePrefs = [] (const JamPrefs&) {};
+            JamSession jam (engine, store, clock, o);
+            jam.setHomeVisible (true);     // 로그인을 마친 상태 (HomeMonitorGate: 홈·합주 화면 모두)
+            expect (engine.selfMon, "방 밖 홈: 입장 전 듣기");
+
+            run ([&] { home.joinByCode ("Q7K2MX", [] (Result<JoinResult>) {}); });
+            engine.finishConnect();
+            engine.finishJoin();
+            expect (jam.isInRoom() && store.state().currentRoom.has_value());
+            expect (! engine.selfMon && ! jam.isSelfMonitorAudible(), "방 안: 셀프 모니터 설정값(끔)");
+
+            // 최소화 = AppRoot 가 홈을 보이고 HomeController::setHomeVisible(true). 화면만 바뀐다
+            const auto roomId = store.state().currentRoom->id;
+            home.setHomeVisible (true);
+            clock.advance (200);
+            expect (store.state().currentRoom && store.state().currentRoom->id == roomId, "방은 그대로");
+            expect (jam.isInRoom() && engine.connected && engine.group == "Q7K2MX", "오디오 연결 그대로");
+            expect (! engine.selfMon && ! jam.isSelfMonitorAudible() && ! jam.isHomeMonitorAudible(), "셀프 모니터 같음 (끔)");
+            expectEquals (rest.leaves, 0);
+            jam.setSelfMonitor (true);
+            expect (engine.selfMon, "최소화 중에 켜면 켜진다");
+            home.setHomeVisible (false);   // 돌아옴
+            expect (engine.selfMon && jam.isSelfMonitorAudible(), "돌아와도 같음 (켬)");
+            home.setHomeVisible (true);
+            expect (engine.selfMon, "다시 최소화해도 같음 (켬)");
+            jam.setSelfMonitor (false);
+            expect (! engine.selfMon);
+
+            // 채팅: 최소화 중에도 받는다. 새 채팅 수는 최소화할 때 0 부터 (AppRoot::setMinimized 의 markRead)
+            jam.chat().received ({ "Q7K2MX", "u_peer", "id:a", "before" });
+            jam.chat().markRead();
+            expectEquals (jam.chat().getUnread(), 0);
+            jam.chat().received ({ "Q7K2MX", "u_peer", "id:b", "one" });
+            jam.chat().received ({ "Q7K2MX", "u_peer", "id:c", "two" });
+            expect (jam.chat().sendText ("mine") != ChatChannel::SendResult::failed);
+            expectEquals (jam.chat().getUnread(), 2);   // 남의 메시지만
+            const auto msgCount = jam.chat().getMessages().size();
+            jam.chat().markRead();                       // 돌아오면 읽음
+            expectEquals (jam.chat().getUnread(), 0);
+            expectEquals ((int) jam.chat().getMessages().size(), (int) msgCount);   // 목록은 그대로
+
+            // 나가고 들어가기: 나가기가 실패하면 방은 그대로, 오류를 돌려준다 (진행하지 않는다)
+            rest.failLeave = true;
+            bool called = false, ok = false;
+            home.leaveRoomThen ([&] (Result<Done> r) { called = true; ok = r.ok(); });
+            clock.advance (100);
+            expect (called && ! ok, "나가기 실패");
+            expect (store.state().currentRoom && jam.isInRoom(), "실패하면 방 그대로");
+
+            // 성공: 서버가 받아 준 뒤에 방을 비우고 done(ok)
+            rest.failLeave = false;
+            called = ok = false;
+            home.leaveRoomThen ([&] (Result<Done> r) { called = true; ok = r.ok(); });
+            expect (! called && store.state().currentRoom.has_value(), "응답 전에는 방 그대로");
+            clock.advance (100);
+            expect (called && ok && ! store.state().currentRoom, "나간 뒤 진행");
+            expect (jam.getPhase() == JamSession::Phase::idle && ! engine.connected);
+
+            // 방에 없으면 바로 done(ok) (서버에 보내지 않는다)
+            const int leavesBefore = rest.leaves;
+            called = ok = false;
+            home.leaveRoomThen ([&] (Result<Done> r) { called = true; ok = r.ok(); });
+            expect (called && ok && rest.leaves == leavesBefore);
+
+            // 새 방에 들어가면 새 채팅 수는 0 부터
+            jam.chat().received ({ "x", "u_peer", "id:d", "stale" });
+            const auto myId = store.state().me->id;
+            const Room* pub = nullptr;
+            for (auto& r : store.state().publicRooms)
+                if (! r.isApproval() && rooms::hasRoomFor (r, myId)) { pub = &r; break; }
+            if (pub == nullptr)
+            {
+                run ([&] { home.refreshRooms(); });
+                for (auto& r : store.state().publicRooms)
+                    if (! r.isApproval() && rooms::hasRoomFor (r, myId)) { pub = &r; break; }
+            }
+            expect (pub != nullptr);
+            if (pub != nullptr)
+            {
+                const auto pubId = pub->id;
+                run ([&] { home.joinRoom (pubId, [] (Result<JoinResult>) {}); });
+                engine.finishConnect();
+                engine.finishJoin();
+                expect (store.state().currentRoom && store.state().currentRoom->id == pubId);
+                expectEquals (jam.chat().getUnread(), 0);
+
+                // 최소화 중 내보내짐: currentRoom 이 비고(막대가 사라짐) 엔진도 나온다
+                home.setHomeVisible (true);
+                server.devKickMe();
+                clock.advance (200);
+                expect (! store.state().currentRoom && jam.getPhase() == JamSession::Phase::idle, "강퇴");
+
+                // 최소화 중 방장이 방을 닫음: 같은 길
+                run ([&] { home.joinRoom (pubId, [] (Result<JoinResult>) {}); });
+                engine.finishConnect();
+                engine.finishJoin();
+                if (! store.state().currentRoom)   // 내보낸 방에 다시 못 들어가면 다른 방
+                    for (auto& r : store.state().publicRooms)
+                        if (r.id != pubId && ! r.isApproval() && rooms::hasRoomFor (r, myId))
+                        {
+                            const auto id2 = r.id;
+                            run ([&] { home.joinRoom (id2, [] (Result<JoinResult>) {}); });
+                            engine.finishConnect();
+                            engine.finishJoin();
+                            break;
+                        }
+                expect (store.state().currentRoom.has_value());
+                server.devCloseMyRoom();
+                clock.advance (200);
+                expect (! store.state().currentRoom && jam.getPhase() == JamSession::Phase::idle, "방 닫힘");
+            }
+            home.setHomeVisible (false);
             rt.removeListener (&store);
             o.logFolder.deleteRecursively();
         }

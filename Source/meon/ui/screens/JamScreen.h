@@ -54,6 +54,7 @@ private:
 public:
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     core::JamSession& jam;
     const bool plugin;
