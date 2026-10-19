@@ -893,6 +893,17 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     bell.onClick = [this] { toggleNotifications(); };
     settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
     lobby.onClick = [this] { tip.hide(); closePopover(); if (onMinimize) onMinimize(); };
+    // 방 나가기: 두 번 눌러 확정 (팝업 없음). 바깥을 누르거나 3초가 지나면 원래대로 (다른 확인 버튼과 같은 Button::setConfirm).
+    // 방장이면 확인 상태일 때 버튼 아래에 "돌아올 때까지 방장 자리가 비어요"
+    leave.setConfirm (TXT ("한 번 더 누르면 나가요"));
+    leave.onStateChange = [this]
+    {
+        resized();
+        if (leave.isArmed() && core.store().state().amHost())
+            tip.show (*this, leave, TXT ("돌아올 때까지 방장 자리가 비어요"), Tip::Place::belowRight);
+        else if (tip.getTarget() == &leave)
+            tip.hide();
+    };
     leave.onPress = [this]
     {
         juce::Component::SafePointer<JamScreen> safe (this);

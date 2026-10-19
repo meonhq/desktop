@@ -134,6 +134,7 @@ Button::Look Button::currentLook() const
             if (disabled) return { col::hoverBg, col::line, col::inkFaint, 600 };
             return { col::accent, col::accent, col::ink, 600 };
         case Kind::secondary:
+            if (armed) return { col::danger, col::danger, col::white, 600 };   // 방 나가기 확인 상태 (합주 최종 디자인)
             return { col::white, col::field, disabled ? col::inkFaint : col::ink, 600 };
         case Kind::quiet:
             return { juce::Colours::transparentWhite, col::field, disabled ? col::inkFaint : col::inkSub, 500 };
