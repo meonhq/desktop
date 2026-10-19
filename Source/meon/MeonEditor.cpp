@@ -554,8 +554,10 @@ void MeonEditor::applyHomePreview()
         core::CreateRoom c;
         c.type = hostRoom ? "public" : "private";
         if (hostRoom) c.entryMode = juce::String ("approval");
+        // jam:headerarm — 헤더 겹침 확인: 방장 + 비공개(입장 코드) + 긴 방 이름(30자) + 방 나가기 확인 상태 (툴팁)
         c.title = p == "jam:minihost" || p == "jam:miniarm" ? TXT ("금요일 밤 홍대 밴드 합주 셋리스트 처음부터 끝까지")
-                                                            : TXT ("준호의 새벽 합주");
+                : p == "jam:headerarm" ? TXT ("금요일 밤 홍대 밴드 합주 셋리스트를 처음부터 끝까지")
+                                         : TXT ("준호의 새벽 합주");
         juce::Component::SafePointer<MeonEditor> safe (this);
         core.home().createRoom (c, [safe, p, hostRoom] (core::Result<core::RoomDetail>)
         {
@@ -598,6 +600,12 @@ void MeonEditor::applyHomePreview()
                     screen->devSetChatInput (text);
                 });
             }
+            if (safe != nullptr && p == "jam:headerarm" && safe->appRoot != nullptr)   // 확인 상태는 3초 뒤 풀리므로 스냅숏(5초) 직전에
+                juce::Timer::callAfterDelay (3500, [safe]
+                {
+                    if (safe != nullptr && safe->appRoot != nullptr)
+                        if (auto* screen = safe->appRoot->getJamScreen()) screen->devArmLeave();
+                });
             if (safe != nullptr && p == "jam:wide" && safe->appRoot != nullptr)   // 오른쪽 패널을 가장 넓게 (1280 → 640, 900 → 406)
                 juce::Timer::callAfterDelay (300, [safe]
                 {

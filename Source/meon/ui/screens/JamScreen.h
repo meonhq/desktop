@@ -55,6 +55,8 @@ public:
     int devLastChatLines() const;
     /** 개발용 스냅숏: 채팅 입력 칸에 글을 넣고 커서를 끝에 */
     void devSetChatInput (const juce::String&);
+    /** 개발용 스냅숏: 방 나가기를 한 번 누른 상태 */
+    void devArmLeave() { leave.triggerClick(); }
     /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */
     void previewFold (const juce::String& panel, float e);
     /** 개발용: 누른 것처럼 접거나 펼친다 (--screen=jam:chatfill 의 프레임 확인) */
