@@ -13,6 +13,7 @@
 #include "ChatChannel.h"
 #include "../state/AppStore.h"
 #include "../log/SessionLog.h"
+#include "../log/ChatLog.h"
 #include "../api/fake/FakeMeonServer.h"
 #include <map>
 
@@ -81,6 +82,8 @@ public:
         std::function<void (const juce::String& host, int port, std::function<void (bool reachable)>)> checkReachable;
         /** 합주 상대의 소리가 모두 끊겼다: 내 인터넷이 끊겼을 수 있으니 서버 실시간 연결도 확인한다 (Realtime::checkNow) */
         std::function<void()> peersAllInterrupted;
+        /** 채팅 기록(로그 폴더/chat/*.txt)에 찍는 벽시계. 비어 있으면 지금 시각 (테스트가 넣는다) */
+        ChatLog::Clock wallClock;
     };
 
     JamSession (Engine&, AppStore&, Scheduler&, Options);
@@ -203,6 +206,7 @@ private:
     void updateOutputMissing (juce::int64 now);
     ChatChannel chatChannel;
     SessionLog sessionLog;
+    ChatLog chatLog;   // 방에서 오간 채팅을 사람이 읽는 .txt 로 (세션 로그와 같은 이름)
 
     int tickTask = 0, retryTask = 0, pollTask = 0;
     void schedulePoll();
@@ -265,6 +269,7 @@ private:
     // ChatChannel::Listener
     void chatProfile (const juce::String& user, const juce::var& profile) override;
     void chatAckMissing (const juce::String& id, const juce::StringArray& missing) override;
+    void chatMessageAdded (const ChatChannel::Message&) override;
 
     JUCE_DECLARE_NON_COPYABLE (JamSession)
 };

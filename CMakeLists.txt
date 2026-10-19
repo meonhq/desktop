@@ -182,6 +182,8 @@ set(MEON_CORE_SOURCES
     Source/meon/core/jam/JamSession.cpp
     Source/meon/core/log/SessionLog.h
     Source/meon/core/log/SessionLog.cpp
+    Source/meon/core/log/ChatLog.h
+    Source/meon/core/log/ChatLog.cpp
     Source/meon/core/log/AppLog.h
     Source/meon/core/log/AppLog.cpp
     Source/meon/core/jam/RttReporter.h

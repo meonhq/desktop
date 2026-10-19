@@ -36,6 +36,8 @@ public:
     {
         virtual ~Listener() = default;
         virtual void chatChanged() {}
+        /** 목록에 메시지가 새로 생김 (내 첫 전송·받은 새 메시지·시스템 줄). 다시 보내기·중복 수신·전달 상태 변화에는 부르지 않는다 */
+        virtual void chatMessageAdded (const Message& m) { juce::ignoreUnused (m); }
         /** 가짜 기간 프로필 메시지 */
         virtual void chatProfile (const juce::String& user, const juce::var& profile) { juce::ignoreUnused (user, profile); }
         /** 실패 표시가 생김 (로그 chatAckMissing) */
@@ -75,12 +77,14 @@ public:
         {
             // 받을 사람이 없다: 엔진으로 보내지 않고 내 목록에만 (확인·실패 표시 없음)
             messages.push_back (m);
+            added (messages.back());
             changed();
             return SendResult::localOnly;
         }
         m.delivery = Message::Delivery::sending;
         m.waitingFor = others;
         messages.push_back (m);
+        added (messages.back());
         transmit (messages.back());
         changed();
         return messages.back().delivery == Message::Delivery::failed ? SendResult::failed : SendResult::sent;
@@ -109,6 +113,7 @@ public:
         m.fromUser = aboutUser;
         m.time = scheduler.nowMs();
         messages.push_back (m);
+        added (messages.back());
         changed();
     }
 
@@ -163,6 +168,7 @@ public:
         m.time = scheduler.nowMs();
         messages.push_back (m);
         ++unread;
+        added (messages.back());
         changed();
     }
 
@@ -182,6 +188,7 @@ private:
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void changed() { listeners.call ([] (Listener& l) { l.chatChanged(); }); }
+    void added (Message m) { listeners.call ([&m] (Listener& l) { l.chatMessageAdded (m); }); }   // 복사본: 듣는 쪽이 목록을 바꿔도 안전
 
     void transmit (Message& m)
     {
