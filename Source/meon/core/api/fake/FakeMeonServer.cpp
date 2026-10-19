@@ -644,8 +644,9 @@ void FakeMeonServer::respond (const HttpRequest& req, std::function<void (HttpRe
     std::optional<HttpResponse> canned;
     if (replyForTest) canned = replyForTest (req);
     auto response = canned ? *canned : handle (req);
+    const int extra = slowForTest ? juce::jmax (0, slowForTest (req)) : 0;
     std::weak_ptr<bool> weak = alive;
-    scheduler.post (options.latencyMs, [weak, done, response]
+    scheduler.post (options.latencyMs + extra, [weak, done, response]
     {
         if (! weak.expired() && done) done (response);
     });

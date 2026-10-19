@@ -100,6 +100,8 @@ public:
     std::function<std::optional<HttpResponse> (const HttpRequest&)> replyForTest;
     /** 테스트용: 0 보다 크면 이 요청을 그만큼 늦게 처리한다 (요청이 서버에 닿는 순서 바꾸기) */
     std::function<int (const HttpRequest&)> holdForTest;
+    /** 테스트용: 0 보다 크면 바로 처리하고 응답만 그만큼 더 늦게 보낸다 (응답이 실시간 이벤트보다 늦게 닿는 경우) */
+    std::function<int (const HttpRequest&)> slowForTest;
     bool isMember (const juce::String& roomId, const juce::String& userId) const;
     int pendingInviteCountFor (const juce::String& userId) const;
 

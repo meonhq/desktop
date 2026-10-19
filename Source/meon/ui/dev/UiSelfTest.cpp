@@ -32,6 +32,7 @@ void UiSelfTest::start()
     if (want ("minimize")) addMinimizeTests();
     if (want ("resize"))   addResizeTests();
     if (want ("chat"))     addChatInputTests();
+    if (want ("rooms"))    addRoomListTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -757,6 +758,63 @@ void UiSelfTest::addChatInputTests()
     add ([this] { expect (jam()->devLastChatLines() > 1, TXT ("받은 긴 단어도 끊김")); });
 }
 
+
+//==============================================================================
+// 공개 방 목록: 혼자 있던 공개 방에서 나가면 목록에 남지 않는다 (0명 방도 보이지 않는다). 닫힌 방 카드를 누르면 빠지고 토스트
+void UiSelfTest::addRoomListTests()
+{
+    auto saved = std::make_shared<core::Room>();
+    auto listed = [this] (const juce::String& id) { return core.store().state().findPublicRoom (id) != nullptr; };
+    auto cardButton = [this] (const juce::String& id) -> juce::Button*
+    {
+        for (auto& [room, b] : home().devRoomCards()) if (room.id == id) return b;
+        return nullptr;
+    };
+    auto hasToast = [this] (const juce::String& title)
+    {
+        for (auto* t : root.toasts) if (t->getTitle() == title) return true;
+        return false;
+    };
+
+    begin (TXT ("방 목록: 혼자 있던 공개 방에서 나가기"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this]
+    {
+        core::CreateRoom c;
+        c.type = "public";
+        c.entryMode = juce::String ("instant");
+        c.title = TXT ("혼자 공개 방");
+        core.home().createRoom (c, [] (core::Result<core::RoomDetail>) {});
+    }, 0);
+    waitUntil (TXT ("공개 방에 들어감"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); });
+    add ([this, saved] { *saved = *core.store().state().currentRoom; click (jam()->leave); }, 300);
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("나가서 홈"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this, saved, listed] { expect (! listed (saved->id), TXT ("나가자마자 목록에 없음")); }, 1500);
+    add ([this, saved, listed, cardButton]
+    {
+        expect (! listed (saved->id) && cardButton (saved->id) == nullptr, TXT ("다시 받은 목록에도 없음 (카드 없음)"));
+        auto zero = *saved;
+        zero.id = "r_zero_selftest";
+        zero.memberCount = 0;
+        zero.members.clear();
+        core.store().upsertPublicRoom (zero);
+    }, 300);
+    add ([this, listed, cardButton] { expect (! listed ("r_zero_selftest") && cardButton ("r_zero_selftest") == nullptr, TXT ("0명 방은 보이지 않음")); });
+
+    begin (TXT ("방 목록: 닫힌 방 카드를 누르면"));
+    add ([this, saved] { core.store().upsertPublicRoom (*saved); }, 300);   // rooms.removed 를 놓친 목록
+    waitUntil (TXT ("닫힌 방 카드가 보임"), [saved, cardButton] { return cardButton (saved->id) != nullptr; });
+    add ([this, saved, cardButton] { if (auto* b = cardButton (saved->id)) click (*b); }, 0);
+    waitUntil (TXT ("\"이미 닫힌 방이에요\" 토스트"), [hasToast] { return hasToast (TXT ("이미 닫힌 방이에요")); });
+    add ([this, saved, listed, cardButton]
+    {
+        expect (! listed (saved->id) && cardButton (saved->id) == nullptr, TXT ("목록에서 빠짐"));
+        expect (root.fail == nullptr, TXT ("입장 실패 창은 뜨지 않음"));
+        expect (! inRoom(), TXT ("들어가지 않음"));
+    }, 300);
+}
 
 //==============================================================================
 // 알림 목록의 친구 요청 수락·거절: 누르면 목록이 다시 만들어지며 그 줄이 지워진다. 그래도 그 줄의 요청 id 가 서버로 가야 한다.

@@ -53,6 +53,7 @@ void HomeController::refreshNotificationState()
 
 void HomeController::refreshRooms()
 {
+    if (leavesInFlight > 0) return;   // leaveFinished 가 받는다
     const int gen = ++roomsGeneration;
     std::weak_ptr<bool> weak = alive;
     api.listPublicRooms ([this, weak, gen] (Result<std::vector<Room>> r)
@@ -132,7 +133,8 @@ void HomeController::handleJoin (const juce::String& roomId, Result<JoinResult> 
     }
     else if (classify (r.err()) == JoinFailure::closed && roomId.isNotEmpty())
     {
-        // 목록에 남아 있던 닫힌 방은 지운다 (rooms.removed 를 놓쳤을 수 있다)
+        // 목록에 남아 있던 닫힌 방은 바로 지우고 목록도 다시 받는다 (rooms.removed 를 놓쳤을 수 있다)
+        store.removePublicRoom (roomId);
         refreshRooms();
     }
     if (cb) cb (std::move (r));
@@ -179,13 +181,31 @@ void HomeController::createRoom (const CreateRoom& c, Callback<RoomDetail> cb)
     });
 }
 
+void HomeController::leaveStarted (const RoomDetail& room)
+{
+    ++leavesInFlight;
+    ++roomsGeneration;   // 그전에 보낸 목록 요청의 응답은 버린다
+    // 내가 마지막 멤버인 공개 방은 서버가 닫는다. rooms.removed 를 기다리지 않는다 (홈이 숨어 있었으면 구독이 늦어 놓친다)
+    const auto meId = store.state().me ? store.state().me->id : juce::String();
+    const bool lastMember = std::all_of (room.members.begin(), room.members.end(), [&] (const RoomMember& m) { return m.user.id == meId; });
+    if (room.isPublic() && lastMember) store.removePublicRoom (room.id);
+}
+
+void HomeController::leaveFinished()
+{
+    if (leavesInFlight > 0) --leavesInFlight;
+    if (homeVisible) refreshRooms();   // 실패해도 받는다: 방이 남아 있으면 다시 보인다
+}
+
 void HomeController::leaveRoom()
 {
     const auto& room = store.state().currentRoom;
     if (! room) return;
     const auto id = room->id;
-    store.setCurrentRoom (std::nullopt);
-    api.leaveRoom (id, [] (Result<Done>) {});
+    leaveStarted (*room);
+    store.setCurrentRoom (std::nullopt);   // 화면이 홈으로 바뀐다 (setHomeVisible 의 목록 요청은 leaveFinished 로 미뤄진다)
+    std::weak_ptr<bool> weak = alive;
+    api.leaveRoom (id, [this, weak] (Result<Done>) { if (! weak.expired()) leaveFinished(); });
 }
 
 void HomeController::leaveRoomThen (Callback<Done> done)
@@ -193,12 +213,14 @@ void HomeController::leaveRoomThen (Callback<Done> done)
     const auto& room = store.state().currentRoom;
     if (! room) { done (Done {}); return; }
     const auto id = room->id;
+    leaveStarted (*room);
     std::weak_ptr<bool> weak = alive;
     api.leaveRoom (id, [this, weak, id, done] (Result<Done> r)
     {
         if (weak.expired()) return;
-        if (! r.ok() && r.code() != ErrorCode::notInRoom) { done (r.err()); return; }
+        if (! r.ok() && r.code() != ErrorCode::notInRoom) { leaveFinished(); done (r.err()); return; }
         if (store.state().currentRoom && store.state().currentRoom->id == id) store.setCurrentRoom (std::nullopt);
+        leaveFinished();
         done (Done {});
     });
 }

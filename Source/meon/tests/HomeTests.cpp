@@ -451,6 +451,174 @@ public:
             expect (! ids.contains (reqs[0].id) && ids.contains (reqs[1].id) && ids.size() == 2, "받은 요청도 다시 받음: " + ids.joinIntoString (","));
         }
 
+        beginTest ("leave as the last member of a public room: the room does not stay in the list, whatever order the list request, the leave and rooms.removed take");
+        {
+            // listFirst: 나가기 직전에 목록 요청이 이미 나가 있다 (최소화한 홈·재연결 등)
+            struct Case { const char* name; int holdList, slowList; bool dropRemoved, listFirst; };
+            const Case cases[] = {
+                { "기본 순서", 0, 0, false, false },
+                { "목록이 나가기보다 늦게 처리됨", 60, 0, false, false },
+                { "목록이 나가기보다 먼저 처리되고 rooms.removed 뒤에 도착", 0, 100, false, true },
+                { "rooms.removed 를 놓침 (구독이 늦게 등록)", 0, 0, true, false },
+                { "rooms.removed 를 놓치고, 먼저 처리된 목록이 늦게 도착", 0, 100, true, true },
+            };
+            for (auto& c : cases)
+            {
+                const auto name = juce::String::fromUTF8 (c.name);
+                Rig r;
+                // AppRoot 흉내: 방에 있으면 홈을 숨기고, 방이 비면 그 자리에서(setCurrentRoom 안에서) 홈을 보인다
+                struct Screen : AppStore::Listener
+                {
+                    Screen (AppStore& s, HomeController& h) : store (s), home (h) { store.addListener (this); home.setHomeVisible (! store.state().inRoom()); }
+                    ~Screen() override { store.removeListener (this); }
+                    void stateChanged (StateKey k) override { if (k == StateKey::currentRoom) home.setHomeVisible (! store.state().inRoom()); }
+                    AppStore& store;
+                    HomeController& home;
+                } screen (r.store, r.home);
+                r.wait();
+                CreateRoom cr;
+                cr.type = "public";
+                cr.entryMode = juce::String ("instant");
+                cr.title = "solo room";
+                r.home.createRoom (cr, [] (Result<RoomDetail>) {});
+                r.wait();
+                expect (r.store.state().inRoom());
+                const auto roomId = r.store.state().currentRoom->id;
+                // 내가 나가기 전에 목록에 내 방이 보이는 경우 (최소화 등)
+                r.store.upsertPublicRoom (*r.store.state().currentRoom);
+
+                juce::StringArray order;   // 서버가 받은 순서·보낸 이벤트·앱이 목록을 바꾼 때
+                r.server.onRequestForTest = [&] (const HttpRequest& q)
+                {
+                    if ((q.method == "GET" && q.path == "/rooms") || q.path.endsWith ("/leave")) order.add (q.method + " " + q.path.replace (roomId, "{id}"));
+                };
+                r.server.onEmitForTest = [&] (const juce::String& to, const juce::String& type, const juce::var&)
+                {
+                    if (type == "rooms.removed" && to == r.server.meId()) order.add (c.dropRemoved ? juce::String::fromUTF8 ("rooms.removed(놓침)") : juce::String ("rooms.removed"));
+                };
+                r.server.holdForTest = [&] (const HttpRequest& q) { return q.method == "GET" && q.path == "/rooms" ? c.holdList : 0; };
+                r.server.slowForTest = [&] (const HttpRequest& q) { return q.method == "GET" && q.path == "/rooms" ? c.slowList : 0; };
+                r.server.dropEventForTest = [&] (const juce::String& type, const juce::var&) { return c.dropRemoved && type == "rooms.removed"; };
+                struct Watch : AppStore::Listener
+                {
+                    Watch (AppStore& s, juce::StringArray& o, const juce::String& id) : store (s), out (o), roomId (id) { store.addListener (this); }
+                    ~Watch() override { store.removeListener (this); }
+                    void stateChanged (StateKey k) override
+                    {
+                        if (k == StateKey::publicRooms) out.add (juce::String::fromUTF8 (store.state().findPublicRoom (roomId) != nullptr ? "목록: 방 있음" : "목록: 방 없음"));
+                    }
+                    AppStore& store;
+                    juce::StringArray& out;
+                    juce::String roomId;
+                } watch (r.store, order, roomId);
+
+                if (c.listFirst) r.home.refreshRooms();
+                r.home.leaveRoom();
+                expect (r.store.state().findPublicRoom (roomId) == nullptr, name + ": 누르자마자 목록에서 빠짐");
+                r.wait (500);
+                logMessage (name + ": " + order.joinIntoString (" → "));
+                expect (r.store.state().findPublicRoom (roomId) == nullptr, name + ": 목록에 남지 않음");
+                r.server.onRequestForTest = nullptr;
+                r.server.onEmitForTest = nullptr;
+                r.server.holdForTest = nullptr;
+                r.server.slowForTest = nullptr;
+                r.server.dropEventForTest = nullptr;
+            }
+        }
+
+        beginTest ("minimized (home visible in a room): leave from the room bar and leave-then-proceed drop my last-member public room at once");
+        {
+            for (int variant = 0; variant < 2; ++variant)
+            {
+                Rig r;
+                r.home.setHomeVisible (true);
+                r.wait();
+                CreateRoom cr;
+                cr.type = "public";
+                cr.entryMode = juce::String ("instant");
+                cr.title = "mini solo";
+                r.home.createRoom (cr, [] (Result<RoomDetail>) {});
+                r.wait();
+                const auto roomId = r.store.state().currentRoom->id;
+                r.home.refreshRooms();   // 최소화: 홈이 보이며 목록에 내 방이 있다
+                r.wait();
+                expect (r.store.state().findPublicRoom (roomId) != nullptr, "최소화한 홈 목록에 내 방");
+                int lists = 0;
+                r.server.onRequestForTest = [&] (const HttpRequest& q) { if (q.method == "GET" && q.path == "/rooms") ++lists; };
+                r.server.dropEventForTest = [] (const juce::String& type, const juce::var&) { return type == "rooms.removed"; };
+                bool proceeded = false;
+                if (variant == 0) r.home.leaveRoom();                                              // 막대의 나가기
+                else              r.home.leaveRoomThen ([&] (Result<Done> x) { proceeded = x.ok(); });   // 나가고 들어가기·만들기
+                expect (r.store.state().findPublicRoom (roomId) == nullptr, "바로 목록에서 빠짐");
+                r.home.refreshRooms();   // 나가는 중의 목록 요청은 나가기 뒤로 미룬다
+                expectEquals (lists, 0);
+                r.wait();
+                expect (variant == 0 || proceeded);
+                expect (! r.store.state().inRoom());
+                expectEquals (lists, 1, "나가기 응답 뒤 목록을 한 번 다시 받음");
+                expect (r.store.state().findPublicRoom (roomId) == nullptr, "rooms.removed 를 놓쳐도 남지 않음");
+                r.server.onRequestForTest = nullptr;
+                r.server.dropEventForTest = nullptr;
+            }
+        }
+
+        beginTest ("leave fails (network): the list is fetched again and the room shows if it is still open");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            CreateRoom cr;
+            cr.type = "public";
+            cr.entryMode = juce::String ("instant");
+            cr.title = "stuck room";
+            r.home.createRoom (cr, [] (Result<RoomDetail>) {});
+            r.wait();
+            const auto roomId = r.store.state().currentRoom->id;
+            r.server.replyForTest = [] (const HttpRequest& q) -> std::optional<HttpResponse>
+            {
+                if (q.path.endsWith ("/leave")) return HttpResponse {};
+                return std::nullopt;
+            };
+            bool failed = false;
+            r.home.leaveRoomThen ([&] (Result<Done> x) { failed = ! x.ok(); });
+            expect (r.store.state().findPublicRoom (roomId) == nullptr);
+            r.wait();
+            expect (failed && r.store.state().inRoom(), "나가기 실패: 방에 그대로");
+            expect (r.store.state().findPublicRoom (roomId) != nullptr, "다시 받은 목록에 남아 있는 방이 보임");
+            r.server.replyForTest = nullptr;
+        }
+
+        beginTest ("joining a room that has closed (410): it leaves the list at once and the list is fetched again");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            CreateRoom cr;
+            cr.type = "public";
+            cr.entryMode = juce::String ("instant");
+            cr.title = "gone room";
+            r.home.createRoom (cr, [] (Result<RoomDetail>) {});
+            r.wait();
+            const Room stale = *r.store.state().currentRoom;
+            r.home.leaveRoom();   // 서버가 방을 닫는다
+            r.wait();
+            r.store.upsertPublicRoom (stale);   // rooms.removed 를 놓친 목록
+            expect (r.store.state().findPublicRoom (stale.id) != nullptr);
+            int lists = 0;
+            r.server.onRequestForTest = [&] (const HttpRequest& q) { if (q.method == "GET" && q.path == "/rooms") ++lists; };
+            r.server.slowForTest = [] (const HttpRequest& q) { return q.method == "GET" && q.path == "/rooms" ? 300 : 0; };
+            std::optional<ErrorCode> code;
+            r.home.joinRoom (stale.id, [&] (Result<JoinResult> x) { if (! x.ok()) code = x.code(); });
+            r.wait (50);
+            expect (code.has_value() && HomeController::classify (ApiError::of (*code)) == F::closed, "닫힌 방");
+            expect (r.store.state().findPublicRoom (stale.id) == nullptr, "목록 응답을 기다리지 않고 바로 빠짐");
+            expectEquals (lists, 1, "목록도 다시 받음");
+            r.wait (400);
+            expect (r.store.state().findPublicRoom (stale.id) == nullptr);
+            r.server.onRequestForTest = nullptr;
+            r.server.slowForTest = nullptr;
+        }
+
         beginTest ("invite friend: pending 3s then sent; cancel inside 3s");
         {
             using P = HomeController::InviteState::Phase;

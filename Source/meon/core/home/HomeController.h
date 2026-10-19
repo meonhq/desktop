@@ -22,6 +22,7 @@ public:
     /** 홈이 보일 때 true: 공개 방 목록을 받고 실시간 구독. 숨으면 구독을 끊는다 (API 10) */
     void setHomeVisible (bool);
     bool isHomeVisible() const { return homeVisible; }
+    /** 공개 방 목록을 다시 받는다. 방에서 나가는 중이면 나가기 응답 뒤로 미룬다 (leaveRoom) */
     void refreshRooms();
     /** 받은 친구 요청 목록 (hello 에는 없다). 로그인 뒤 한 번, 재연결마다 */
     void refreshFriendRequests();
@@ -42,7 +43,9 @@ public:
     /** 비공개 방 코드 (대소문자 구분 없음) */
     void joinByCode (const juce::String& code, Callback<JoinResult>);
     void createRoom (const CreateRoom&, Callback<RoomDetail>);
-    /** 지금 방에서 나간다. 엔진은 store 를 따라 바로 나온다 */
+    /** 지금 방에서 나간다. 엔진은 store 를 따라 바로 나온다.
+        내가 마지막 멤버인 공개 방(서버가 닫는다)은 목록에서 바로 빼고, 목록은 나가기 응답(성공·실패) 뒤에 다시 받는다.
+        나가기와 겹친 목록 응답은 버린다: 서버가 나가기보다 먼저 처리하면 나를 포함한 채로, 처리 중에 방이 닫히면 0명으로 온다 */
     void leaveRoom();
     /** 방 최소화 중 다른 방에 들어가거나 새 방을 만들기 전: 서버가 나가기를 받아 준 뒤에 방을 비우고 done(ok).
         실패하면 방은 그대로 두고 done(오류). 이미 방에 없으면(not_in_room) 나간 것으로 본다. 방에 없으면 바로 done(ok) */
@@ -111,6 +114,7 @@ private:
     Scheduler& scheduler;
     bool homeVisible = false, friendRequestsLoaded = false;
     int roomsGeneration = 0;
+    int leavesInFlight = 0;   // 응답을 기다리는 나가기 (그동안 목록을 받지 않는다)
     int friendsGeneration = 0;
     struct InviteRec { InviteState state; juce::String inviteId; };
     std::map<juce::String, InviteRec> invites;
@@ -122,6 +126,8 @@ private:
 
     void handleJoin (const juce::String& roomId, Result<JoinResult>, Callback<JoinResult>);
     void answerFriendRequest (const juce::String& requestId, bool accept, Callback<Done>);
+    void leaveStarted (const RoomDetail&);
+    void leaveFinished();
     void stateChanged (StateKey) override;
 };
 
