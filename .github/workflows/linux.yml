@@ -53,7 +53,8 @@ jobs:
       - name: 화면 자가 테스트
         # 실제 창(Xvfb)에 마우스·키를 넣어 합주 화면 흐름을 확인한다 (--uitest, 빌드 0 전용: ui/dev/UiSelfTest).
         # 4 방 나가기 · 5 최소화 · 6 패널 너비 · 7 채팅 입력
-        # 독립 앱 1280×800 과 플러그인 900×600 을 따로 돈다. 실패가 하나라도 있으면 종료 코드가 0 이 아니다
+        # 독립 앱 1280×800 과 플러그인 900×600 을 따로 돈다. 실패가 하나라도 있으면 종료 코드가 0 이 아니다.
+        # --fake-script=0: 가짜 서버의 각본 사용자를 끈다 (친구가 시간에 따라 방을 옮기면 '참여' 버튼이 있을 때도 없을 때도 있다)
         run: |
           APP=build/MEON_artefacts/RelWithDebInfo/Standalone/meon
           status=0
@@ -62,7 +63,7 @@ jobs:
             mkdir -p "$HOME"
             if [ "$mode" = plugin ]; then args="--as-plugin --window=0,0,900,600"; else args="--window=0,0,1280,800"; fi
             code=0
-            timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --uitest=all $args > "uitest-$mode.log" 2>&1 || code=$?
+            timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --fake-script=0 --uitest=all $args > "uitest-$mode.log" 2>&1 || code=$?
             grep "^UITEST" "uitest-$mode.log" || true
             if [ $code -ne 0 ] || ! grep -q "^UITEST DONE .* 0 failed" "uitest-$mode.log"; then
               echo "::error::화면 자가 테스트 실패 ($mode, 종료 코드 $code)"

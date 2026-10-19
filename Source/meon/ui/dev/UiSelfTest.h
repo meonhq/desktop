@@ -2,6 +2,7 @@
 // 실제 창에 마우스·키 이벤트를 넣고(ComponentPeer) 화면·store·엔진 상태를 확인한다. 가짜 서버로 자동 가입한 홈에서 시작한다.
 // 결과는 표준 오류에 "UITEST PASS|FAIL <구역> · <확인>" 한 줄씩, 끝에 "UITEST DONE <통과> passed, <실패> failed".
 // 끝나면 앱을 닫고 실패 수를 종료 코드로 돌려준다 (linux.yml 이 Xvfb 에서 돌린다).
+// --fake-script=0 과 함께 돌린다: 각본 사용자가 움직이면 친구의 '참여' 버튼처럼 시각에 따라 달라지는 것이 있다.
 #pragma once
 
 #include <JuceHeader.h>
