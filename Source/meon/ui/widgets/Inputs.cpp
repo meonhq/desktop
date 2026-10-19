@@ -49,9 +49,29 @@ namespace
 }
 
 //==============================================================================
+/** Shift+Enter 줄바꿈 (TextEditor 는 Shift+Enter 를 받지 않고 부모로 넘긴다). 키 리스너가 TextEditor 보다 먼저 받는다 */
+struct TextInput::Keys : juce::KeyListener
+{
+    explicit Keys (TextInput& o) : owner (o) {}
+    bool keyPressed (const juce::KeyPress& k, juce::Component*) override
+    {
+        const auto m = k.getModifiers();
+        if (owner.shiftEnter && owner.multi && k.getKeyCode() == juce::KeyPress::returnKey
+            && m.isShiftDown() && ! m.isCommandDown() && ! m.isAltDown() && ! m.isCtrlDown())
+        {
+            owner.ed.insertTextAtCaret ("\n");
+            return true;
+        }
+        return false;
+    }
+    TextInput& owner;
+};
+
 TextInput::TextInput (const juce::String& ph, bool multiLine) : placeholder (ph), multi (multiLine)
 {
     addAndMakeVisible (ed);
+    keys = std::make_unique<Keys> (*this);
+    ed.addKeyListener (keys.get());
     ed.setMultiLine (multi, true);
     ed.setReturnKeyStartsNewLine (false);
     ed.setScrollbarsShown (multi);
@@ -70,13 +90,68 @@ TextInput::TextInput (const juce::String& ph, bool multiLine) : placeholder (ph)
     setPlaceholder (ph);
 }
 
+TextInput::~TextInput()
+{
+    ed.removeKeyListener (keys.get());
+}
+
 void TextInput::setFontPx (float px, int w)
 {
     fontPx = px;
     weight = w;
     ed.setFont (meon::Fonts::forInput (weight, fontPx));
     ed.applyFontToAllText (meon::Fonts::forInput (weight, fontPx));
+    applyLineHeight();
     setPlaceholder (placeholder);
+}
+
+void TextInput::setLineHeight (float px)
+{
+    lineHeightPx = px;
+    applyLineHeight();
+}
+
+void TextInput::applyLineHeight()
+{
+    if (lineHeightPx <= 0.0f) return;
+    const float h = ed.getFont().getHeight();
+    ed.setLineSpacing (juce::jmax (1.0f, lineHeightPx / h));
+    topIndent = juce::jmax (0, (int) std::round ((lineHeightPx - h) * 0.5f));
+    ed.setIndents (0, topIndent);
+    repaint();
+}
+
+int TextInput::getContentHeight() const
+{
+    if (ed.getTotalNumChars() == 0) return 0;
+    return juce::jmax (0, ed.getTextHeight() - topIndent);
+}
+
+juce::Viewport* TextInput::innerViewport() const
+{
+    for (auto* c : ed.getChildren())
+        if (auto* vp = dynamic_cast<juce::Viewport*> (c)) return vp;
+    return nullptr;
+}
+
+void TextInput::setChatScrollbar (bool b)
+{
+    chatBar = b;
+    // 스크롤바 칸 10 = 글자와 사이 8 + 막대 4 (오른쪽 끝 4 에만 그린다, LookAndFeel::drawScrollbar "meonChatBar").
+    // TextEditor 는 줄바꿈 폭에서 2 를 더 뺀다: 글자 끝 ~ 막대 = 10 − 4 + 2 = 8
+    ed.setScrollBarThickness (b ? 10 : 8);
+    if (auto* vp = innerViewport()) vp->getVerticalScrollBar().getProperties().set ("meonChatBar", b);
+    updateChatBorder();
+}
+
+void TextInput::updateChatBorder()
+{
+    if (! chatBar) return;
+    // 막대가 없을 때도 오른쪽 8 을 비운다 (디자인 padding-right 8): 테두리 6 + TextEditor 의 2
+    auto* vp = innerViewport();
+    const bool shown = vp != nullptr && vp->isVerticalScrollBarShown();
+    const juce::BorderSize<int> b (0, 0, 0, shown ? 0 : 6);
+    if (ed.getBorder() != b) ed.setBorder (b);
 }
 
 void TextInput::setPlaceholder (const juce::String& p)
@@ -140,8 +215,12 @@ void TextInput::paint (juce::Graphics& g)
         g.setColour (col::inkFaint);
         g.setFont (meon::Fonts::get (weight, fontPx));
         const auto area = ed.getBounds();
-        g.drawText (placeholder, multi ? area.withHeight ((int) (fontPx * 1.5f)) : area,
-                    multi ? juce::Justification::topLeft : juce::Justification::centredLeft, true);
+        if (multi && lineHeightPx > 0.0f)   // 줄 높이를 정한 입력: 첫 줄 글자와 같은 자리
+            g.drawText (placeholder, area.withTrimmedTop (topIndent).withHeight ((int) std::ceil (ed.getFont().getHeight())),
+                        juce::Justification::centredLeft, true);
+        else
+            g.drawText (placeholder, multi ? area.withHeight ((int) (fontPx * 1.5f)) : area,
+                        multi ? juce::Justification::topLeft : juce::Justification::centredLeft, true);
     }
 }
 
@@ -149,6 +228,8 @@ void TextInput::resized()
 {
     if (borderless)
         ed.setBounds (getLocalBounds());
+    else if (multi && lineHeightPx > 0.0f)
+        ed.setBounds (getLocalBounds().reduced (12, 0));
     else if (multi)
         ed.setBounds (getLocalBounds().reduced (12, 8));
     else
@@ -171,6 +252,7 @@ void TextInput::textEditorTextChanged (juce::TextEditor&)
             applying = false;
         }
     }
+    updateChatBorder();
     repaint();   // placeholder
     if (! applying && onChange) onChange();
 }

@@ -51,6 +51,10 @@ public:
     /** 개발용 (화면 자가 테스트): 너비 조절 자리와 그 선 색 */
     juce::Component* devSideResizer() const;
     juce::Colour devSideLineColour() const;
+    /** 개발용: 채팅 목록 마지막 메시지의 줄 수 (여러 줄 표시 확인) */
+    int devLastChatLines() const;
+    /** 개발용 스냅숏: 채팅 입력 칸에 글을 넣고 커서를 끝에 */
+    void devSetChatInput (const juce::String&);
     /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */
     void previewFold (const juce::String& panel, float e);
     /** 개발용: 누른 것처럼 접거나 펼친다 (--screen=jam:chatfill 의 프레임 확인) */
@@ -117,12 +121,16 @@ private:
     struct ChatView;
     std::unique_ptr<ChatView> chatView;
     juce::Viewport chatViewport;
-    TextInput chatInput { TXT ("메시지 입력") };
+    TextInput chatInput { TXT ("메시지 입력"), true };   // 여러 줄 (합주 최종 디자인 7): 1줄 44 ~ 3줄 84, 그다음 칸 안에서 스크롤
     Button chatSend { Button::Kind::link, TXT ("전송") };
     juce::String chatNote;
     struct ChatDecor;
     std::unique_ptr<ChatDecor> chatDecor;   // 목록·입력 사이 구분선, 남은 글자 (채팅 카드 안이라 모달 아래에 그려진다)
     bool chatOpen = true, chatAtBottom = true;
+    int chatLines = 1;                     // 입력 칸에 보이는 줄 (1..3)
+    juce::Rectangle<int> chatCounterArea;  // "962 / 1000" (900 바이트부터, 전송 왼쪽 8)
+    juce::String lastSentChat;             // 늦게 들어온 한글 확정 글자 거르기 (core::chatinput::isLateImeLeftover)
+    juce::int64 lastSentAt = 0;
     void sendChat();
 
     // 친구

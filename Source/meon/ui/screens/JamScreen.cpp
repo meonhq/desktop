@@ -5,6 +5,8 @@
 #include "../Links.h"
 #include "../../MeonSettings.h"
 #include "../../core/model/PanelWidth.h"
+#include "../../core/util/ChatInput.h"
+#include "../../core/util/EmojiCluster.h"
 
 namespace meon::ui
 {
@@ -358,20 +360,67 @@ struct JamScreen::ChatView : juce::Component
         return k >= 0 && k < maxTaggedLinks ? k : -1;
     }
 
-    static juce::TextLayout makeLayout (const juce::String& text, int width, juce::Colour ink, float px, int weight,
+    /** 한 줄보다 긴 단어(공백 없는 글·긴 링크)를 줄 끝에서 끊는다 (디자인 overflow-wrap:anywhere).
+        JUCE 기본 배치(리눅스·윈도우의 내장 글꼴)는 byChar 를 무시하고 단어를 쪼개지 않아 말풍선 밖으로 잘렸다.
+        끊을 자리에 \n 을 넣은 표시용 글과, 원래 글자 위치 → 표시용 위치 (map, 크기 = 글자 수 + 1) 를 돌려준다.
+        cuts: 단어를 나누는 자리 (링크 시작·끝. JUCE 도 색이 바뀌는 곳에서 단어를 나눈다) */
+    static juce::String hardWrap (const juce::String& text, const juce::Font& f, float maxW, std::vector<int>& map,
+                                  const std::vector<int>& cuts = {})
+    {
+        auto isCut = [&cuts] (int k) { return std::find (cuts.begin(), cuts.end(), k) != cuts.end(); };
+        const int n = text.length();
+        map.assign ((size_t) n + 1, 0);
+        juce::String out;
+        float x = 0.0f;
+        const float limit = maxW - 1.0f;   // 글자 폭 합과 JUCE 의 단어 폭 차이 여유
+        auto isBreak = [] (juce::juce_wchar c) { return c == '\n' || c == '\r'; };
+        auto put = [&] (int from, int to)
+        {
+            for (int k = from; k < to; ++k) { map[(size_t) k] = out.length(); out += juce::String::charToString (text[k]); }
+        };
+        int i = 0;
+        while (i < n)
+        {
+            if (isBreak (text[i])) { put (i, i + 1); x = 0.0f; ++i; continue; }
+            const bool ws = juce::CharacterFunctions::isWhitespace (text[i]);
+            int j = i;
+            while (j < n && ! isBreak (text[j]) && juce::CharacterFunctions::isWhitespace (text[j]) == ws && (j == i || ! isCut (j))) ++j;
+            const float w = f.getStringWidthFloat (text.substring (i, j));
+            if (ws || x + w <= limit) { put (i, j); x += w; i = j; continue; }
+            if (w <= limit) { put (i, j); x = w; i = j; continue; }   // 다음 줄에 들어간다 (JUCE 가 옮긴다)
+            // 한 줄보다 길다: 지금 줄을 채우고 넘치는 글자 앞에서 끊는다 (이모지 묶음은 쪼개지 않는다)
+            for (int k = i; k < j;)
+            {
+                const int e = juce::jmax (k + 1, juce::jmin (j, core::emojiClusterEnd (text, k)));
+                const float cw = f.getStringWidthFloat (text.substring (k, e));
+                if (x + cw > limit && x > 0.0f) { out += "\n"; x = 0.0f; }
+                put (k, e);
+                x += cw;
+                k = e;
+            }
+            i = j;
+        }
+        map[(size_t) n] = out.length();
+        return out;
+    }
+
+    static juce::TextLayout makeLayout (const juce::String& rawText, int width, juce::Colour ink, float px, int weight,
                                         const std::vector<juce::Range<int>>& links = {})
     {
         juce::AttributedString a;
         const auto f = font (weight, px);
+        std::vector<int> map, cuts;
+        for (auto r : links) { cuts.push_back (r.getStart()); cuts.push_back (r.getEnd()); }
+        const auto text = hardWrap (rawText, f, (float) width, map, cuts);
         if (links.empty())
             a.append (text, f, ink);
         else
         {
-            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다
+            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다 (링크 위치는 끊은 글 기준으로 옮긴다)
             int pos = 0;
             for (size_t k = 0; k < links.size(); ++k)
             {
-                const auto r = links[k];
+                const juce::Range<int> r (map[(size_t) links[k].getStart()], map[(size_t) links[k].getEnd()]);
                 if (r.getStart() > pos) a.append (text.substring (pos, r.getStart()), f, ink);
                 a.append (text.substring (r.getStart(), r.getEnd()), f, (int) k < maxTaggedLinks ? linkColour ((int) k) : ink);
                 pos = r.getEnd();
@@ -599,15 +648,21 @@ struct JamScreen::ChatDecor : juce::Component
             g.setColour (col::line);
             g.fillRect (vb.getX(), vb.getBottom(), vb.getWidth(), 1);
         }
-        const int left = core::ChatChannel::maxBytes - core::ChatChannel::byteLength (owner.chatInput.getText());
-        if (left < 100 || owner.chatNote.isNotEmpty())
+        // 바이트 수: 900 부터 "962 / 1000" (400 12 #767676, 고정폭), 1000 을 넘으면 #D92D20 (합주 최종 디자인 7. 남은 글자 표시 대신)
+        if (! owner.chatCounterArea.isEmpty())
+        {
+            namespace ci = core::chatinput;
+            const int n = ci::bytes (owner.chatInput.getText());
+            g.setColour (ci::overLimit (n) ? col::danger : col::inkSub);
+            const auto r = owner.chatCounterArea.toFloat();
+            drawTabular (g, font (400, 12.0f), ci::counterText (n), r.getX(), r.getY(), r.getHeight());
+        }
+        if (owner.chatNote.isNotEmpty())
         {
             const auto ib = owner.chatInput.getBounds();
-            const bool note = owner.chatNote.isNotEmpty();
             g.setFont (font (400, 12.0f));
-            g.setColour (note ? col::inkSub : col::inkFaint);
-            g.drawText (note ? owner.chatNote : juce::String (left), ib.getX(), ib.getY() - 18, ib.getWidth(), 14,
-                        note ? juce::Justification::centredLeft : juce::Justification::centredRight, true);
+            g.setColour (col::inkSub);
+            g.drawText (owner.chatNote, ib.getX(), ib.getY() - 18, ib.getWidth(), 14, juce::Justification::centredLeft, true);
         }
     }
 
@@ -930,6 +985,19 @@ struct JamScreen::SideResizer : juce::Component, juce::SettableTooltipClient
 juce::Component* JamScreen::devSideResizer() const { return sideResizer.get(); }
 juce::Colour JamScreen::devSideLineColour() const    { return sideResizer->lineColour(); }
 
+void JamScreen::devSetChatInput (const juce::String& t)
+{
+    chatInput.setText (t, true);
+    chatInput.focus();
+    chatInput.editor().moveCaretToEnd();
+    resized();
+}
+
+int JamScreen::devLastChatLines() const
+{
+    return chatView->items.empty() ? 0 : chatView->items.back().layout.getNumLines();
+}
+
 int JamScreen::sidePanelWidth() const
 {
     return core::panel::shownWidth (plugin, getWidth(), sideSaved);
@@ -1051,9 +1119,23 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     chatCard.addAndMakeVisible (*chatDecor);
     chatInput.setBorderless (true);
     chatInput.setFontPx (14.0f);
-    chatInput.setMaxBytes (core::ChatChannel::maxBytes);
+    chatInput.setLineHeight ((float) core::chatinput::lineH);   // 400 14 / 20
+    chatInput.setShiftEnterNewLine (true);                      // Enter 보냄, Shift+Enter 줄바꿈
+    chatInput.setChatScrollbar (true);
+    // 1000 바이트를 넘게 쓸 수는 있다 (빨간 "1012 / 1000", 보내지 않음). 붙여넣기도 같다
     chatInput.onReturn = [this] { sendChat(); };
-    chatInput.onChange = [this] { chatNote = {}; chatCard.repaint(); resized(); };
+    chatInput.onChange = [this]
+    {
+        // 한글 조합 중 Enter: 입력기에 따라 확정 글자가 보낸 뒤에 들어와 빈 칸에 남는다 → 지운다 (두 번 보내지지 않게)
+        if (core::chatinput::isLateImeLeftover (lastSentChat, chatInput.getText(), juce::Time::currentTimeMillis() - lastSentAt))
+        {
+            lastSentChat = {};
+            chatInput.setText ({});
+        }
+        chatNote = {};
+        chatCard.repaint();
+        resized();
+    };
     chatSend.onPress = [this] { sendChat(); };
 
     // 친구
@@ -1203,11 +1285,16 @@ void JamScreen::fitChatView()
 void JamScreen::sendChat()
 {
     using R = core::ChatChannel::SendResult;
-    const auto text = chatInput.getText();
+    // 앞뒤 공백·빈 줄은 지우고 안쪽 줄바꿈은 둔다. 비었거나 1000 바이트를 넘으면 보내지 않는다 (칸은 그대로)
+    const auto text = core::chatinput::prepare (chatInput.getText());
+    if (! core::chatinput::canSend (text)) return;
     const auto r = jam.chat().sendText (text);
     if (r == R::sent || r == R::failed || r == R::localOnly)   // localOnly: 받을 사람이 없어 내 목록에만
     {
+        lastSentChat = text;
+        lastSentAt = juce::Time::currentTimeMillis();
         chatInput.setText ({});
+        chatLines = 1;   // 보내면 다시 한 줄
         chatNote = {};
         chatAtBottom = true;
     }
@@ -1498,17 +1585,39 @@ void JamScreen::resized()
 
 void JamScreen::layoutChatContent (int cardW, int cardH)
 {
-    auto cb = chatCard.contentBoundsFor (cardW, cardH);
-    auto inputRow = cb.removeFromBottom (44);
-    chatViewport.setBounds (cb.withTrimmedBottom (1));
+    namespace ci = core::chatinput;
+    // 입력이 늘어나면 목록이 줄어든다. 맨 아래를 보고 있었으면 최신 메시지는 그대로 아래에 붙어 있다
+    const bool wasAtBottom = chatViewport.getViewPositionY() + chatViewport.getHeight() >= chatView->getHeight() - 4;
+    const int bytes = ci::bytes (chatInput.getText());
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        auto cb = chatCard.contentBoundsFor (cardW, cardH);
+        auto inputRow = cb.removeFromBottom (ci::boxHeight (chatLines));
+        chatViewport.setBounds (cb.withTrimmedBottom (1));
+        // 줄 (위아래 12, 좌우 18): [입력 (글 + 오른쪽 8)] 8 [962 / 1000] 8 [전송]. 전송·숫자는 마지막 줄에 맞춘다 (아래 정렬)
+        auto ir = inputRow.reduced (metric::padX, ci::padY);
+        const int sw = chatSend.getIdealWidth();
+        chatSend.setBounds (ir.getRight() - sw, ir.getBottom() - ci::lineH, sw, ci::lineH);
+        ir.removeFromRight (sw + 8);
+        chatCounterArea = {};
+        if (ci::showCounter (bytes))
+        {
+            const int cw = (int) std::ceil (tabularWidth (font (400, 12.0f), ci::counterText (bytes)));
+            chatCounterArea = { ir.getRight() - cw, ir.getBottom() - ci::lineH, cw, ci::lineH };
+            ir.removeFromRight (cw + 8);
+        }
+        // 첫 줄 글자를 줄 높이 20 의 가운데에 두려고 입력은 위 여백만큼 위로 (TextInput::setLineHeight)
+        const int top = chatInput.getTopIndent();
+        chatInput.setBounds (ir.getX(), ir.getY() - top, ir.getWidth(), ir.getHeight() + top);
+        const int lines = ci::visibleLines (chatInput.getContentHeight());
+        if (lines == chatLines) break;
+        chatLines = lines;   // 폭은 그대로라 줄 수만 다시 맞춘다
+    }
+    if (wasAtBottom && chatView->getHeight() > chatViewport.getHeight())
+        chatViewport.setViewPosition (0, chatView->getHeight() - chatViewport.getHeight());
     chatDecor->setBounds (0, 0, cardW, cardH);
     chatDecor->toFront (false);
     chatDecor->repaint();
-    auto ir = inputRow.reduced (metric::padX, 12);
-    const int sw = chatSend.getIdealWidth();
-    chatSend.setBounds (ir.removeFromRight (sw));
-    ir.removeFromRight (8);
-    chatInput.setBounds (ir);
 }
 
 void JamScreen::layoutFriendsContent (int cardW, int cardH)

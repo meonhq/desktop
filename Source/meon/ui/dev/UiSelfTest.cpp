@@ -7,6 +7,7 @@
 #include "../../core/model/RoomFilter.h"
 #include "../../core/model/PanelWidth.h"
 #include "../../MeonSettings.h"
+#include "../../core/util/ChatInput.h"
 
 namespace meon::ui
 {
@@ -30,6 +31,7 @@ void UiSelfTest::start()
     if (want ("leave"))    addLeaveTests();
     if (want ("minimize")) addMinimizeTests();
     if (want ("resize"))   addResizeTests();
+    if (want ("chat"))     addChatInputTests();
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
 }
@@ -629,6 +631,129 @@ void UiSelfTest::addResizeTests()
         expect (j->sidePanelWidth() == saved, TXT ("창을 다시 키우면 저장값"));
         j->setSideWidth (def, true);   // 다음 시험을 위해 기본으로
     });
+}
+
+//==============================================================================
+// 7. 채팅 입력 여러 줄
+void UiSelfTest::addChatInputTests()
+{
+    namespace ci = core::chatinput;
+    begin (TXT ("7 채팅 입력"));
+    enterNewRoom();
+    // 입력 줄 높이 = 카드 안쪽 아래 − (목록 아래 + 구분선 1)
+    auto rowH = [this] { auto* j = jam(); return j->chatCard.contentBounds().getBottom() - (j->chatViewport.getBottom() + 1); };
+    auto lastText = [this] { const auto& m = core.jam()->chat().getMessages(); return m.empty() ? juce::String() : m.back().text; };
+    auto msgCount = [this] { return (int) core.jam()->chat().getMessages().size(); };
+    auto bytesOf = [] (int n) { juce::String s; while ((int) s.getNumBytesAsUTF8() + 3 <= n) s << TXT ("가"); while ((int) s.getNumBytesAsUTF8() < n) s << "a"; return s; };
+    auto atBottom = [this] { auto* j = jam(); return j->chatViewport.getViewPositionY() + j->chatViewport.getHeight() >= j->chatViewport.getViewedComponent()->getHeight() - 4; };
+    auto shiftEnter = juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys::shiftModifier, 0);
+
+    add ([this, rowH]
+    {
+        for (int i = 1; i <= 40; ++i) core.jam()->chat().sendText (TXT ("채우기 ") + juce::String (i));   // 목록을 채운다 (맨 아래)
+        expect (rowH() == 44 && jam()->chatLines == 1, TXT ("처음: 한 줄 44 (") + juce::String (rowH()) + ")");
+        click (jam()->chatInput);
+    }, 300);
+    add ([this] { type (TXT ("첫 줄")); });
+    add ([this, shiftEnter] { key (shiftEnter); });
+    add ([this] { type (TXT ("둘째 줄")); }, 300);
+    add ([this, rowH, atBottom]
+    {
+        auto* j = jam();
+        expect (j->chatInput.getText() == TXT ("첫 줄\n둘째 줄"), TXT ("Shift+Enter: 줄바꿈 (보내지 않음)"));
+        expect (j->chatLines == 2 && rowH() == 64, TXT ("두 줄 64 (") + juce::String (rowH()) + ")");
+        expect (j->chatSend.getBottom() == j->chatInput.getBottom() && j->chatSend.getHeight() == 20, TXT ("전송: 마지막 줄에 맞춤 (아래 정렬)"));
+        expect (atBottom(), TXT ("입력이 늘어도 최신 메시지는 아래에"));
+    });
+    add ([this, shiftEnter] { key (shiftEnter); type (TXT ("셋째")); key (shiftEnter); type (TXT ("넷째")); key (shiftEnter); type (TXT ("다섯째")); }, 400);
+    add ([this, rowH, atBottom]
+    {
+        auto* j = jam();
+        expect (j->chatLines == 3 && rowH() == 84, TXT ("세 줄 넘으면 84 에서 멈춤 (") + juce::String (rowH()) + ")");
+        juce::Viewport* vp = nullptr;
+        for (auto* c : j->chatInput.editor().getChildren()) if (auto* v = dynamic_cast<juce::Viewport*> (c)) vp = v;
+        expect (vp != nullptr && vp->isVerticalScrollBarShown() && vp->getViewPositionY() > 0, TXT ("칸 안에서 스크롤 (마지막 줄이 보임)"));
+        if (vp != nullptr)
+        {
+            auto& bar = vp->getVerticalScrollBar();
+            expect ((bool) bar.getProperties()["meonChatBar"] && bar.getWidth() == 10
+                    && j->chatInput.getRight() == j->chatSend.getX() - 8, TXT ("스크롤바: 4px 막대 + 글자와 8 (칸 10), 전송과 8"));
+        }
+        expect (atBottom(), TXT ("세 줄이어도 최신 메시지는 아래에"));
+        key (juce::KeyPress (juce::KeyPress::returnKey));
+    }, 300);
+    add ([this, rowH, lastText]
+    {
+        auto* j = jam();
+        expect (lastText() == TXT ("첫 줄\n둘째 줄\n셋째\n넷째\n다섯째"), TXT ("Enter: 보냄 (안쪽 줄바꿈 그대로)"));
+        expect (j->chatInput.getText().isEmpty() && j->chatLines == 1 && rowH() == 44, TXT ("보내면 다시 한 줄 44"));
+        expect (j->devLastChatLines() == 5, TXT ("여러 줄 메시지가 줄바꿈대로 보임 (") + juce::String (j->devLastChatLines()) + ")");
+        j->chatInput.setText (TXT ("  \n  안녕  \n\n"), true);
+        key (juce::KeyPress (juce::KeyPress::returnKey));
+    }, 300);
+    add ([this, lastText]
+    {
+        expect (lastText() == TXT ("안녕"), TXT ("앞뒤 공백·빈 줄 지움"));
+        jam()->chatInput.setText (TXT ("\n\n위\n\n아래\n\n"), true);
+        key (juce::KeyPress (juce::KeyPress::returnKey));
+    }, 300);
+    add ([this, lastText]
+    {
+        expect (lastText() == TXT ("위\n\n아래"), TXT ("안쪽 빈 줄은 그대로"));
+        jam()->chatInput.editor().insertTextAtCaret (TXT ("\r\n  붙여넣은\r\n글  \r\n"));   // 붙여넣기 (CRLF)
+        key (juce::KeyPress (juce::KeyPress::returnKey));
+    }, 300);
+    add ([this, lastText, bytesOf]
+    {
+        expect (lastText() == TXT ("붙여넣은\n글"), TXT ("붙여넣은 글도 같은 규칙 (CRLF → 줄바꿈)"));
+        jam()->chatInput.setText (bytesOf (899), true);
+    }, 300);
+    add ([this, bytesOf]
+    {
+        expect (jam()->chatCounterArea.isEmpty(), TXT ("899 바이트: 숫자 없음"));
+        jam()->chatInput.setText (bytesOf (900), true);
+    }, 300);
+    add ([this, bytesOf]
+    {
+        auto* j = jam();
+        expect (! j->chatCounterArea.isEmpty() && j->chatCounterArea.getRight() == j->chatSend.getX() - 8
+                && j->chatCounterArea.getBottom() == j->chatSend.getBottom(), TXT ("900 바이트: \"900 / 1000\" (전송 왼쪽 8, 마지막 줄)"));
+        j->chatInput.setText (bytesOf (1000), true);
+        key (juce::KeyPress (juce::KeyPress::returnKey));
+    }, 300);
+    add ([this, bytesOf, lastText]
+    {
+        expect (lastText().getNumBytesAsUTF8() == 1000 && jam()->chatInput.getText().isEmpty(), TXT ("1000 바이트: 보냄"));
+        jam()->chatInput.setText (bytesOf (1001), true);
+    }, 300);
+    auto countBefore = std::make_shared<int> (0);
+    add ([this, msgCount, countBefore]
+    {
+        expect (ci::overLimit (ci::bytes (jam()->chatInput.getText())) && ! jam()->chatCounterArea.isEmpty(), TXT ("1001 바이트: 빨간 숫자"));
+        *countBefore = msgCount();
+        key (juce::KeyPress (juce::KeyPress::returnKey));
+        click (jam()->chatSend);
+    }, 300);
+    add ([this, msgCount, countBefore]
+    {
+        expect (msgCount() == *countBefore && jam()->chatInput.getText().getNumBytesAsUTF8() == 1001, TXT ("1000 바이트를 넘으면 보내지 않음 (글은 그대로)"));
+        jam()->chatInput.setText ({}, true);
+        // 받은 여러 줄 메시지·긴 단어 (받는 쪽 표시)
+        auto& chat = core.jam()->chat();
+        chat.received ({ chat.group(), "u_left_preview", "id:ml1", TXT ("받은 첫 줄\n받은 둘째 줄\n받은 셋째 줄") });
+    }, 300);
+    add ([this]
+    {
+        expect (jam()->devLastChatLines() == 3, TXT ("받은 여러 줄 메시지도 줄바꿈대로"));
+        core.jam()->chat().sendText (juce::String::repeatedString ("A", 200));
+    }, 300);
+    add ([this]
+    {
+        expect (jam()->devLastChatLines() > 1, TXT ("긴 단어는 줄 끝에서 끊김 (") + juce::String (jam()->devLastChatLines()) + TXT ("줄)"));
+        auto& chat = core.jam()->chat();
+        chat.received ({ chat.group(), "u_left_preview", "id:ml2", TXT ("받은긴단어") + juce::String::repeatedString ("B", 200) });
+    }, 300);
+    add ([this] { expect (jam()->devLastChatLines() > 1, TXT ("받은 긴 단어도 끊김")); });
 }
 
 } // namespace meon::ui

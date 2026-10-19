@@ -1,6 +1,8 @@
-// 합주 화면 배치 규칙 (합주 최종 디자인): 오른쪽 패널 너비 범위·저장 (6)
+// 합주 화면 배치 규칙 (합주 최종 디자인): 오른쪽 패널 너비 범위·저장 (6), 채팅 입력 칸 (7)
 #include <JuceHeader.h>
 #include "../core/model/PanelWidth.h"
+#include "../core/util/ChatInput.h"
+#include "../core/jam/ChatChannel.h"
 
 namespace meon::core
 {
@@ -102,6 +104,60 @@ public:
             expect (s.slider == 250 && s.meter == 150);
             s = panel::shrink (166, std::numeric_limits<int>::max());
             expect (s.slider == 60 && s.meter == 106);
+        }
+
+        auto u8 = [] (const char* t) { return juce::String (juce::CharPointer_UTF8 (t)); };
+        auto bytesOf = [&] (int n) { juce::String s; while ((int) s.getNumBytesAsUTF8() + 3 <= n) s << u8 ("가"); while ((int) s.getNumBytesAsUTF8() < n) s << "a"; return s; };
+
+        beginTest ("chat input: trim ends and blank lines, keep inner newlines, CRLF from paste");
+        {
+            expectEquals (chatinput::prepare (u8 ("  안녕  ")), u8 ("안녕"));
+            expectEquals (chatinput::prepare (u8 ("\n\n  첫 줄\n둘째 줄\n\n\n")), u8 ("첫 줄\n둘째 줄"));
+            expectEquals (chatinput::prepare (u8 ("위\n\n아래")), u8 ("위\n\n아래"));   // 안쪽 빈 줄은 그대로
+            expectEquals (chatinput::prepare (u8 ("\r\n붙여\r\n넣기\r")), u8 ("붙여\n넣기"));
+            expectEquals (chatinput::prepare (" \t\n "), juce::String());
+            expect (! chatinput::canSend (" \n\n "));
+            expect (chatinput::canSend (u8 ("가")));
+        }
+
+        beginTest ("chat input: 900 / 1000 byte boundaries (same limit as ChatChannel)");
+        {
+            expectEquals (chatinput::limit, ChatChannel::maxBytes);
+            expect (! chatinput::showCounter (chatinput::bytes (bytesOf (899))));
+            expect (chatinput::showCounter (chatinput::bytes (bytesOf (900))));
+            expectEquals (chatinput::counterText (962), juce::String ("962 / 1000"));
+            expect (! chatinput::overLimit (1000) && chatinput::canSend (bytesOf (1000)));
+            expect (chatinput::overLimit (1001) && ! chatinput::canSend (bytesOf (1001)));
+            // 앞뒤 공백은 지운 뒤에 센다 (보낼 수 있는지)
+            expect (chatinput::canSend (bytesOf (1000) + "   \n"));
+            expectEquals (chatinput::bytes (u8 ("한")), 3);
+        }
+
+        beginTest ("chat input: height 44 (1 line) .. 84 (3 lines), then scrolls; Enter / Shift+Enter");
+        {
+            expectEquals (chatinput::boxHeight (1), 44);
+            expectEquals (chatinput::boxHeight (2), 64);
+            expectEquals (chatinput::boxHeight (3), 84);
+            expectEquals (chatinput::boxHeight (7), 84);
+            expectEquals (chatinput::visibleLines (0), 1);    // 빈 칸
+            expectEquals (chatinput::visibleLines (20), 1);
+            expectEquals (chatinput::visibleLines (40), 2);
+            expectEquals (chatinput::visibleLines (60), 3);
+            expectEquals (chatinput::visibleLines (200), 3);
+            expect (chatinput::onEnter (false) == chatinput::Enter::send);
+            expect (chatinput::onEnter (true) == chatinput::Enter::newline);
+        }
+
+        beginTest ("chat input: Korean IME late commit after Enter is dropped (not sent twice), normal typing is not");
+        {
+            const auto sent = u8 ("안녕하세요");
+            expect (chatinput::isLateImeLeftover (sent, u8 ("요"), 20));       // 확정 글자가 보낸 뒤 늦게 들어옴
+            expect (chatinput::isLateImeLeftover (sent, u8 ("세요"), 120));
+            expect (! chatinput::isLateImeLeftover (sent, u8 ("요"), 800));     // 시간이 지난 뒤 새로 쓴 글
+            expect (! chatinput::isLateImeLeftover (sent, u8 ("네"), 20));      // 보낸 글의 끝이 아니다
+            expect (! chatinput::isLateImeLeftover (sent, u8 ("하세요"), 20));  // 3 글자 이상은 새로 쓴 것으로 본다
+            expect (! chatinput::isLateImeLeftover (sent, {}, 20));
+            expect (! chatinput::isLateImeLeftover ({}, u8 ("요"), 20));
         }
     }
 };

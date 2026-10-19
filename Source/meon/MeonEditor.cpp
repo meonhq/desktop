@@ -575,6 +575,29 @@ void MeonEditor::applyHomePreview()
                 });
                 return;
             }
+            if (safe != nullptr && p.startsWith ("jam:input") && safe->appRoot != nullptr)
+            {
+                // 채팅 입력 (합주 최종 디자인 7). jam:input — 여러 줄 메시지(내 것·받은 것·긴 단어) + 입력 칸 2줄,
+                // jam:input=scroll — 5줄 (3줄 넘으면 칸 안에서 스크롤), jam:input=962 / jam:input=over — 바이트 표시 (1012 는 빨간색)
+                juce::Timer::callAfterDelay (500, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    auto* screen = safe->appRoot->getJamScreen();
+                    auto* jam = safe->core.jam();
+                    if (screen == nullptr || jam == nullptr) return;
+                    auto& chat = jam->chat();
+                    chat.received ({ chat.group(), "u_left_preview", "id:in1", TXT ("받은 여러 줄 메시지예요\n둘째 줄\n\n한 줄 띄고 넷째 줄") });
+                    chat.sendText (TXT ("내 여러 줄 메시지\n두 번째 줄이에요"));
+                    chat.sendText (TXT ("긴단어도줄끝에서끊겨요ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"));
+                    const auto what = p.fromFirstOccurrenceOf ("=", false, false);
+                    juce::String text = TXT ("입력 칸 첫 줄\n둘째 줄");
+                    if (what == "scroll") text = TXT ("한 줄\n두 줄\n세 줄\n네 줄 (여기부터 스크롤)\n다섯 줄");
+                    auto bytesOf = [] (int n) { juce::String s; while ((int) s.getNumBytesAsUTF8() + 3 <= n) s << TXT ("가"); while ((int) s.getNumBytesAsUTF8() < n) s << "a"; return s; };
+                    if (what == "962") text = bytesOf (962);
+                    if (what == "over") text = bytesOf (1012);
+                    screen->devSetChatInput (text);
+                });
+            }
             if (safe != nullptr && p == "jam:wide" && safe->appRoot != nullptr)   // 오른쪽 패널을 가장 넓게 (1280 → 640, 900 → 406)
                 juce::Timer::callAfterDelay (300, [safe]
                 {
