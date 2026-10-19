@@ -31,6 +31,8 @@ public:
     void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 아이콘을 흐린 글자색(#AAAAAA)으로, 옆 이름과 같게
     void setInk (juce::Colour c) { ink = c; repaint(); } // 아이콘 색 = 주변 글자색 (기본 #1A1A1A)
     void setStatus (Status s) { status = s; repaint(); }
+    /** 프로필 창: 상태 점 12×12 (아바타 오른쪽 아래에 붙임) */
+    void setLargeStatusDot (bool b) { largeDot = b; repaint(); }
     void setClickable (bool c) { setMouseCursor (c ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor); }
     std::function<void()> onClick;
     void paint (juce::Graphics&) override;
@@ -52,6 +54,7 @@ private:
     bool dimmed = false;
     juce::Colour ink { col::ink };
     Status status = Status::none;
+    bool largeDot = false;
 };
 
 /** "비공개" 같은 작은 태그 (500 11px #767676, 여백 2·4, 연한 회색 면 badgeBg, 테두리 없음, 모서리 3) */

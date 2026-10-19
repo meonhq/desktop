@@ -341,6 +341,7 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
     : Modal (TXT ("프로필"), 340), core (c), user (u), inJam (jam)
 {
     avatar.setPart (u.part.value_or ("other"));
+    avatar.setLargeStatusDot (true);
     for (auto* comp : std::initializer_list<juce::Component*> { &avatar, &friendTag, &remove, &block, &unblock, &footer })
         body.addChildComponent (comp);
     avatar.setVisible (true);

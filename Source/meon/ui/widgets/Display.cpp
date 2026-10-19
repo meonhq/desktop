@@ -31,8 +31,9 @@ juce::Colour Avatar::statusColour (Status s)
 {
     switch (s)
     {
-        case Status::online:  return col::accent;
-        case Status::inRoom:  return col::ink;
+        // 온라인과 합주 중은 같은 초록, 구분은 옆 상태 글자로 한다 (합주 최종 디자인)
+        case Status::online:  return col::live;
+        case Status::inRoom:  return col::live;
         case Status::offline: return col::statusOff;
         case Status::none:    break;
     }
@@ -46,8 +47,9 @@ void Avatar::paint (juce::Graphics& g)
     paintCircle (g, r, part, iconPx, dimmed ? col::inkFaint : ink, false);
     if (status != Status::none)
     {
-        // right:-1 bottom:-1, 9×9, 흰 테두리 2px
-        juce::Rectangle<float> dot (r.getRight() + 1.0f - 9.0f, r.getBottom() + 1.0f - 9.0f, 9.0f, 9.0f);
+        // 기본: right:-1 bottom:-1, 9×9, 흰 테두리 2px. 프로필 창: right:0 bottom:0, 12×12 (setLargeStatusDot)
+        const float ds = largeDot ? 12.0f : 9.0f, out = largeDot ? 0.0f : 1.0f;
+        juce::Rectangle<float> dot (r.getRight() + out - ds, r.getBottom() + out - ds, ds, ds);
         g.setColour (statusColour (status));
         g.fillEllipse (dot);
         g.setColour (col::white);
