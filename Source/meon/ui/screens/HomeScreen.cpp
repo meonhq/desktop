@@ -337,7 +337,8 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     bell.setTooltip (TXT ("알림"));
     bell.onClick = [this] { toggleNotifications(); };
     addAndMakeVisible (settings);
-    settings.onPress = [this] { if (onOpenSettings) onOpenSettings(); };
+    settingsTip = std::make_unique<TipOnHover> (tip, *this, settings, TXT ("설정"), Tip::Place::belowCentre);
+    settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
 
     addChildComponent (later);
     addChildComponent (updateNow);
@@ -838,8 +839,7 @@ void HomeScreen::resized()
     // 헤더: 오른쪽에 설정, 알림
     {
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
-        const int sw = settings.getIdealWidth();
-        settings.setBounds (h.removeFromRight (sw).withSizeKeepingCentre (sw, metric::buttonH));
+        settings.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         h.removeFromRight (metric::gap);
         bell.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
     }

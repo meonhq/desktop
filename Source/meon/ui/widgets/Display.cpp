@@ -268,6 +268,55 @@ bool Modal::keyPressed (const juce::KeyPress& k)
 }
 
 //==============================================================================
+//==============================================================================
+Tip::Tip() { setInterceptsMouseClicks (false, false); setAlwaysOnTop (true); }
+
+int Tip::widthFor (const juce::String& t) { return (int) std::ceil (textWidth (font (500, 12.0f), t)) + 14; }
+
+void Tip::show (juce::Component& host, juce::Component& t, const juce::String& s, Place place)
+{
+    text = s;
+    target = &t;
+    if (getParentComponent() != &host) host.addChildComponent (this);
+    const auto b = host.getLocalArea (t.getParentComponent(), t.getBounds());
+    const int w = widthFor (text);
+    int x = place == Place::belowCentre ? b.getCentreX() - w / 2 : b.getRight() - w;
+    x = juce::jlimit (0, juce::jmax (0, host.getWidth() - w), x);
+    const int y = place == Place::aboveRight ? b.getY() - 6 - height : b.getBottom() + 6;
+    setBounds (x, y, w, height);
+    setVisible (true);
+    toFront (false);
+    repaint();
+}
+
+void Tip::hide()
+{
+    target = nullptr;
+    setVisible (false);
+}
+
+void Tip::paint (juce::Graphics& g)
+{
+    g.setColour (col::ink);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    g.setColour (col::white);
+    g.setFont (font (500, 12.0f));
+    g.drawText (text, getLocalBounds(), juce::Justification::centred, false);
+}
+
+TipOnHover::TipOnHover (Tip& t, juce::Component& h, juce::Component& c, const juce::String& s, Tip::Place p)
+    : tip (t), host (h), target (c), text (s), place (p)
+{
+    target.addMouseListener (this, false);
+}
+
+TipOnHover::~TipOnHover() { target.removeMouseListener (this); }
+
+void TipOnHover::mouseEnter (const juce::MouseEvent&) { if (target.isShowing()) tip.show (host, target, text, place); }
+void TipOnHover::mouseExit (const juce::MouseEvent&)  { if (tip.getTarget() == &target) tip.hide(); }
+void TipOnHover::mouseDown (const juce::MouseEvent&)  { if (tip.getTarget() == &target) tip.hide(); }
+
+//==============================================================================
 Popover::Popover (const juce::String& t, int w)
     : title (t), width (w), closeButton ((int) icons::Id::close12, IconButton::Style::bare19, 10.0f)
 {

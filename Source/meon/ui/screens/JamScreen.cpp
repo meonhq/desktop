@@ -876,16 +876,23 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     codeBox = std::make_unique<CodeBox>();
     addChildComponent (*codeBox);
     codeBox->onWidthChange = [this] { resized(); };
+    addAndMakeVisible (bell);
     addAndMakeVisible (settings);
+    addAndMakeVisible (lobby);
     addAndMakeVisible (leave);
     addChildComponent (gear);
     addChildComponent (requests);
     gear.setTooltip (TXT ("방 설정"));
     requests.setTooltip (TXT ("입장 요청"));
+    bell.setTooltip (TXT ("알림"));
+    settingsTip = std::make_unique<TipOnHover> (tip, *this, settings, TXT ("설정"), Tip::Place::belowCentre);
+    lobbyTip = std::make_unique<TipOnHover> (tip, *this, lobby, TXT ("로비 보기"), Tip::Place::belowCentre);
     gear.setInk (col::inkFaint, col::ink);
     gear.onClick = [this] { showModal (std::make_unique<RoomSettingsModal> (core)); };
     requests.onClick = [this] { toggleRequests(); };
-    settings.onPress = [this] { if (onOpenSettings) onOpenSettings(); };
+    bell.onClick = [this] { toggleNotifications(); };
+    settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
+    lobby.onClick = [this] { tip.hide(); closePopover(); if (onMinimize) onMinimize(); };
     leave.onPress = [this]
     {
         juce::Component::SafePointer<JamScreen> safe (this);
@@ -992,9 +999,10 @@ void JamScreen::refreshHeader()
     if (! room) return;
     const bool host = core.store().state().amHost();
     gear.setVisible (host);
-    requests.setVisible (host && room->isApproval());
+    requests.setVisible (host);   // 방장이면 요청이 없어도 항상 (없으면 점 없음, 열면 "새 입장 요청이 없어요")
     requests.setDot (! core.store().state().joinRequests.empty());
-    if (! requests.isVisible() && popover != nullptr) { popover.reset(); requestList.reset(); }
+    bell.setDot (core.store().state().hasUnreadNotifications || ! core.store().state().friendRequests.empty());   // 홈과 같은 규칙
+    if (! requests.isVisible() && requestList != nullptr) closePopover();
     roomTitle.setText (room->title);
     privateTag->setVisible (! room->isPublic());
     codeBox->setVisible (! room->isPublic() && room->inviteCode.has_value());
@@ -1112,6 +1120,7 @@ void JamScreen::stateChanged (core::StateKey k)
 {
     using K = core::StateKey;
     if (k == K::currentRoom || k == K::joinRequests || k == K::me) { refreshHeader(); jamStatsChanged(); }
+    else if (k == K::friendRequests || k == K::notifications) refreshHeader();
     else if (k == K::friends) rebuildFriends();
     else if (k == K::link) { resized(); repaint(); }
 }
@@ -1148,10 +1157,14 @@ void JamScreen::resized()
     {
         const float logoW = meon::logoWidth (metric::logoDrawH);
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
-        const int lw = leave.getIdealWidth(), sw = settings.getIdealWidth();
+        // 오른쪽부터: 방 나가기 · 로비 · 설정 · 알림 · 입장 요청(방장) · 입장 코드(비공개), 간격 9. 버튼은 줄지 않고 방 이름이 먼저 줄어든다
+        const int lw = leave.getIdealWidth();
         leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));
-        h.removeFromRight (metric::gap);
-        settings.setBounds (h.removeFromRight (sw).withSizeKeepingCentre (sw, metric::buttonH));
+        for (auto* b : { &lobby, &settings, &bell })
+        {
+            h.removeFromRight (metric::gap);
+            b->setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
+        }
         if (requests.isVisible())
         {
             h.removeFromRight (metric::gap);
@@ -1369,6 +1382,8 @@ void JamScreen::resized()
     if (modal != nullptr) modal->setBounds (getLocalBounds());
     if (popover != nullptr && requestList != nullptr)
         popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + requestList->getPreferredHeight());
+    if (popover != nullptr && notifications != nullptr)
+        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + notifications->getPreferredHeight());
     // 움직이는 동안은 화면 전체를 다시 그리지 않는다 (옮겨진 카드 자리만 JUCE 가 다시 그린다)
     if (! (vMoving || hMoving)) repaint();
 }
@@ -1442,8 +1457,7 @@ void JamScreen::previewFold (const juce::String& panel, float e)
 
 void JamScreen::showModal (std::unique_ptr<Modal> m)
 {
-    popover.reset();
-    requestList.reset();
+    closePopover();
     modal = std::move (m);
     juce::Component::SafePointer<JamScreen> safe (this);
     modal->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
@@ -1454,14 +1468,16 @@ void JamScreen::showModal (std::unique_ptr<Modal> m)
 
 void JamScreen::toggleRequests()
 {
-    if (popover != nullptr) { popover.reset(); requestList.reset(); return; }
+    const bool wasOpen = requestList != nullptr;
+    closePopover();   // 알림 목록이 열려 있으면 닫고 연다
+    if (wasOpen) return;
     requestList = std::make_unique<JoinRequestList> (core);
     popover = std::make_unique<Popover> (TXT ("입장 요청"));
     juce::Component::SafePointer<JamScreen> safe (this);
-    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->popover.reset(); safe->requestList.reset(); } }); };
+    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closePopover(); }); };
     requestList->onSizeChanged = [this]
     {
-        if (popover == nullptr) return;
+        if (popover == nullptr || requestList == nullptr) return;
         const auto n = core.store().state().joinRequests.size();
         popover->setCount (n > 0 ? juce::String ((int) n) : juce::String());
         popover->setContent (requestList.get(), requestList->getPreferredHeight());
@@ -1513,8 +1529,43 @@ void JamScreen::openManage (const core::JamSession::Member& m)
 void JamScreen::closeOverlays()
 {
     modal.reset();
-    popover.reset();
+    closePopover();
+}
+
+void JamScreen::closePopover()
+{
+    popover.reset();   // 내용(목록)을 가리키므로 먼저
     requestList.reset();
+    notifications.reset();
+}
+
+void JamScreen::toggleNotifications()
+{
+    // 입장 요청 목록과 동시에 열리지 않는다 (하나를 열면 다른 하나는 닫힘)
+    const bool wasOpen = notifications != nullptr;
+    closePopover();
+    if (wasOpen) return;
+    core.home().markNotificationsRead();
+    notifications = std::make_unique<NotificationList> (core);
+    popover = std::make_unique<Popover> (TXT ("알림"));
+    juce::Component::SafePointer<JamScreen> safe (this);
+    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closePopover(); }); };
+    notifications->onSizeChanged = [this]
+    {
+        if (popover == nullptr || notifications == nullptr) return;
+        popover->setContent (notifications.get(), notifications->getPreferredHeight());
+        resized();
+    };
+    notifications->onOpenProfile = [this] (const core::UserPublic& u)
+    {
+        juce::Component::SafePointer<JamScreen> s2 (this);
+        auto user = u;
+        juce::MessageManager::callAsync ([s2, user] { if (s2 != nullptr) s2->showProfile (user); });
+    };
+    popover->setContent (notifications.get(), notifications->getPreferredHeight());
+    addAndMakeVisible (*popover);
+    resized();
+    popover->toFront (false);
 }
 
 bool JamScreen::handleShortcut (const juce::KeyPress& k)

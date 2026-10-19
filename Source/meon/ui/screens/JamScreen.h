@@ -15,6 +15,7 @@
 #include "../theme/Icons.h"
 #include "../../core/MeonCore.h"
 #include "../overlays/JamOverlays.h"
+#include "../overlays/HomeOverlays.h"
 
 namespace meon::ui
 {
@@ -30,6 +31,8 @@ public:
     ~JamScreen() override;
 
     std::function<void()> onOpenSettings;
+    /** 로비 보기 (방 최소화): 방에 그대로 있으면서 홈을 보여 준다 (AppRoot) */
+    std::function<void()> onMinimize;
     /** 프로필 창에서 다른 방에 들어가거나 요청하다 실패 (입장 실패 상자, AppRoot) */
     std::function<void (const core::ApiError&)> onJoinFailure;
 
@@ -60,16 +63,24 @@ private:
     std::unique_ptr<Tag> privateTag;
     struct CodeBox;
     std::unique_ptr<CodeBox> codeBox;
-    Button settings { Button::Kind::quiet, TXT ("설정") }, leave { Button::Kind::secondary, TXT ("방 나가기") };
+    Button leave { Button::Kind::secondary, TXT ("방 나가기") };
     IconButton gear { (int) icons::Id::gear, IconButton::Style::plain24, 14.0f };              // 방장: 방 설정
-    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장 + 승인 방: 입장 요청
+    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장: 입장 요청 (요청이 없어도 보임)
+    IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };           // 알림 (받은 친구 요청, 홈과 같은 목록)
+    IconButton settings { (int) icons::Id::gearHeader, IconButton::Style::bordered32, 16.0f }; // 설정
+    IconButton lobby { (int) icons::Id::lobby, IconButton::Style::bordered32, 16.0f };         // 로비 보기 (방 최소화)
+    Tip tip;
+    std::unique_ptr<TipOnHover> settingsTip, lobbyTip;
 
     // 겹침 (방 설정·멤버 관리·프로필, 입장 요청 팝오버)
     std::unique_ptr<Modal> modal;
     std::unique_ptr<Popover> popover;
     std::unique_ptr<JoinRequestList> requestList;
+    std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
+    void closePopover();
     void toggleRequests();
+    void toggleNotifications();
     void openProfile (const juce::String& userId);
     void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);

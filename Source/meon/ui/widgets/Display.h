@@ -136,6 +136,41 @@ private:
     juce::BorderSize<int> insets;
 };
 
+/** 버튼 툴팁 (합주 최종 디자인): 면 #1A1A1A, 글자 500 12px 흰색, 안쪽 4·7, 모서리 4. 마우스를 받지 않는다.
+    host(그릴 부모)의 자식이고, target 의 아래(또는 위) 6 에 가운데 또는 오른쪽 끝을 맞춘다 */
+class Tip : public juce::Component
+{
+public:
+    enum class Place { belowCentre, belowRight, aboveRight };
+    Tip();
+    /** target 은 host 의 자손이어야 한다 */
+    void show (juce::Component& host, juce::Component& target, const juce::String& text, Place);
+    void hide();
+    juce::Component* getTarget() const { return target.getComponent(); }
+    void paint (juce::Graphics&) override;
+    static int widthFor (const juce::String& text);
+    static constexpr int height = 20;
+private:
+    juce::String text;
+    juce::Component::SafePointer<juce::Component> target;
+};
+
+/** target 에 마우스를 올리면 tip 을 띄우고 내리거나 누르면 감춘다 */
+struct TipOnHover : private juce::MouseListener
+{
+    TipOnHover (Tip& t, juce::Component& host, juce::Component& target, const juce::String& text, Tip::Place);
+    ~TipOnHover() override;
+private:
+    Tip& tip;
+    juce::Component& host;
+    juce::Component& target;
+    juce::String text;
+    Tip::Place place;
+    void mouseEnter (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+};
+
 /** 팝오버 (테두리 #D5D5D5, 모서리 6, 흰 면, 폭 340). 머리말: 제목 600 15px + 숫자 500 13px #767676 + 닫기 */
 class Popover : public juce::Component
 {

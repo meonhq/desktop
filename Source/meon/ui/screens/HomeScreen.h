@@ -62,7 +62,9 @@ private:
 
     // 헤더
     IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };
-    Button settings { Button::Kind::quiet, TXT ("설정") };
+    IconButton settings { (int) icons::Id::gearHeader, IconButton::Style::bordered32, 16.0f };   // 설정 (툴팁 "설정")
+    Tip tip;
+    std::unique_ptr<TipOnHover> settingsTip;
 
     // 배너
     bool updateDismissed = false;
