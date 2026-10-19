@@ -300,9 +300,9 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool)
         icons::draw (g, (icons::Id) icon, r.withSizeKeepingCentre (iconPx, iconPx), highlighted ? inkHover : ink);
         if (dot)
         {
-            // top:6 right:7, 7×7, 1.5px 흰 테두리, 검정 점
-            juce::Rectangle<float> d (r.getRight() - 7.0f - 7.0f, r.getY() + 6.0f, 7.0f, 7.0f);
-            g.setColour (col::ink);
+            // top:6 right:7, 8×8, 1.5px 흰 테두리, 알림 색 (합주 최종 디자인)
+            juce::Rectangle<float> d (r.getRight() - 7.0f - 8.0f, r.getY() + 6.0f, 8.0f, 8.0f);
+            g.setColour (col::notify);
             g.fillEllipse (d);
             g.setColour (col::white);
             g.drawEllipse (d.reduced (0.75f), 1.5f);
