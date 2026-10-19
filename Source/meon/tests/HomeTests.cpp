@@ -4,6 +4,7 @@
 #include "../core/model/RoomFilter.h"
 #include "../core/auth/AuthController.h"
 #include "../core/api/fake/FakeMeonServer.h"
+#include "../core/api/ApiJson.h"
 #include "MeonFixtures.h"
 
 namespace meon::core
@@ -266,6 +267,188 @@ public:
             expect (r.store.state().hasUnreadNotifications);
             r.home.markNotificationsRead();
             expect (! r.store.state().hasUnreadNotifications);
+        }
+
+        beginTest ("friend request accept/decline from a list row that the store change deletes: the right id reaches the server (no use-after-free)");
+        {
+            // 알림 목록(NotificationList) 흉내: 받은 요청이 바뀌면 줄을 모두 지우고 다시 만든다. 줄이 자기 멤버의 id 로
+            // 수락·거절을 부른다 (예전에는 참조로 넘겨, 지워진 줄의 id 를 서버로 보냈다)
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            struct Row { FriendRequest request; };
+            struct List : AppStore::Listener
+            {
+                explicit List (AppStore& s) : store (s) { store.addListener (this); rebuild(); }
+                ~List() override { store.removeListener (this); }
+                void rebuild()
+                {
+                    rows.clear();
+                    for (auto& fr : store.state().friendRequests) rows.push_back (std::make_unique<Row> (Row { fr }));
+                }
+                void stateChanged (StateKey k) override { if (k == StateKey::friendRequests) rebuild(); }
+                AppStore& store;
+                std::vector<std::unique_ptr<Row>> rows;
+            } list (r.store);
+            juce::StringArray paths;
+            r.server.onRequestForTest = [&] (const HttpRequest& q) { if (q.path.startsWith ("/friends/requests/")) paths.add (q.method + " " + q.path); };
+            expectEquals ((int) list.rows.size(), 2);
+            const auto firstId = list.rows[0]->request.id, secondId = list.rows[1]->request.id;
+            const auto friendsBefore = (int) r.store.state().friends.size();
+
+            r.home.acceptFriendRequest (list.rows[0]->request.id);   // 줄이 지워지는 중에 이 id 를 읽는다
+            expectEquals (paths.size(), 1);
+            expectEquals (paths[0], "POST /friends/requests/" + firstId + "/accept");
+            r.wait();
+            expectEquals ((int) r.store.state().friends.size(), friendsBefore + 1);
+
+            expectEquals ((int) list.rows.size(), 1);
+            r.home.declineFriendRequest (list.rows[0]->request.id);
+            expectEquals (paths.size(), 2);
+            expectEquals (paths[1], "POST /friends/requests/" + secondId + "/decline");
+            r.wait();
+            expect (r.store.state().friendRequests.empty());
+            r.server.onRequestForTest = nullptr;
+        }
+
+        beginTest ("friend request accept/decline failure: the request comes back in place and the screen is told; not_found (handled elsewhere) is not a failure");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            juce::Array<ErrorCode> failed;
+            r.home.onFriendRequestFailed = [&] (ErrorCode c) { failed.add (c); };
+            auto ids = [&] { juce::StringArray a; for (auto& f : r.store.state().friendRequests) a.add (f.id); return a; };
+            const auto before = ids();
+            expectEquals (before.size(), 2);
+
+            // 네트워크 오류로 수락 실패: 바로 빠졌다가 같은 자리(두 번째)로 돌아온다
+            r.server.replyForTest = [] (const HttpRequest& q) -> std::optional<HttpResponse>
+            {
+                if (q.path.startsWith ("/friends/requests/")) return HttpResponse {};
+                return std::nullopt;
+            };
+            r.home.acceptFriendRequest (before[1]);
+            expectEquals (ids().size(), 1);
+            r.wait();
+            expect (ids() == before, "수락 실패: 같은 자리로 되돌림");
+            expectEquals (failed.size(), 1);
+            expect (failed[0] == ErrorCode::network);
+
+            // 서버 오류(500)로 거절 실패
+            r.server.replyForTest = [] (const HttpRequest& q) -> std::optional<HttpResponse>
+            {
+                if (q.path.startsWith ("/friends/requests/")) return HttpResponse { 500, json::encodeError (ApiError::of (ErrorCode::internal)) };
+                return std::nullopt;
+            };
+            r.home.declineFriendRequest (before[0]);
+            expectEquals (ids().size(), 1);
+            r.wait();
+            expect (ids() == before, "거절 실패: 같은 자리로 되돌림");
+            expectEquals (failed.size(), 2);
+            expect (failed[1] == ErrorCode::internal);
+            r.server.replyForTest = nullptr;
+
+            // 다른 기기에서 먼저 처리함 → 이 기기에서 누르면 서버가 404 not_found. 실패로 보지 않는다 (되돌리지 않고 알리지 않음)
+            r.api.acceptFriendRequest (before[0], [] (Result<Done>) {});
+            r.api.declineFriendRequest (before[1], [] (Result<Done>) {});
+            r.wait();
+            expectEquals (ids().size(), 2, "다른 기기의 처리는 이 기기 목록에 오지 않는다");
+            int notFound = 0;
+            auto count404 = [&] (Result<Done> x) { if (! x.ok() && x.code() == ErrorCode::notFound) ++notFound; };
+            r.home.acceptFriendRequest (before[0], count404);
+            r.home.declineFriendRequest (before[1], count404);
+            r.wait();
+            expectEquals (notFound, 2, "서버가 not_found 로 답함");
+            expect (r.store.state().friendRequests.empty(), "not_found: 되돌리지 않음");
+            expectEquals (failed.size(), 2, "not_found: 알리지 않음");
+            r.home.onFriendRequestFailed = nullptr;
+        }
+
+        beginTest ("accept: the new friend shows from a friends refresh even without friend.added; with both (either order), once");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            r.server.devFriendRequest();
+            r.wait();
+            const auto reqs = r.store.state().friendRequests;
+            expectEquals ((int) reqs.size(), 3);
+            auto count = [&] (const juce::String& userId)
+            {
+                int n = 0;
+                for (auto& f : r.store.state().friends) if (f.user.id == userId) ++n;
+                return n;
+            };
+            const int friendsBefore = (int) r.store.state().friends.size();
+            int friendLists = 0;
+            r.server.onRequestForTest = [&] (const HttpRequest& q) { if (q.method == "GET" && q.path.upToFirstOccurrenceOf ("?", false, false) == "/friends") ++friendLists; };
+
+            // friend.added 를 놓침: 수락 뒤 다시 받은 목록으로 나타난다
+            r.server.dropEventForTest = [] (const juce::String& type, const juce::var&) { return type == "friend.added"; };
+            r.home.acceptFriendRequest (reqs[0].id);
+            r.wait();
+            expectEquals (friendLists, 1, "수락 성공 뒤 친구 목록을 다시 받음");
+            expectEquals (count (reqs[0].from.id), 1, "friend.added 없이도 나타남");
+
+            // friend.added 가 먼저 오고 목록이 뒤에 와도 한 번
+            r.server.dropEventForTest = nullptr;
+            r.home.acceptFriendRequest (reqs[1].id);
+            r.wait();
+            expectEquals (friendLists, 2);
+            expectEquals (count (reqs[1].from.id), 1, "friend.added + 목록: 한 번");
+
+            // friend.added 가 목록보다 늦게 와도 한 번
+            std::vector<juce::var> held;
+            r.server.dropEventForTest = [&] (const juce::String& type, const juce::var& data)
+            {
+                if (type != "friend.added") return false;
+                held.push_back (data);
+                return true;
+            };
+            r.home.acceptFriendRequest (reqs[2].id);
+            r.wait();
+            expectEquals (count (reqs[2].from.id), 1);
+            expectEquals ((int) held.size(), 1);
+            RealtimeEvent late;
+            expect (! held.empty() && RealtimeEvent::decode (RealtimeEvent::encode ("friend.added", 999, held.front()), late));
+            r.store.event (late);
+            expectEquals (count (reqs[2].from.id), 1, "목록 + 늦은 friend.added: 한 번");
+            expectEquals ((int) r.store.state().friends.size(), friendsBefore + 3);
+            expect (r.store.state().friendRequests.empty());
+            r.server.dropEventForTest = nullptr;
+            r.server.onRequestForTest = nullptr;
+        }
+
+        beginTest ("reconnect: a friend and a request missed while disconnected show up (hello friends, GET /friends/requests)");
+        {
+            Rig r;
+            r.home.setHomeVisible (true);
+            r.wait();
+            const auto reqs = r.store.state().friendRequests;
+            expectEquals ((int) reqs.size(), 2);
+            auto isFriend = [&] (const juce::String& userId)
+            {
+                for (auto& f : r.store.state().friends) if (f.user.id == userId) return true;
+                return false;
+            };
+            expect (! isFriend (reqs[0].from.id));
+            r.server.devDropLink (3);
+            r.wait (50);
+            expect (r.store.state().link != Realtime::Link::online);
+            // 끊긴 사이: 다른 기기에서 요청 하나를 수락하고(friend.added 는 이 기기로 오지 않는다), 새 요청이 하나 온다
+            r.api.acceptFriendRequest (reqs[0].id, [] (Result<Done>) {});
+            r.server.devFriendRequest();
+            r.wait (100);
+            expect (! isFriend (reqs[0].from.id), "끊긴 사이에는 모른다");
+            expectEquals ((int) r.store.state().friendRequests.size(), 2);
+            for (int i = 0; i < 120 && r.store.state().link != Realtime::Link::online; ++i) r.wait (500);
+            expect (r.store.state().link == Realtime::Link::online);
+            r.wait();
+            expect (isFriend (reqs[0].from.id), "재연결 뒤 놓친 친구가 나타남");
+            juce::StringArray ids;
+            for (auto& f : r.store.state().friendRequests) ids.add (f.id);
+            expect (! ids.contains (reqs[0].id) && ids.contains (reqs[1].id) && ids.size() == 2, "받은 요청도 다시 받음: " + ids.joinIntoString (","));
         }
 
         beginTest ("invite friend: pending 3s then sent; cancel inside 3s");

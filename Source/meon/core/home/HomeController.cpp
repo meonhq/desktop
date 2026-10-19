@@ -251,7 +251,7 @@ void HomeController::joinFriendRoom (const RoomRef& ref, Callback<JoinResult> cb
 }
 
 //==============================================================================
-void HomeController::acceptInvite (const juce::String& inviteId, Callback<JoinResult> cb)
+void HomeController::acceptInvite (juce::String inviteId, Callback<JoinResult> cb)
 {
     juce::String roomId;
     for (auto& i : store.state().invites)
@@ -265,7 +265,7 @@ void HomeController::acceptInvite (const juce::String& inviteId, Callback<JoinRe
     });
 }
 
-void HomeController::dismissInvite (const juce::String& inviteId)
+void HomeController::dismissInvite (juce::String inviteId)
 {
     store.removeInvite (inviteId);
     api.dismissInvite (inviteId, [] (Result<Done>) {});
@@ -286,16 +286,44 @@ void HomeController::sendFriendRequest (const juce::String& username, Callback<j
     });
 }
 
-void HomeController::acceptFriendRequest (const juce::String& requestId, Callback<Done> cb)
+void HomeController::acceptFriendRequest (juce::String requestId, Callback<Done> cb)
 {
-    store.removeFriendRequest (requestId);
-    api.acceptFriendRequest (requestId, [cb] (Result<Done> r) { if (cb) cb (std::move (r)); });
+    answerFriendRequest (requestId, true, std::move (cb));
 }
 
-void HomeController::declineFriendRequest (const juce::String& requestId, Callback<Done> cb)
+void HomeController::declineFriendRequest (juce::String requestId, Callback<Done> cb)
 {
+    answerFriendRequest (requestId, false, std::move (cb));
+}
+
+void HomeController::answerFriendRequest (const juce::String& requestId, bool accept, Callback<Done> cb)
+{
+    // requestId 는 위의 값 매개변수다. 목록에서 지우면 알림 줄이 다시 만들어지며 부른 쪽이 지워진다
+    std::optional<FriendRequest> removed;
+    size_t index = 0;
+    const auto& list = store.state().friendRequests;
+    for (size_t i = 0; i < list.size(); ++i)
+        if (list[i].id == requestId) { removed = list[i]; index = i; break; }
     store.removeFriendRequest (requestId);
-    api.declineFriendRequest (requestId, [cb] (Result<Done> r) { if (cb) cb (std::move (r)); });
+
+    std::weak_ptr<bool> weak = alive;
+    auto done = [this, weak, accept, removed, index, cb] (Result<Done> r)
+    {
+        if (weak.expired()) return;
+        // not_found (404): 이미 처리된 요청. 다른 기기에서 수락·거절했거나 상대가 취소·탈퇴했다 (서버 lockReceived). 실패로 보지 않는다
+        if (r.ok() || r.code() == ErrorCode::notFound)
+        {
+            if (accept) refreshFriends();
+        }
+        else
+        {
+            if (removed) store.restoreFriendRequest (*removed, index);
+            if (onFriendRequestFailed) onFriendRequestFailed (r.code());
+        }
+        if (cb) cb (std::move (r));
+    };
+    if (accept) api.acceptFriendRequest (requestId, std::move (done));
+    else        api.declineFriendRequest (requestId, std::move (done));
 }
 
 void HomeController::markNotificationsRead()

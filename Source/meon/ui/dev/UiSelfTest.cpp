@@ -32,6 +32,7 @@ void UiSelfTest::start()
     if (want ("minimize")) addMinimizeTests();
     if (want ("resize"))   addResizeTests();
     if (want ("chat"))     addChatInputTests();
+    if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
 }
@@ -754,6 +755,113 @@ void UiSelfTest::addChatInputTests()
         chat.received ({ chat.group(), "u_left_preview", "id:ml2", TXT ("받은긴단어") + juce::String::repeatedString ("B", 200) });
     }, 300);
     add ([this] { expect (jam()->devLastChatLines() > 1, TXT ("받은 긴 단어도 끊김")); });
+}
+
+
+//==============================================================================
+// 알림 목록의 친구 요청 수락·거절: 누르면 목록이 다시 만들어지며 그 줄이 지워진다. 그래도 그 줄의 요청 id 가 서버로 가야 한다.
+// 실패하면 요청이 되돌아오고 토스트. 홈과 합주 화면이 같은 목록(NotificationList)이다
+void UiSelfTest::addFriendRequestTests()
+{
+    auto sent = std::make_shared<juce::StringArray>();          // 가짜 서버가 받은 수락·거절 요청 ("POST /friends/requests/<id>/accept")
+    auto reqs = std::make_shared<std::vector<core::FriendRequest>>();
+    auto requestIds = [this]
+    {
+        juce::StringArray a;
+        for (auto& f : core.store().state().friendRequests) a.add (f.id);
+        return a;
+    };
+    auto isFriend = [this] (const juce::String& userId)
+    {
+        for (auto& f : core.store().state().friends) if (f.user.id == userId) return true;
+        return false;
+    };
+    auto hasToast = [this] (const juce::String& title)
+    {
+        for (auto* t : root.toasts) if (t->getTitle() == title) return true;
+        return false;
+    };
+    auto list = [this]() -> juce::Component*
+    {
+        if (auto* j = jam(); j != nullptr && j->isShowing()) return j->notifications.get();
+        return home().notifications.get();
+    };
+    auto press = [this, list] (const juce::String& text) { if (auto* l = list()) if (auto* b = findButton (*l, text)) click (*b); };
+    const auto failText = TXT ("친구 요청을 처리하지 못했어요. 다시 시도해 주세요");
+
+    begin (TXT ("친구 요청: 홈 알림 목록"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this, sent]
+    {
+        if (auto* f = core.fakeServer())
+            f->onRequestForTest = [sent] (const core::HttpRequest& q) { if (q.path.startsWith ("/friends/requests/")) sent->add (q.method + " " + q.path); };
+    }, 0);
+    waitUntil (TXT ("받은 친구 요청 2개"), [this] { return core.store().state().friendRequests.size() == 2; });
+    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (home().bell); });
+    waitUntil (TXT ("알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
+    add ([press] { press (TXT ("수락")); }, 0);
+    waitUntil (TXT ("수락이 서버로"), [sent] { return sent->size() == 1; });
+    waitUntil (TXT ("수락한 사람이 친구 목록에"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    add ([this, sent, reqs, requestIds, list]
+    {
+        expect ((*sent)[0] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("첫 줄 수락: 그 줄의 id (") + (*sent)[0] + ")");
+        expect (requestIds() == juce::StringArray ((*reqs)[1].id), TXT ("수락한 요청만 목록에서 빠짐"));
+        expect (list() != nullptr && findButton (*list(), TXT ("수락")) != nullptr, TXT ("남은 줄"));
+    }, 0);
+    add ([press] { press (TXT ("거절")); }, 0);
+    waitUntil (TXT ("거절이 서버로"), [sent] { return sent->size() == 2; });
+    add ([this, sent, reqs, requestIds, list]
+    {
+        expect ((*sent)[1] == "POST /friends/requests/" + (*reqs)[1].id + "/decline", TXT ("남은 줄 거절: 그 줄의 id (") + (*sent)[1] + ")");
+        expect (requestIds().isEmpty() && list() != nullptr && findButton (*list(), TXT ("수락")) == nullptr, TXT ("목록 비움"));
+    }, 300);
+
+    begin (TXT ("친구 요청: 실패하면 되돌리고 토스트"));
+    add ([this] { if (auto* f = core.fakeServer()) f->devFriendRequest(); }, 0);
+    waitUntil (TXT ("새 친구 요청"), [this, list] { return core.store().state().friendRequests.size() == 1 && list() != nullptr && findButton (*list(), TXT ("수락")) != nullptr; });
+    add ([this, reqs, press]
+    {
+        *reqs = core.store().state().friendRequests;
+        if (auto* f = core.fakeServer())
+            f->replyForTest = [] (const core::HttpRequest& q) -> std::optional<core::HttpResponse>
+            {
+                if (q.path.startsWith ("/friends/requests/")) return core::HttpResponse {};   // 네트워크 오류
+                return std::nullopt;
+            };
+        press (TXT ("수락"));
+    }, 0);
+    waitUntil (TXT ("실패 토스트"), [hasToast, failText] { return hasToast (failText); });
+    add ([this, reqs, requestIds, list, isFriend]
+    {
+        expect (requestIds() == juce::StringArray ((*reqs)[0].id), TXT ("요청이 목록에 되돌아옴"));
+        expect (list() != nullptr && findButton (*list(), TXT ("수락")) != nullptr, TXT ("알림 목록에 줄이 다시 보임"));
+        expect (! isFriend ((*reqs)[0].from.id), TXT ("친구가 되지 않음"));
+        if (auto* f = core.fakeServer()) f->replyForTest = nullptr;
+    }, 300);
+    add ([press] { press (TXT ("수락")); }, 0);
+    waitUntil (TXT ("다시 누르면 수락됨"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    add ([this, sent, reqs, requestIds]
+    {
+        expect (sent->size() == 4 && (*sent)[3] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("재시도: 같은 id"));
+        expect (requestIds().isEmpty(), TXT ("목록 비움"));
+        click (home().bell);   // 닫기
+    }, 300);
+
+    begin (TXT ("친구 요청: 합주 화면 알림 목록"));
+    enterNewRoom();
+    add ([this] { if (auto* f = core.fakeServer()) f->devFriendRequest(); }, 0);
+    waitUntil (TXT ("방 안에서 새 친구 요청"), [this] { return core.store().state().friendRequests.size() == 1; });
+    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (jam()->bell); });
+    waitUntil (TXT ("합주 화면 알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
+    add ([press] { press (TXT ("수락")); }, 0);
+    waitUntil (TXT ("합주 화면에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    add ([this, sent, reqs, requestIds]
+    {
+        expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("합주 화면 줄 수락: 그 줄의 id"));
+        expect (requestIds().isEmpty(), TXT ("목록 비움"));
+        if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
+    }, 300);
 }
 
 } // namespace meon::ui

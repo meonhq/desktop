@@ -243,8 +243,9 @@ struct JoinRequestList::Row : juce::Component
         addAndMakeVisible (decline);
         addAndMakeVisible (accept);
         accept.setEnabled (! owner.isFull());
-        decline.onPress = [this] { owner.core.room().declineJoinRequest (req.id); };
-        accept.onPress = [this] { owner.core.room().acceptJoinRequest (req.id); };
+        // id 를 먼저 복사한다: 거절하면 목록이 다시 만들어지며 이 줄이 지워진다
+        decline.onPress = [this] { const auto id = req.id; owner.core.room().declineJoinRequest (id); };
+        accept.onPress = [this] { const auto id = req.id; owner.core.room().acceptJoinRequest (id); };
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
     void paint (juce::Graphics& g) override

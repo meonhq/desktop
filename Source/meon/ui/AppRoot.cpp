@@ -27,6 +27,10 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
         const auto text = msg::inviteFailure (code);
         if (text.isNotEmpty()) addInfoToast (text, {});
     };
+    core.home().onFriendRequestFailed = [this] (core::ErrorCode)
+    {
+        addInfoToast (TXT ("친구 요청을 처리하지 못했어요. 다시 시도해 주세요"), {});
+    };
     updateScreen();
     syncInviteToasts();
 }
@@ -37,6 +41,7 @@ AppRoot::~AppRoot()
     core.connection().removeListener (this);
     core.room().onActionFailed = nullptr;
     core.home().onInviteFailed = nullptr;
+    core.home().onFriendRequestFailed = nullptr;
     core.home().setHomeVisible (false);
     toasts.clear();
     fail.reset();

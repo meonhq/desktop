@@ -85,6 +85,8 @@ public:
     static void sortFriends (std::vector<Friend>&);
     void setFriendRequests (std::vector<FriendRequest>);
     void removeFriendRequest (const juce::String& requestId);
+    /** 지웠던 요청을 그 자리에 되돌린다 (수락·거절 실패). 그사이 다시 받아 이미 있으면 그대로 */
+    void restoreFriendRequest (const FriendRequest&, size_t index);
     void setHasUnread (bool);
     void removeInvite (const juce::String& inviteId);
     void setCurrentRoom (std::optional<RoomDetail>);   // 입장·설정 변경 응답, 나가기(nullopt)

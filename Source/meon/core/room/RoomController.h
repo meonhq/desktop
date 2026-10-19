@@ -20,7 +20,8 @@ public:
     /** 성공하면 현재 방을 비운다 (화면은 "방을 닫았어요" 덮개) */
     void closeRoom (Callback<Done> = {});
     void acceptJoinRequest (const juce::String& requestId, Callback<RoomDetail> = {});
-    void declineJoinRequest (const juce::String& requestId);
+    /** id 는 값으로 받는다: 목록에서 먼저 지우면 부른 쪽(요청 줄)이 지워진다 */
+    void declineJoinRequest (juce::String requestId);
     /** 내가 방장이 되면(입장·넘겨받기) 대기 중인 요청을 받는다 */
     void refreshJoinRequests();
     /** 방금 내가 방을 닫아서 방에서 나왔는지 (한 번 읽으면 지운다). 화면은 "방을 닫았어요" 덮개를 띄운다 */

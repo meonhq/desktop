@@ -70,15 +70,20 @@ public:
 
     //==============================================================================
     // 받은 초대 (토스트)
-    void acceptInvite (const juce::String& inviteId, Callback<JoinResult>);
-    void dismissInvite (const juce::String& inviteId);
+    // id 는 값으로 받는다: 목록에서 지우면 부른 쪽(토스트·알림 줄)이 지워질 수 있다
+    void acceptInvite (juce::String inviteId, Callback<JoinResult>);
+    void dismissInvite (juce::String inviteId);
 
     //==============================================================================
     // 친구 (API 7)
     /** result: sent | not_found | already_friends | already_requested | accepted | self (오류는 blocked_by_me 등) */
     void sendFriendRequest (const juce::String& username, Callback<juce::String>);
-    void acceptFriendRequest (const juce::String& requestId, Callback<Done> = {});
-    void declineFriendRequest (const juce::String& requestId, Callback<Done> = {});
+    /** 목록에서 먼저 지우고 보낸다. 실패하면 목록에 되돌리고 onFriendRequestFailed (not_found = 이미 처리된 요청은 성공으로 본다).
+        수락하면 친구 목록을 다시 받는다 (friend.added 를 놓쳐도 보이게. 둘 다 와도 사용자 id 로 한 번만) */
+    void acceptFriendRequest (juce::String requestId, Callback<Done> = {});
+    void declineFriendRequest (juce::String requestId, Callback<Done> = {});
+    /** 받은 친구 요청 수락·거절 실패. 화면이 토스트로 알린다 */
+    std::function<void (ErrorCode)> onFriendRequestFailed;
 
     // 알림 (API 9): 팝오버를 열면 읽음
     void markNotificationsRead();
@@ -116,6 +121,7 @@ private:
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void handleJoin (const juce::String& roomId, Result<JoinResult>, Callback<JoinResult>);
+    void answerFriendRequest (const juce::String& requestId, bool accept, Callback<Done>);
     void stateChanged (StateKey) override;
 };
 

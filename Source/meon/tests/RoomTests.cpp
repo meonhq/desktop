@@ -108,6 +108,47 @@ public:
             expect (! r.room.takeClosedByMe());
         }
 
+        beginTest ("host: decline a join request from a list row that the store change deletes: the right id reaches the server");
+        {
+            // 합주 화면 입장 요청 목록(JoinRequestList) 흉내: 요청이 바뀌면 줄을 모두 지우고 다시 만든다 (예전에는 지워진 줄의 id 를 보냈다)
+            Rig r;
+            CreateRoom c;
+            c.type = "public";
+            c.entryMode = juce::String ("approval");
+            c.title = "decline room";
+            r.home.createRoom (c, [] (Result<RoomDetail>) {});
+            r.wait();
+            r.server.devJoinRequest();
+            r.wait();
+            r.server.devJoinRequest();
+            r.wait();
+            struct Row { JoinRequest req; };
+            struct List : AppStore::Listener
+            {
+                explicit List (AppStore& s) : store (s) { store.addListener (this); rebuild(); }
+                ~List() override { store.removeListener (this); }
+                void rebuild()
+                {
+                    rows.clear();
+                    for (auto& q : store.state().joinRequests) rows.push_back (std::make_unique<Row> (Row { q }));
+                }
+                void stateChanged (StateKey k) override { if (k == StateKey::joinRequests) rebuild(); }
+                AppStore& store;
+                std::vector<std::unique_ptr<Row>> rows;
+            } list (r.store);
+            expectEquals ((int) list.rows.size(), 2);
+            juce::StringArray paths;
+            r.server.onRequestForTest = [&] (const HttpRequest& q) { if (q.path.endsWith ("/decline")) paths.add (q.path); };
+            const auto roomId = r.store.state().currentRoom->id;
+            const auto firstId = list.rows[0]->req.id;
+            r.room.declineJoinRequest (list.rows[0]->req.id);   // 줄이 지워지는 중에 이 id 를 읽는다
+            expectEquals (paths.size(), 1);
+            expectEquals (paths[0], "/rooms/" + roomId + "/join-requests/" + firstId + "/decline");
+            r.wait();
+            expectEquals ((int) r.store.state().joinRequests.size(), 1);
+            r.server.onRequestForTest = nullptr;
+        }
+
         beginTest ("account: nickname, part, privacy, password");
         {
             Rig r;

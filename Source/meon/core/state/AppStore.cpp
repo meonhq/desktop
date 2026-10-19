@@ -83,6 +83,14 @@ void AppStore::removeFriendRequest (const String& id)
     changed (StateKey::friendRequests);
 }
 
+void AppStore::restoreFriendRequest (const FriendRequest& fr, size_t index)
+{
+    auto& v = s.friendRequests;
+    if (std::any_of (v.begin(), v.end(), [&] (const FriendRequest& f) { return f.id == fr.id; })) return;
+    v.insert (v.begin() + (std::ptrdiff_t) juce::jmin (index, v.size()), fr);
+    changed (StateKey::friendRequests);
+}
+
 void AppStore::setHasUnread (bool b)
 {
     if (s.hasUnreadNotifications == b) return;

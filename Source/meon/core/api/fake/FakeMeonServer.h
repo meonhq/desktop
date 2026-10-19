@@ -92,6 +92,14 @@ public:
     juce::String meId() const { return wsUser; }
     /** 테스트용: 실시간 이벤트를 받는 사람(실시간 연결이 없는 가짜 사용자 포함)과 함께 모두 알려 준다 */
     std::function<void (const juce::String& toUser, const juce::String& type, const juce::var& data)> onEmitForTest;
+    /** 테스트용: 서버에 닿은 REST 요청 (보낸 ID 가 맞는지 확인. replyForTest 로 대신 답한 것도 포함) */
+    std::function<void (const HttpRequest&)> onRequestForTest;
+    /** 테스트용: 참을 돌려주면 내 실시간 연결로 보내지 않는다 (이벤트를 놓친 경우) */
+    std::function<bool (const juce::String& type, const juce::var& data)> dropEventForTest;
+    /** 테스트용: 값을 돌려주면 처리하지 않고 이 응답을 보낸다 (status 0 = 네트워크 오류) */
+    std::function<std::optional<HttpResponse> (const HttpRequest&)> replyForTest;
+    /** 테스트용: 0 보다 크면 이 요청을 그만큼 늦게 처리한다 (요청이 서버에 닿는 순서 바꾸기) */
+    std::function<int (const HttpRequest&)> holdForTest;
     bool isMember (const juce::String& roomId, const juce::String& userId) const;
     int pendingInviteCountFor (const juce::String& userId) const;
 
@@ -108,6 +116,7 @@ public:
     static constexpr int closedMemoryMs = 24 * 60 * 60 * 1000;
 
 private:
+    void respond (const HttpRequest&, std::function<void (HttpResponse)> done);
     //==============================================================================
     struct User
     {

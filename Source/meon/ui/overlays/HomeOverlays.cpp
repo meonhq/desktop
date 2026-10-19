@@ -496,8 +496,9 @@ struct NotificationList::Row : juce::Component
         addAndMakeVisible (avatar);
         addAndMakeVisible (decline);
         addAndMakeVisible (accept);
-        decline.onPress = [this] { owner.core.home().declineFriendRequest (request.id); };
-        accept.onPress = [this] { owner.core.home().acceptFriendRequest (request.id); };
+        // id 를 먼저 복사한다: 수락·거절하면 목록이 다시 만들어지며 이 줄이 지워진다 (예전에는 지워진 줄의 id 를 보냈다)
+        decline.onPress = [this] { const auto id = request.id; owner.core.home().declineFriendRequest (id); };
+        accept.onPress = [this] { const auto id = request.id; owner.core.home().acceptFriendRequest (id); };
         setMouseCursor (juce::MouseCursor::PointingHandCursor);   // 누르면 프로필
     }
 
