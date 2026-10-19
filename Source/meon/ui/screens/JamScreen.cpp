@@ -329,18 +329,13 @@ struct JamScreen::ChatView : juce::Component
         juce::TextLayout layout;
         juce::Rectangle<float> textArea;            // layout 을 그리는 자리 (밑줄·링크 판정도 같은 자리)
         std::vector<juce::Range<int>> links;        // 본문 속 링크 (core::findLinks)
-        juce::String part;   // 남의 메시지: 보낸 사람의 지금 파트 (방을 나갔거나 모르면 비어 있음 → 빈 원)
     };
     static constexpr int avatarSize = 30, avatarGap = 9;
 
-    /** 보낸 사람의 파트: 지금 방 멤버 정보에서. 없으면 빈 문자열 */
-    juce::String partOf (const juce::String& userId) const
+    /** 남의 메시지 이름: 받은 순간의 닉네임 (Message::senderName). 끝까지 모르면 "멤버" */
+    static juce::String senderName (const core::ChatChannel::Message& m)
     {
-        const auto& room = owner.core.store().state().currentRoom;
-        if (room)
-            for (auto& rm : room->members)
-                if (rm.user.id == userId) return rm.user.part.value_or (juce::String());
-        return {};
+        return m.senderName.isNotEmpty() ? m.senderName : TXT ("멤버");
     }
     std::vector<Item> items;
 
@@ -480,7 +475,6 @@ struct JamScreen::ChatView : juce::Component
                 const int textW = juce::jmax (1, inner - avatarSize - avatarGap);
                 it.links = core::findLinks (m.text);
                 it.layout = makeLayout (m.text, textW, col::ink, 15.0f, 400, it.links);
-                it.part = partOf (m.fromUser);
                 const int h = 16 + 3 + (int) std::ceil (it.layout.getHeight());
                 it.bounds = { 18 + avatarSize + avatarGap, y, textW, h };
                 it.textArea = it.bounds.withTrimmedTop (19).toFloat();
@@ -536,13 +530,14 @@ struct JamScreen::ChatView : juce::Component
             }
             else
             {
-                // 아바타: 테두리 1px #E0E0E0, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음
+                // 아바타: 테두리 1px #E0E0E0, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음.
+                // 파트·이름은 받은 순간의 값 (보낸 사람이 바꾸거나 나가도 그대로. 모르면 빈 원·"멤버")
                 Avatar::paintCircle (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
                                                                 (float) avatarSize, (float) avatarSize),
-                                     it.part, 16.0f, col::ink, true);
+                                     m.senderPart, 16.0f, col::ink, true);
                 g.setColour (col::inkSub);
                 g.setFont (font (600, 13.0f));
-                g.drawText (owner.memberName (m.fromUser), it.bounds.withHeight (16), juce::Justification::centredLeft, true);
+                g.drawText (senderName (m), it.bounds.withHeight (16), juce::Justification::centredLeft, true);
                 it.layout.draw (g, it.textArea);
                 paintLinkUnderlines (g, it);
             }
