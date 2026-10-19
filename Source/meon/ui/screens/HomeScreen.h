@@ -41,13 +41,28 @@ public:
 
     void openJoinCode();
     void openCreateRoom();
+    /** 방 최소화 (합주 최종 디자인 5): 방에 그대로 있으면서 홈을 볼 때 아래에 붙는 막대 (높이 57).
+        막대를 누르면 onReturnToRoom. 다른 방에 들어가거나 새 방을 만들려면 먼저 확인 모달 */
+    void setRoomBar (bool show);
+    bool hasRoomBar() const { return roomBar != nullptr; }
+    std::function<void()> onReturnToRoom;
+    static constexpr int roomBarH = 57;   // 위 테두리 1 + 12 + 32 + 12
+    /** 개발용 스냅숏 (--screen=jam:mini…): arm — 막대의 나가기를 한 번 누른 상태, confirm / create — 확인 모달 */
+    void devPreviewRoomBar (const juce::String& what);
+    /** 개발용 (화면 자가 테스트): 막대, 막대의 나가기 버튼, 막대의 새 채팅 수, 공개 방 카드의 입장 버튼 */
+    juce::Component* devRoomBar() const;
+    Button* devRoomBarLeave() const;
+    int devRoomBarUnread() const;
+    std::vector<std::pair<core::Room, juce::Button*>> devRoomCards() const;
     void openFilter();
     void toggleNotifications();
     void openProfile (const core::UserPublic&);
     /** 개발용 스냅숏: 친구 패널이 접히는 중 e 에 멈춘 화면 (--screen=home:fold=friends:0.5) */
     void previewFold (float e);
     void closeOverlays();
-    bool hasOverlay() const { return modal != nullptr || popover != nullptr; }
+    /** Esc: 맨 위 겹침 하나만 (최소화 중 확인 모달 → 그 아래 모달·팝오버) */
+    bool closeTopOverlay();
+    bool hasOverlay() const { return modal != nullptr || popover != nullptr || confirm != nullptr; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -56,13 +71,16 @@ public:
     static constexpr int sideWidthApp = 320, sideWidthPlugin = 240;
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     UpdateHooks update;
     const bool plugin;
 
     // 헤더
     IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };
-    Button settings { Button::Kind::quiet, TXT ("설정") };
+    IconButton settings { (int) icons::Id::gearHeader, IconButton::Style::bordered32, 16.0f };   // 설정 (툴팁 "설정")
+    Tip tip;
+    std::unique_ptr<TipOnHover> settingsTip;
 
     // 배너
     bool updateDismissed = false;
@@ -121,12 +139,23 @@ private:
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
 
+    // 방 최소화
+    struct RoomBar;
+    std::unique_ptr<RoomBar> roomBar;
+    std::unique_ptr<Modal> confirm;   // 최소화 중 나가기 확인 (프로필·코드로 입장 모달 위에 뜬다)
+    /** 방에 없으면 바로 proceed. roomId 가 지금 방이면 합주 화면으로 돌아간다. 아니면 확인 모달 → 나간 뒤 proceed */
+    void confirmLeaveThen (bool create, const juce::String& roomId, std::function<void()> proceed);
+    LeaveGuard leaveGuard();
+    void joinRoomNow (const core::Room&);
+    void openCreateRoomNow();
+
     void rebuildRooms();
     void layoutRooms();
     void rebuildFriends();
     void refreshHeader();
     void refreshAudio();
     void enterRoom (const core::Room&);
+    void joinFriend (const core::Friend&);
     juce::String deviceText() const;
 
     void stateChanged (core::StateKey) override;

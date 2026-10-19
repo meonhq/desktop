@@ -13,6 +13,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     home = std::make_unique<HomeScreen> (core, update);
     home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
+    home->onReturnToRoom = [this] { setMinimized (false); };
     addChildComponent (*home);
     core.store().addListener (this);
     core.connection().addListener (this);
@@ -49,6 +50,42 @@ void AppRoot::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+void AppRoot::setMinimized (bool b)
+{
+    if (! core.store().state().currentRoom) b = false;
+    if (b == minimized) return;
+    minimized = b;
+    // 새 채팅 수는 최소화한 뒤부터 센다. 돌아오면 읽은 것으로
+    if (auto* j = core.jam()) j->chat().markRead();
+    applyScreen();
+}
+
+void AppRoot::applyScreen()
+{
+    // 화면만 바꾼다. 방 연결·오디오·채팅·세션 로그는 JamSession 이 그대로 이어 간다.
+    // 셀프 모니터는 방 안이면 prefs.selfMonitor 만 본다 (JamSession::isSelfMonitorAudible). HomeController 의
+    // setHomeVisible 은 공개 방 구독·새로 고침만 하므로 최소화해도 내 소리는 그대로다
+    if (minimized)
+    {
+        if (jam != nullptr) jam->setVisible (false);   // 지우지 않는다: 채팅 스크롤·입력 중인 글·접기 상태가 남는다
+        home->setRoomBar (true);
+        home->setVisible (true);
+        core.home().setHomeVisible (true);
+        home->grabKeyboardFocus();
+    }
+    else
+    {
+        home->closeOverlays();
+        home->setRoomBar (false);
+        home->setVisible (false);
+        core.home().setHomeVisible (false);
+        if (jam != nullptr) jam->setVisible (true);
+    }
+    resized();
+    for (auto* t : toasts) t->toFront (false);
+    if (fail != nullptr) fail->toFront (false);
+}
+
 void AppRoot::updateScreen()
 {
     const auto& room = core.store().state().currentRoom;
@@ -59,20 +96,30 @@ void AppRoot::updateScreen()
             auto screen = std::make_unique<JamScreen> (core);
             screen->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
             screen->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
+            screen->onMinimize = [this]
+            {
+                // 로비 버튼 콜백 안이므로 다음 메시지에서 (합주 화면을 숨기는 동안 버튼이 눌린 상태로 남지 않게)
+                juce::Component::SafePointer<AppRoot> safe (this);
+                juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->setMinimized (true); });
+            };
             jam = std::move (screen);
             addAndMakeVisible (*jam);
+            minimized = false;   // 새로 들어간 방은 합주 화면부터
         }
-        home->closeOverlays();
-        home->setVisible (false);
-        core.home().setHomeVisible (false);
+        // 다른 기기에서 들어간 방으로 옮겨져도(movedToOtherRoom) 최소화 상태는 그대로 둔다 (막대가 새 방을 보여 준다)
         shownRoomId = room->id;
         // 방에 들어가면 받은 초대는 모두 사라진다 (API 7.11)
         for (int i = toasts.size(); --i >= 0;)
             if (toasts[i]->key.isNotEmpty()) toasts.remove (i);
         fail.reset();
+        applyScreen();
+        return;
     }
     else
     {
+        // 최소화 중에 내보내지거나 방이 닫혀도 여기로 온다: 막대가 사라지고 보통 홈 + 알림 토스트
+        minimized = false;
+        home->setRoomBar (false);
         jam.reset();
         shownRoomId = {};
         home->setVisible (true);
@@ -241,7 +288,8 @@ void AppRoot::removeToast (Toast* t)
 
 void AppRoot::layoutToasts()
 {
-    int y = getHeight() - 12;
+    // 방 최소화 중 막대(57) 위로: 아래 여백 12 → 69 (디자인 hToastBottom)
+    int y = getHeight() - (home->isVisible() && home->hasRoomBar() ? 12 + HomeScreen::roomBarH : 12);
     for (auto* t : toasts)
     {
         const int h = t->heightForWidth (Toast::width);
@@ -282,9 +330,10 @@ bool AppRoot::handleShortcut (const juce::KeyPress& k)
     if (k == juce::KeyPress::escapeKey)
     {
         if (fail != nullptr) { fail.reset(); return true; }
-        if (home->isVisible() && home->hasOverlay()) { home->closeOverlays(); return true; }
+        if (home->isVisible() && home->closeTopOverlay()) return true;
     }
-    if (auto* screen = dynamic_cast<JamScreen*> (jam.get()))
+    // 방 최소화 중에는 합주 화면이 숨어 있으므로 단축키(M·N·Enter …)를 넘기지 않는다
+    if (auto* screen = dynamic_cast<JamScreen*> (jam.get()); screen != nullptr && screen->isVisible())
         return screen->handleShortcut (k);
     return false;
 }

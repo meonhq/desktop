@@ -3,6 +3,10 @@
 #include "../../core/api/ApiJson.h"
 #include "../../core/util/ChatLinks.h"
 #include "../Links.h"
+#include "../../MeonSettings.h"
+#include "../../core/model/PanelWidth.h"
+#include "../../core/util/ChatInput.h"
+#include "../../core/util/EmojiCluster.h"
 
 namespace meon::ui
 {
@@ -11,7 +15,6 @@ namespace
 {
     constexpr int headerLineY = metric::headerH;
     constexpr int bottomCardH = 48 + 1 + 43;
-    constexpr int bubbleMaxW = 220;
 
     juce::String nameOf (const core::UserPublic& u) { return u.nickname.value_or (u.username); }
 
@@ -262,9 +265,14 @@ struct JamScreen::MemberRow : juce::Component
     void resized() override
     {
         const int gap = owner.plugin ? 24 : 18;
-        // 오른쪽: 핑 48 + 12 + 미터
         auto r = getLocalBounds().withTrimmedLeft (12).withTrimmedRight (18);
-        const int meterW = owner.plugin ? juce::jlimit (84, 150, r.getWidth() / 4) : 150;
+        // 폭이 모자라면 볼륨(150 → 60)이 먼저, 그다음 미터(150 → 84)가 줄어든다 (합주 최종 디자인 6)
+        const int mw = mute.getIdealWidth();
+        const int fixedW = 41 + 9 + mw + 9 + 9 + 19 + 9 + reset.getIdealWidth() + (hostLayout ? 9 + manage.getIdealWidth() : 0)
+                         + gap + 48 + 12;
+        const auto split = core::panel::shrink (r.getWidth() - fixedW);
+        // 오른쪽: 핑 48 + 12 + 미터
+        const int meterW = split.meter;
         meter.setBounds (r.removeFromRight (meterW).withSizeKeepingCentre (meterW, metric::smallH));
         r.removeFromRight (12);
         ping.setBounds (r.removeFromRight (48).withSizeKeepingCentre (48, metric::smallH));
@@ -274,10 +282,9 @@ struct JamScreen::MemberRow : juce::Component
         // 둘째 줄: 음소거 · 볼륨 150 · 패닝 19 · 초기화 (간격 9)
         const int y = 9 + 17 + 5;
         int x = r.getX();
-        const int mw = mute.getIdealWidth();
         mute.setBounds (x, y, mw, metric::smallH);
         x += mw + 9;
-        const int vw = juce::jlimit (60, 150, r.getRight() - x - 9 - 19 - 9 - reset.getIdealWidth() - (hostLayout ? 9 + manage.getIdealWidth() : 0));
+        const int vw = split.slider;
         volume.setBounds (x, y, vw, metric::smallH);
         x += vw + 9;
         pan.setBounds (x, y, 19, 19);
@@ -353,20 +360,67 @@ struct JamScreen::ChatView : juce::Component
         return k >= 0 && k < maxTaggedLinks ? k : -1;
     }
 
-    static juce::TextLayout makeLayout (const juce::String& text, int width, juce::Colour ink, float px, int weight,
+    /** 한 줄보다 긴 단어(공백 없는 글·긴 링크)를 줄 끝에서 끊는다 (디자인 overflow-wrap:anywhere).
+        JUCE 기본 배치(리눅스·윈도우의 내장 글꼴)는 byChar 를 무시하고 단어를 쪼개지 않아 말풍선 밖으로 잘렸다.
+        끊을 자리에 \n 을 넣은 표시용 글과, 원래 글자 위치 → 표시용 위치 (map, 크기 = 글자 수 + 1) 를 돌려준다.
+        cuts: 단어를 나누는 자리 (링크 시작·끝. JUCE 도 색이 바뀌는 곳에서 단어를 나눈다) */
+    static juce::String hardWrap (const juce::String& text, const juce::Font& f, float maxW, std::vector<int>& map,
+                                  const std::vector<int>& cuts = {})
+    {
+        auto isCut = [&cuts] (int k) { return std::find (cuts.begin(), cuts.end(), k) != cuts.end(); };
+        const int n = text.length();
+        map.assign ((size_t) n + 1, 0);
+        juce::String out;
+        float x = 0.0f;
+        const float limit = maxW - 1.0f;   // 글자 폭 합과 JUCE 의 단어 폭 차이 여유
+        auto isBreak = [] (juce::juce_wchar c) { return c == '\n' || c == '\r'; };
+        auto put = [&] (int from, int to)
+        {
+            for (int k = from; k < to; ++k) { map[(size_t) k] = out.length(); out += juce::String::charToString (text[k]); }
+        };
+        int i = 0;
+        while (i < n)
+        {
+            if (isBreak (text[i])) { put (i, i + 1); x = 0.0f; ++i; continue; }
+            const bool ws = juce::CharacterFunctions::isWhitespace (text[i]);
+            int j = i;
+            while (j < n && ! isBreak (text[j]) && juce::CharacterFunctions::isWhitespace (text[j]) == ws && (j == i || ! isCut (j))) ++j;
+            const float w = f.getStringWidthFloat (text.substring (i, j));
+            if (ws || x + w <= limit) { put (i, j); x += w; i = j; continue; }
+            if (w <= limit) { put (i, j); x = w; i = j; continue; }   // 다음 줄에 들어간다 (JUCE 가 옮긴다)
+            // 한 줄보다 길다: 지금 줄을 채우고 넘치는 글자 앞에서 끊는다 (이모지 묶음은 쪼개지 않는다)
+            for (int k = i; k < j;)
+            {
+                const int e = juce::jmax (k + 1, juce::jmin (j, core::emojiClusterEnd (text, k)));
+                const float cw = f.getStringWidthFloat (text.substring (k, e));
+                if (x + cw > limit && x > 0.0f) { out += "\n"; x = 0.0f; }
+                put (k, e);
+                x += cw;
+                k = e;
+            }
+            i = j;
+        }
+        map[(size_t) n] = out.length();
+        return out;
+    }
+
+    static juce::TextLayout makeLayout (const juce::String& rawText, int width, juce::Colour ink, float px, int weight,
                                         const std::vector<juce::Range<int>>& links = {})
     {
         juce::AttributedString a;
         const auto f = font (weight, px);
+        std::vector<int> map, cuts;
+        for (auto r : links) { cuts.push_back (r.getStart()); cuts.push_back (r.getEnd()); }
+        const auto text = hardWrap (rawText, f, (float) width, map, cuts);
         if (links.empty())
             a.append (text, f, ink);
         else
         {
-            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다
+            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다 (링크 위치는 끊은 글 기준으로 옮긴다)
             int pos = 0;
             for (size_t k = 0; k < links.size(); ++k)
             {
-                const auto r = links[k];
+                const juce::Range<int> r (map[(size_t) links[k].getStart()], map[(size_t) links[k].getEnd()]);
                 if (r.getStart() > pos) a.append (text.substring (pos, r.getStart()), f, ink);
                 a.append (text.substring (r.getStart(), r.getEnd()), f, (int) k < maxTaggedLinks ? linkColour ((int) k) : ink);
                 pos = r.getEnd();
@@ -401,7 +455,7 @@ struct JamScreen::ChatView : juce::Component
             }
             else if (m.kind == K::mine)
             {
-                const int maxText = juce::jmin (bubbleMaxW, inner) - 24;
+                const int maxText = core::panel::myBubbleMax (inner) - 24;   // 패널이 넓으면 75% (220..420)
                 it.links = core::findLinks (m.text);
                 auto probe = makeLayout (m.text, maxText, col::ink, 15.0f, 400, it.links);
                 float tw = 0.0f;
@@ -594,15 +648,21 @@ struct JamScreen::ChatDecor : juce::Component
             g.setColour (col::line);
             g.fillRect (vb.getX(), vb.getBottom(), vb.getWidth(), 1);
         }
-        const int left = core::ChatChannel::maxBytes - core::ChatChannel::byteLength (owner.chatInput.getText());
-        if (left < 100 || owner.chatNote.isNotEmpty())
+        // 바이트 수: 900 부터 "962 / 1000" (400 12 #767676, 고정폭), 1000 을 넘으면 #D92D20 (합주 최종 디자인 7. 남은 글자 표시 대신)
+        if (! owner.chatCounterArea.isEmpty())
+        {
+            namespace ci = core::chatinput;
+            const int n = ci::bytes (owner.chatInput.getText());
+            g.setColour (ci::overLimit (n) ? col::danger : col::inkSub);
+            const auto r = owner.chatCounterArea.toFloat();
+            drawTabular (g, font (400, 12.0f), ci::counterText (n), r.getX(), r.getY(), r.getHeight());
+        }
+        if (owner.chatNote.isNotEmpty())
         {
             const auto ib = owner.chatInput.getBounds();
-            const bool note = owner.chatNote.isNotEmpty();
             g.setFont (font (400, 12.0f));
-            g.setColour (note ? col::inkSub : col::inkFaint);
-            g.drawText (note ? owner.chatNote : juce::String (left), ib.getX(), ib.getY() - 18, ib.getWidth(), 14,
-                        note ? juce::Justification::centredLeft : juce::Justification::centredRight, true);
+            g.setColour (col::inkSub);
+            g.drawText (owner.chatNote, ib.getX(), ib.getY() - 18, ib.getWidth(), 14, juce::Justification::centredLeft, true);
         }
     }
 
@@ -864,10 +924,112 @@ struct JamScreen::FilePlayer : juce::Component
 };
 
 //==============================================================================
+/** 멤버·패널 사이 18 전체 (본문 높이 전체)가 끄는 자리. 가운데에 2×120 선 (모서리 1): 평소 안 보임, 호버 #D5D5D5, 끄는 중 #1A1A1A.
+    끌면 패널 너비가 바뀌고(놓을 때 저장), 더블클릭하면 기본 너비 */
+struct JamScreen::SideResizer : juce::Component, juce::SettableTooltipClient
+{
+    explicit SideResizer (JamScreen& o) : owner (o)
+    {
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        setTooltip (TXT ("끌어서 너비 조절 · 더블클릭하면 기본 너비"));
+        setRepaintsOnMouseActivity (true);
+    }
+
+    juce::Colour lineColour() const
+    {
+        if (dragging) return col::ink;
+        return isMouseOver() ? col::field : juce::Colours::transparentBlack;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto c = lineColour();
+        if (c.isTransparent()) return;
+        g.setColour (c);
+        g.fillRoundedRectangle (juce::Rectangle<float> (8.0f, (float) getHeight() * 0.5f - 60.0f, 2.0f, 120.0f), 1.0f);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = true;
+        moved = false;
+        startW = owner.sidePanelWidth();
+        startX = e.getScreenX();
+        repaint();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        // 왼쪽으로 끌면 패널이 넓어진다 (패널은 오른쪽에 붙어 있다)
+        moved = moved || e.getScreenX() != startX;
+        if (moved) owner.setSideWidth (startW + (startX - e.getScreenX()), false);
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        dragging = false;
+        if (moved) owner.setSideWidth (owner.sidePanelWidth(), true);   // 그냥 누르기만 했으면 저장값을 건드리지 않는다
+        repaint();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        owner.setSideWidth (core::panel::defaultWidth (owner.plugin), true);
+    }
+
+    JamScreen& owner;
+    bool dragging = false, moved = false;
+    int startW = 0, startX = 0;
+};
+
+juce::Component* JamScreen::devSideResizer() const { return sideResizer.get(); }
+juce::Colour JamScreen::devSideLineColour() const    { return sideResizer->lineColour(); }
+
+void JamScreen::devSetChatInput (const juce::String& t)
+{
+    chatInput.setText (t, true);
+    chatInput.focus();
+    chatInput.editor().moveCaretToEnd();
+    resized();
+}
+
+int JamScreen::devLastChatLines() const
+{
+    return chatView->items.empty() ? 0 : chatView->items.back().layout.getNumLines();
+}
+
+int JamScreen::sidePanelWidth() const
+{
+    return core::panel::shownWidth (plugin, getWidth(), sideSaved);
+}
+
+void JamScreen::setSideWidth (int w, bool persist)
+{
+    const int c = core::panel::clampWidth (plugin, getWidth(), w);
+    if (c != sideSaved)
+    {
+        sideSaved = c;
+        resized();
+    }
+    if (persist)
+    {
+        MeonSettings settings;
+        core::panel::save (settings.properties(), plugin, sideSaved);
+        settings.save();
+    }
+}
+
+//==============================================================================
 JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.isPlugin())
 {
     setOpaque (true);
     setWantsKeyboardFocus (true);
+    {
+        MeonSettings settings;
+        sideSaved = core::panel::load (settings.properties(), plugin);   // 앱·플러그인 따로
+    }
+    sideResizer = std::make_unique<SideResizer> (*this);
+    addAndMakeVisible (*sideResizer);
 
     // 헤더
     addAndMakeVisible (roomTitle);
@@ -876,16 +1038,34 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     codeBox = std::make_unique<CodeBox>();
     addChildComponent (*codeBox);
     codeBox->onWidthChange = [this] { resized(); };
+    addAndMakeVisible (bell);
     addAndMakeVisible (settings);
+    addAndMakeVisible (lobby);
     addAndMakeVisible (leave);
     addChildComponent (gear);
     addChildComponent (requests);
     gear.setTooltip (TXT ("방 설정"));
     requests.setTooltip (TXT ("입장 요청"));
+    bell.setTooltip (TXT ("알림"));
+    settingsTip = std::make_unique<TipOnHover> (tip, *this, settings, TXT ("설정"), Tip::Place::belowCentre);
+    lobbyTip = std::make_unique<TipOnHover> (tip, *this, lobby, TXT ("로비 보기"), Tip::Place::belowCentre);
     gear.setInk (col::inkFaint, col::ink);
     gear.onClick = [this] { showModal (std::make_unique<RoomSettingsModal> (core)); };
     requests.onClick = [this] { toggleRequests(); };
-    settings.onPress = [this] { if (onOpenSettings) onOpenSettings(); };
+    bell.onClick = [this] { toggleNotifications(); };
+    settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
+    lobby.onClick = [this] { tip.hide(); closePopover(); if (onMinimize) onMinimize(); };
+    // 방 나가기: 두 번 눌러 확정 (팝업 없음). 바깥을 누르거나 3초가 지나면 원래대로 (다른 확인 버튼과 같은 Button::setConfirm).
+    // 방장이면 확인 상태일 때 버튼 아래에 "돌아올 때까지 방장 자리가 비어요"
+    leave.setConfirm (TXT ("한 번 더 누르면 나가요"));
+    leave.onStateChange = [this]
+    {
+        resized();
+        if (leave.isArmed() && core.store().state().amHost())
+            tip.show (*this, leave, TXT ("돌아올 때까지 방장 자리가 비어요"), Tip::Place::belowRight);
+        else if (tip.getTarget() == &leave)
+            tip.hide();
+    };
     leave.onPress = [this]
     {
         juce::Component::SafePointer<JamScreen> safe (this);
@@ -939,9 +1119,23 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     chatCard.addAndMakeVisible (*chatDecor);
     chatInput.setBorderless (true);
     chatInput.setFontPx (14.0f);
-    chatInput.setMaxBytes (core::ChatChannel::maxBytes);
+    chatInput.setLineHeight ((float) core::chatinput::lineH);   // 400 14 / 20
+    chatInput.setShiftEnterNewLine (true);                      // Enter 보냄, Shift+Enter 줄바꿈
+    chatInput.setChatScrollbar (true);
+    // 1000 바이트를 넘게 쓸 수는 있다 (빨간 "1012 / 1000", 보내지 않음). 붙여넣기도 같다
     chatInput.onReturn = [this] { sendChat(); };
-    chatInput.onChange = [this] { chatNote = {}; chatCard.repaint(); resized(); };
+    chatInput.onChange = [this]
+    {
+        // 한글 조합 중 Enter: 입력기에 따라 확정 글자가 보낸 뒤에 들어와 빈 칸에 남는다 → 지운다 (두 번 보내지지 않게)
+        if (core::chatinput::isLateImeLeftover (lastSentChat, chatInput.getText(), juce::Time::currentTimeMillis() - lastSentAt))
+        {
+            lastSentChat = {};
+            chatInput.setText ({});
+        }
+        chatNote = {};
+        chatCard.repaint();
+        resized();
+    };
     chatSend.onPress = [this] { sendChat(); };
 
     // 친구
@@ -992,9 +1186,10 @@ void JamScreen::refreshHeader()
     if (! room) return;
     const bool host = core.store().state().amHost();
     gear.setVisible (host);
-    requests.setVisible (host && room->isApproval());
+    requests.setVisible (host);   // 방장이면 요청이 없어도 항상 (없으면 점 없음, 열면 "새 입장 요청이 없어요")
     requests.setDot (! core.store().state().joinRequests.empty());
-    if (! requests.isVisible() && popover != nullptr) { popover.reset(); requestList.reset(); }
+    bell.setDot (core.store().state().hasUnreadNotifications || ! core.store().state().friendRequests.empty());   // 홈과 같은 규칙
+    if (! requests.isVisible() && requestList != nullptr) closePopover();
     roomTitle.setText (room->title);
     privateTag->setVisible (! room->isPublic());
     codeBox->setVisible (! room->isPublic() && room->inviteCode.has_value());
@@ -1090,11 +1285,16 @@ void JamScreen::fitChatView()
 void JamScreen::sendChat()
 {
     using R = core::ChatChannel::SendResult;
-    const auto text = chatInput.getText();
+    // 앞뒤 공백·빈 줄은 지우고 안쪽 줄바꿈은 둔다. 비었거나 1000 바이트를 넘으면 보내지 않는다 (칸은 그대로)
+    const auto text = core::chatinput::prepare (chatInput.getText());
+    if (! core::chatinput::canSend (text)) return;
     const auto r = jam.chat().sendText (text);
     if (r == R::sent || r == R::failed || r == R::localOnly)   // localOnly: 받을 사람이 없어 내 목록에만
     {
+        lastSentChat = text;
+        lastSentAt = juce::Time::currentTimeMillis();
         chatInput.setText ({});
+        chatLines = 1;   // 보내면 다시 한 줄
         chatNote = {};
         chatAtBottom = true;
     }
@@ -1112,6 +1312,7 @@ void JamScreen::stateChanged (core::StateKey k)
 {
     using K = core::StateKey;
     if (k == K::currentRoom || k == K::joinRequests || k == K::me) { refreshHeader(); jamStatsChanged(); }
+    else if (k == K::friendRequests || k == K::notifications) refreshHeader();
     else if (k == K::friends) rebuildFriends();
     else if (k == K::link) { resized(); repaint(); }
 }
@@ -1148,10 +1349,14 @@ void JamScreen::resized()
     {
         const float logoW = meon::logoWidth (metric::logoDrawH);
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
-        const int lw = leave.getIdealWidth(), sw = settings.getIdealWidth();
+        // 오른쪽부터: 방 나가기 · 로비 · 설정 · 알림 · 입장 요청(방장) · 입장 코드(비공개), 간격 9. 버튼은 줄지 않고 방 이름이 먼저 줄어든다
+        const int lw = leave.getIdealWidth();
         leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));
-        h.removeFromRight (metric::gap);
-        settings.setBounds (h.removeFromRight (sw).withSizeKeepingCentre (sw, metric::buttonH));
+        for (auto* b : { &lobby, &settings, &bell })
+        {
+            h.removeFromRight (metric::gap);
+            b->setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
+        }
         if (requests.isVisible())
         {
             h.removeFromRight (metric::gap);
@@ -1179,10 +1384,11 @@ void JamScreen::resized()
     area.removeFromTop (headerLineY + 1);
     area.reduce (metric::padX, metric::padX);
 
-    // 오른쪽: 채팅 · 친구 · 파일
-    const int sideW = plugin ? 240 : 320;
+    // 오른쪽: 채팅 · 친구 · 파일. 너비는 끌어서 바꾼다 (앱 320~, 플러그인 240~, 최대 min(창 50%, 창 − 54 − 440))
+    const int sideW = sidePanelWidth();
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
+    sideResizer->setBounds (side.getX() - metric::padX, headerLineY + 1, metric::padX, getHeight() - headerLineY - 1);
     const bool vMoving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
     const bool hMoving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
     {
@@ -1274,19 +1480,21 @@ void JamScreen::resized()
         const int availW = area.getWidth() - metric::gap;
         bottomAvail = availW;
         const float eSend = fold.value (foldSend), eMon = fold.value (foldMon);
-        // 미터 폭: 열리면 150 (좁거나 플러그인이면 행의 1/3, 84~150), 접히면 행 전체
-        auto meterW = [this] (int rowW, bool open)
+        // 미터 폭: 열리면 150, 폭이 모자라면 슬라이더가 먼저 60 까지 줄고 그다음 미터가 84 까지 (멤버 행과 같은 규칙,
+        // 합주 최종 디자인 6). 접히면 행 전체. bw: 그 줄 왼쪽 버튼 (송출 정지 · 전체 음소거)
+        auto meterW = [] (int rowW, bool open, int bw)
         {
-            return open ? ((plugin || rowW < 400) ? juce::jlimit (84, 150, rowW / 3) : 150) : rowW;
+            return open ? core::panel::shrink (rowW - bw - 12 - 12, std::numeric_limits<int>::max()).meter : rowW;
         };
+        const int sendBw = sendMute.getIdealWidth(), monBw = monMute.getIdealWidth();
         static constexpr int rowInset = 2 + metric::padX * 2;   // 카드 테두리 + 좌우 여백
         core::FoldLayout::Pair ws;
         int sendMeterW, monMeterW;
         if (! hMoving)
         {
             ws = core::FoldLayout::horizontalPair (availW, sendOpen, monOpen);
-            sendMeterW = meterW (ws.first - rowInset, sendOpen);
-            monMeterW = meterW (ws.second - rowInset, monOpen);
+            sendMeterW = meterW (ws.first - rowInset, sendOpen, sendBw);
+            monMeterW = meterW (ws.second - rowInset, monOpen, monBw);
         }
         else
         {
@@ -1297,8 +1505,8 @@ void JamScreen::resized()
                 for (int b = 0; b < 2; ++b)
                 {
                     L[a][b] = core::FoldLayout::horizontalPair (availW, a == 1, b == 1);
-                    MS[a][b] = meterW (L[a][b].first - rowInset, a == 1);
-                    MM[a][b] = meterW (L[a][b].second - rowInset, b == 1);
+                    MS[a][b] = meterW (L[a][b].first - rowInset, a == 1, sendBw);
+                    MM[a][b] = meterW (L[a][b].second - rowInset, b == 1, monBw);
                 }
             ws = core::FoldLayout::blend (L, eSend, eMon, foldFillH);
             sendMeterW = core::FoldLayout::blendValue (MS, eSend, eMon);
@@ -1339,7 +1547,7 @@ void JamScreen::resized()
             m.setBounds (meter);
             const int openRowW = contentW - rowInset;
             const int bw = b.getIdealWidth();
-            const int sw = juce::jmax (0, openRowW - meterW (openRowW, true) - 12 - bw - 12);
+            const int sw = juce::jmax (0, openRowW - meterW (openRowW, true, bw) - 12 - bw - 12);
             const int sx = meter.getX() - 12 - sw;
             s.setBounds (sx, meter.getY(), sw, metric::smallH);
             b.setBounds (sx - 12 - bw, meter.getY(), bw, metric::smallH);
@@ -1369,23 +1577,47 @@ void JamScreen::resized()
     if (modal != nullptr) modal->setBounds (getLocalBounds());
     if (popover != nullptr && requestList != nullptr)
         popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + requestList->getPreferredHeight());
+    if (popover != nullptr && notifications != nullptr)
+        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + notifications->getPreferredHeight());
     // 움직이는 동안은 화면 전체를 다시 그리지 않는다 (옮겨진 카드 자리만 JUCE 가 다시 그린다)
     if (! (vMoving || hMoving)) repaint();
 }
 
 void JamScreen::layoutChatContent (int cardW, int cardH)
 {
-    auto cb = chatCard.contentBoundsFor (cardW, cardH);
-    auto inputRow = cb.removeFromBottom (44);
-    chatViewport.setBounds (cb.withTrimmedBottom (1));
+    namespace ci = core::chatinput;
+    // 입력이 늘어나면 목록이 줄어든다. 맨 아래를 보고 있었으면 최신 메시지는 그대로 아래에 붙어 있다
+    const bool wasAtBottom = chatViewport.getViewPositionY() + chatViewport.getHeight() >= chatView->getHeight() - 4;
+    const int bytes = ci::bytes (chatInput.getText());
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        auto cb = chatCard.contentBoundsFor (cardW, cardH);
+        auto inputRow = cb.removeFromBottom (ci::boxHeight (chatLines));
+        chatViewport.setBounds (cb.withTrimmedBottom (1));
+        // 줄 (위아래 12, 좌우 18): [입력 (글 + 오른쪽 8)] 8 [962 / 1000] 8 [전송]. 전송·숫자는 마지막 줄에 맞춘다 (아래 정렬)
+        auto ir = inputRow.reduced (metric::padX, ci::padY);
+        const int sw = chatSend.getIdealWidth();
+        chatSend.setBounds (ir.getRight() - sw, ir.getBottom() - ci::lineH, sw, ci::lineH);
+        ir.removeFromRight (sw + 8);
+        chatCounterArea = {};
+        if (ci::showCounter (bytes))
+        {
+            const int cw = (int) std::ceil (tabularWidth (font (400, 12.0f), ci::counterText (bytes)));
+            chatCounterArea = { ir.getRight() - cw, ir.getBottom() - ci::lineH, cw, ci::lineH };
+            ir.removeFromRight (cw + 8);
+        }
+        // 첫 줄 글자를 줄 높이 20 의 가운데에 두려고 입력은 위 여백만큼 위로 (TextInput::setLineHeight)
+        const int top = chatInput.getTopIndent();
+        chatInput.setBounds (ir.getX(), ir.getY() - top, ir.getWidth(), ir.getHeight() + top);
+        const int lines = ci::visibleLines (chatInput.getContentHeight());
+        if (lines == chatLines) break;
+        chatLines = lines;   // 폭은 그대로라 줄 수만 다시 맞춘다
+    }
+    if (wasAtBottom && chatView->getHeight() > chatViewport.getHeight())
+        chatViewport.setViewPosition (0, chatView->getHeight() - chatViewport.getHeight());
     chatDecor->setBounds (0, 0, cardW, cardH);
     chatDecor->toFront (false);
     chatDecor->repaint();
-    auto ir = inputRow.reduced (metric::padX, 12);
-    const int sw = chatSend.getIdealWidth();
-    chatSend.setBounds (ir.removeFromRight (sw));
-    ir.removeFromRight (8);
-    chatInput.setBounds (ir);
 }
 
 void JamScreen::layoutFriendsContent (int cardW, int cardH)
@@ -1442,8 +1674,7 @@ void JamScreen::previewFold (const juce::String& panel, float e)
 
 void JamScreen::showModal (std::unique_ptr<Modal> m)
 {
-    popover.reset();
-    requestList.reset();
+    closePopover();
     modal = std::move (m);
     juce::Component::SafePointer<JamScreen> safe (this);
     modal->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
@@ -1454,14 +1685,16 @@ void JamScreen::showModal (std::unique_ptr<Modal> m)
 
 void JamScreen::toggleRequests()
 {
-    if (popover != nullptr) { popover.reset(); requestList.reset(); return; }
+    const bool wasOpen = requestList != nullptr;
+    closePopover();   // 알림 목록이 열려 있으면 닫고 연다
+    if (wasOpen) return;
     requestList = std::make_unique<JoinRequestList> (core);
     popover = std::make_unique<Popover> (TXT ("입장 요청"));
     juce::Component::SafePointer<JamScreen> safe (this);
-    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->popover.reset(); safe->requestList.reset(); } }); };
+    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closePopover(); }); };
     requestList->onSizeChanged = [this]
     {
-        if (popover == nullptr) return;
+        if (popover == nullptr || requestList == nullptr) return;
         const auto n = core.store().state().joinRequests.size();
         popover->setCount (n > 0 ? juce::String ((int) n) : juce::String());
         popover->setContent (requestList.get(), requestList->getPreferredHeight());
@@ -1513,8 +1746,43 @@ void JamScreen::openManage (const core::JamSession::Member& m)
 void JamScreen::closeOverlays()
 {
     modal.reset();
-    popover.reset();
+    closePopover();
+}
+
+void JamScreen::closePopover()
+{
+    popover.reset();   // 내용(목록)을 가리키므로 먼저
     requestList.reset();
+    notifications.reset();
+}
+
+void JamScreen::toggleNotifications()
+{
+    // 입장 요청 목록과 동시에 열리지 않는다 (하나를 열면 다른 하나는 닫힘)
+    const bool wasOpen = notifications != nullptr;
+    closePopover();
+    if (wasOpen) return;
+    core.home().markNotificationsRead();
+    notifications = std::make_unique<NotificationList> (core);
+    popover = std::make_unique<Popover> (TXT ("알림"));
+    juce::Component::SafePointer<JamScreen> safe (this);
+    popover->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closePopover(); }); };
+    notifications->onSizeChanged = [this]
+    {
+        if (popover == nullptr || notifications == nullptr) return;
+        popover->setContent (notifications.get(), notifications->getPreferredHeight());
+        resized();
+    };
+    notifications->onOpenProfile = [this] (const core::UserPublic& u)
+    {
+        juce::Component::SafePointer<JamScreen> s2 (this);
+        auto user = u;
+        juce::MessageManager::callAsync ([s2, user] { if (s2 != nullptr) s2->showProfile (user); });
+    };
+    popover->setContent (notifications.get(), notifications->getPreferredHeight());
+    addAndMakeVisible (*popover);
+    resized();
+    popover->toFront (false);
 }
 
 bool JamScreen::handleShortcut (const juce::KeyPress& k)

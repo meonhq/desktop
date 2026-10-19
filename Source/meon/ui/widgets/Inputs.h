@@ -12,6 +12,7 @@ class TextInput : public juce::Component, private juce::TextEditor::Listener
 {
 public:
     explicit TextInput (const juce::String& placeholder = {}, bool multiLine = false);
+    ~TextInput() override;
 
     void setText (const juce::String&, bool notify = false);
     juce::String getText() const;
@@ -31,6 +32,16 @@ public:
     void setBorderless (bool);
     void focus();
 
+    /** 여러 줄 입력의 줄 높이(px). 글꼴 높이에 맞춰 줄 간격과 위 여백을 정한다 (CSS line-height 처럼 글자를 줄 가운데에) */
+    void setLineHeight (float px);
+    int getTopIndent() const { return topIndent; }
+    /** 글 높이 (위 여백 제외, 비어 있으면 0) */
+    int getContentHeight() const;
+    /** Shift+Enter 로 줄바꿈 (Enter 는 onReturn) */
+    void setShiftEnterNewLine (bool b) { shiftEnter = b; }
+    /** 채팅 입력 (합주 최종 디자인 7): 세로 스크롤바 4px #D5D5D5 모서리 2, 글자에서 8. 스크롤바가 없어도 오른쪽 8 은 비운다 */
+    void setChatScrollbar (bool);
+
     juce::TextEditor& editor() { return ed; }
 
     std::function<void()> onChange, onReturn, onEscape, onFocusLost;
@@ -42,7 +53,14 @@ public:
 private:
     juce::TextEditor ed;
     juce::String placeholder;
-    bool error = false, multi, borderless = false;
+    bool error = false, multi, borderless = false, shiftEnter = false, chatBar = false;
+    float lineHeightPx = 0.0f;
+    int topIndent = 0;
+    struct Keys;
+    std::unique_ptr<Keys> keys;
+    void applyLineHeight();
+    void updateChatBorder();
+    juce::Viewport* innerViewport() const;
     int maxLength = 0, maxBytes = 0;
     float fontPx = 13.0f;
     int weight = 400;

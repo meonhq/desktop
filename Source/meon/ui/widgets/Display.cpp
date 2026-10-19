@@ -31,8 +31,9 @@ juce::Colour Avatar::statusColour (Status s)
 {
     switch (s)
     {
-        case Status::online:  return col::accent;
-        case Status::inRoom:  return col::ink;
+        // 온라인과 합주 중은 같은 초록, 구분은 옆 상태 글자로 한다 (합주 최종 디자인)
+        case Status::online:  return col::live;
+        case Status::inRoom:  return col::live;
         case Status::offline: return col::statusOff;
         case Status::none:    break;
     }
@@ -46,8 +47,9 @@ void Avatar::paint (juce::Graphics& g)
     paintCircle (g, r, part, iconPx, dimmed ? col::inkFaint : ink, false);
     if (status != Status::none)
     {
-        // right:-1 bottom:-1, 9×9, 흰 테두리 2px
-        juce::Rectangle<float> dot (r.getRight() + 1.0f - 9.0f, r.getBottom() + 1.0f - 9.0f, 9.0f, 9.0f);
+        // 기본: right:-1 bottom:-1, 9×9, 흰 테두리 2px. 프로필 창: right:0 bottom:0, 12×12 (setLargeStatusDot)
+        const float ds = largeDot ? 12.0f : 9.0f, out = largeDot ? 0.0f : 1.0f;
+        juce::Rectangle<float> dot (r.getRight() + out - ds, r.getBottom() + out - ds, ds, ds);
         g.setColour (statusColour (status));
         g.fillEllipse (dot);
         g.setColour (col::white);
@@ -264,6 +266,90 @@ bool Modal::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress::escapeKey && onClose) { onClose(); return true; }
     return false;
 }
+
+//==============================================================================
+namespace
+{
+    float digitCell (const juce::Font& f)
+    {
+        float w = 0.0f;
+        for (char c = '0'; c <= '9'; ++c) w = juce::jmax (w, textWidth (f, juce::String::charToString (c)));
+        return w;
+    }
+}
+
+float tabularWidth (const juce::Font& f, const juce::String& s)
+{
+    const float cell = digitCell (f);
+    float w = 0.0f;
+    for (auto c : s) w += juce::CharacterFunctions::isDigit (c) ? cell : textWidth (f, juce::String::charToString (c));
+    return w;
+}
+
+float drawTabular (juce::Graphics& g, const juce::Font& f, const juce::String& s, float x, float y, float h)
+{
+    const float cell = digitCell (f);
+    g.setFont (f);
+    float cx = x;
+    for (auto c : s)
+    {
+        const auto ch = juce::String::charToString (c);
+        const float cw = textWidth (f, ch);
+        const float w = juce::CharacterFunctions::isDigit (c) ? cell : cw;
+        g.drawText (ch, juce::Rectangle<float> (cx + (w - cw) * 0.5f, y, cw + 1.0f, h), juce::Justification::centredLeft, false);
+        cx += w;
+    }
+    return cx - x;
+}
+
+//==============================================================================
+//==============================================================================
+Tip::Tip() { setInterceptsMouseClicks (false, false); setAlwaysOnTop (true); }
+
+int Tip::widthFor (const juce::String& t) { return (int) std::ceil (textWidth (font (500, 12.0f), t)) + 14; }
+
+void Tip::show (juce::Component& host, juce::Component& t, const juce::String& s, Place place)
+{
+    text = s;
+    target = &t;
+    if (getParentComponent() != &host) host.addChildComponent (this);
+    const auto b = host.getLocalArea (t.getParentComponent(), t.getBounds());
+    const int w = widthFor (text);
+    int x = place == Place::belowCentre ? b.getCentreX() - w / 2 : b.getRight() - w;
+    x = juce::jlimit (0, juce::jmax (0, host.getWidth() - w), x);
+    const int y = place == Place::aboveRight ? b.getY() - 6 - height : b.getBottom() + 6;
+    setBounds (x, y, w, height);
+    setVisible (true);
+    toFront (false);
+    repaint();
+}
+
+void Tip::hide()
+{
+    target = nullptr;
+    setVisible (false);
+}
+
+void Tip::paint (juce::Graphics& g)
+{
+    g.setColour (col::ink);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    g.setColour (col::white);
+    g.setFont (font (500, 12.0f));
+    g.drawText (text, getLocalBounds(), juce::Justification::centred, false);
+}
+
+TipOnHover::TipOnHover (Tip& t, juce::Component& h, juce::Component& c, const juce::String& s, Tip::Place p)
+    : tip (t), host (h), target (c), text (s), place (p)
+{
+    target.addMouseListener (this, false);
+}
+
+TipOnHover::~TipOnHover() { target.removeMouseListener (this); }
+
+void TipOnHover::mouseEnter (const juce::MouseEvent&) { if (target.isShowing()) tip.show (host, target, text, place); }
+void TipOnHover::mouseExit (const juce::MouseEvent&)  { if (tip.getTarget() == &target) tip.hide(); }
+void TipOnHover::mouseDown (const juce::MouseEvent&)  { if (tip.getTarget() == &target) tip.hide(); }
 
 //==============================================================================
 Popover::Popover (const juce::String& t, int w)

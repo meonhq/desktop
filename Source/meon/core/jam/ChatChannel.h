@@ -52,7 +52,7 @@ public:
     void removeListener (Listener* l) { listeners.remove (l); }
 
     /** 방에 들어갈 때 */
-    void begin (const juce::String& group, const juce::String& me) { groupName = group; myUser = me; messages.clear(); changed(); }
+    void begin (const juce::String& group, const juce::String& me) { groupName = group; myUser = me; messages.clear(); unread = 0; changed(); }
     void end() { groupName = {}; messages.clear(); changed(); }
 
     /** 지금 방 멤버 (나 제외, 가짜 각본 멤버 제외) — 확인을 기다릴 대상. 비어 있으면 내 목록에만 */

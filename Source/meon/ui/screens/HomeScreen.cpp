@@ -221,16 +221,7 @@ struct HomeScreen::FriendList : juce::Component
             addAndMakeVisible (avatar);
             setMouseCursor (juce::MouseCursor::PointingHandCursor);   // 누르면 프로필
             addChildComponent (join);
-            join.onPress = [this]
-            {
-                juce::Component::SafePointer<HomeScreen> safe (&owner);
-                juce::Component::SafePointer<Row> self (this);
-                owner.core.home().joinFriend (fr, [safe, self] (core::Result<core::JoinResult> r)
-                {
-                    if (self != nullptr) self->refreshJoin();
-                    if (safe != nullptr && ! r.ok() && safe->onJoinFailure) safe->onJoinFailure (r.err());
-                });
-            };
+            join.onPress = [this] { owner.joinFriend (fr); };
             refreshJoin();
         }
 
@@ -327,6 +318,133 @@ struct HomeScreen::FriendList : juce::Component
 };
 
 //==============================================================================
+/** 방 최소화 중 아래 막대 (합주 최종 디자인 5). 높이 57 = 위 테두리 1 + 12 + 32 + 12, 좌우 18, 흰 면, 호버 #F8F8F8.
+    왼쪽(간격 9): 방 이름 600 14 (최대 240, 말줄임) · 인원 "5 / 7" 400 12 · 배지 "새 채팅 N" · "입장 요청 N".
+    오른쪽: "나가기" (두 번 눌러 확정, 방장이면 위 6 에 툴팁). 막대 어디를 눌러도 합주 화면으로 (나가기 버튼은 제외) */
+struct HomeScreen::RoomBar : juce::Component,
+                             juce::SettableTooltipClient,
+                             private core::ChatChannel::Listener
+{
+    explicit RoomBar (HomeScreen& o) : owner (o), jam (o.core.jam())
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setTooltip (TXT ("합주 화면으로 돌아가기"));
+        addAndMakeVisible (leave);
+        leave.addMouseListener (&hover, false);
+        leave.setConfirm (TXT ("한 번 더 누르면 나가요"));
+        leave.onStateChange = [this]
+        {
+            resized();
+            repaint();
+            if (leave.isArmed() && owner.core.store().state().amHost())
+                owner.tip.show (owner, leave, TXT ("돌아올 때까지 방장 자리가 비어요"), Tip::Place::aboveRight);
+            else if (owner.tip.getTarget() == &leave)
+                owner.tip.hide();
+        };
+        leave.onPress = [this]
+        {
+            juce::Component::SafePointer<HomeScreen> safe (&owner);
+            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->core.home().leaveRoom(); });   // 막대가 지워진다
+        };
+        if (jam != nullptr) jam->chat().addListener (this);
+    }
+
+    ~RoomBar() override
+    {
+        if (jam != nullptr) jam->chat().removeListener (this);
+        if (owner.tip.getTarget() == &leave) owner.tip.hide();
+    }
+
+    int unreadChats() const { return jam != nullptr ? jam->chat().getUnread() : 0; }
+
+    int joinRequests() const
+    {
+        const auto& s = owner.core.store().state();
+        return s.amHost() ? (int) s.joinRequests.size() : 0;   // 방장이 아니면 늘 0 (디자인 nReq = host ? reqs : 0)
+    }
+
+    static float badgeWidth (const juce::String& label, int n)
+    {
+        return 6.0f + textWidth (font (400, 12.0f), label) + 4.0f + tabularWidth (font (600, 12.0f), juce::String (n)) + 6.0f;
+    }
+
+    /** 배지: 높이 19, 안쪽 6, 모서리 5, 글자 400 12 + 숫자 600 #1A1A1A (간격 4) */
+    static float drawBadge (juce::Graphics& g, float x, float cy, const juce::String& label, int n, juce::Colour bg, juce::Colour ink)
+    {
+        const float w = badgeWidth (label, n);
+        const juce::Rectangle<float> r (x, cy - 9.5f, w, 19.0f);
+        g.setColour (bg);
+        g.fillRoundedRectangle (r, 5.0f);
+        const auto lf = font (400, 12.0f);
+        const float lw = textWidth (lf, label);
+        g.setColour (ink);
+        g.setFont (lf);
+        g.drawText (label, juce::Rectangle<float> (x + 6.0f, r.getY(), lw + 1.0f, r.getHeight()), juce::Justification::centredLeft, false);
+        g.setColour (col::ink);
+        drawTabular (g, font (600, 12.0f), juce::String (n), x + 6.0f + lw + 4.0f, r.getY(), r.getHeight());
+        return w;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (isMouseOver (true) ? col::rowHover : col::white);
+        g.setColour (col::line);
+        g.fillRect (0, 0, getWidth(), 1);
+
+        const auto& s = owner.core.store().state();
+        if (! s.currentRoom) return;
+        const auto& room = *s.currentRoom;
+        const float cy = 1.0f + 12.0f + 16.0f;
+        const auto countText = juce::String ((int) room.members.size()) + " / " + juce::String (room.capacity);
+        const int chats = unreadChats(), reqs = joinRequests();
+        const auto chatLabel = TXT ("새 채팅"), reqLabel = TXT ("입장 요청");
+        const auto countF = font (400, 12.0f);
+
+        // 방 이름만 줄어든다 (나머지는 줄지 않음, 디자인 flex-shrink:0). 오른쪽 나가기 버튼과는 18
+        const float fixedW = 9.0f + tabularWidth (countF, countText) + 9.0f + badgeWidth (chatLabel, chats) + 9.0f + badgeWidth (reqLabel, reqs);
+        const float leftEnd = (float) leave.getX() - 18.0f;
+        const auto nameF = font (600, 14.0f);
+        const float nameW = juce::jmax (0.0f, std::min ({ 240.0f, textWidth (nameF, room.title) + 1.0f, leftEnd - 18.0f - fixedW }));
+        float x = 18.0f;
+        g.setColour (col::ink);
+        g.setFont (nameF);
+        g.drawText (room.title, juce::Rectangle<float> (x, cy - 16.0f, nameW, 32.0f), juce::Justification::centredLeft, true);
+        x += nameW + 9.0f;
+        g.setColour (col::inkSub);
+        x += drawTabular (g, countF, countText, x, cy - 16.0f, 32.0f) + 9.0f;
+        x += drawBadge (g, x, cy, chatLabel, chats, col::badgeBg, col::inkSub) + 9.0f;
+        drawBadge (g, x, cy, reqLabel, reqs, reqs > 0 ? col::accent : col::badgeBg, reqs > 0 ? col::ink : col::inkSub);
+    }
+
+    void resized() override
+    {
+        const int w = leave.getIdealWidth();
+        leave.setBounds (getWidth() - 18 - w, 1 + 12, w, metric::buttonH);
+    }
+
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (e.mouseWasClicked() && owner.onReturnToRoom) owner.onReturnToRoom();
+    }
+
+    void chatChanged() override { repaint(); }
+
+    struct Hover : juce::MouseListener
+    {
+        explicit Hover (RoomBar& b) : bar (b) {}
+        void mouseEnter (const juce::MouseEvent&) override { bar.repaint(); }
+        void mouseExit (const juce::MouseEvent&) override  { bar.repaint(); }
+        RoomBar& bar;
+    } hover { *this };
+
+    HomeScreen& owner;
+    core::JamSession* jam;
+    Button leave { Button::Kind::secondary, TXT ("나가기") };
+};
+
+//==============================================================================
 HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     : core (c), update (std::move (u)), plugin (c.isPlugin())
 {
@@ -337,7 +455,8 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
     bell.setTooltip (TXT ("알림"));
     bell.onClick = [this] { toggleNotifications(); };
     addAndMakeVisible (settings);
-    settings.onPress = [this] { if (onOpenSettings) onOpenSettings(); };
+    settingsTip = std::make_unique<TipOnHover> (tip, *this, settings, TXT ("설정"), Tip::Place::belowCentre);
+    settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
 
     addChildComponent (later);
     addChildComponent (updateNow);
@@ -424,9 +543,11 @@ HomeScreen::~HomeScreen()
 {
     *alive = false;
     core.store().removeListener (this);
+    confirm.reset();
     modal.reset();
     popover.reset();
     notifications.reset();
+    roomBar.reset();
 }
 
 
@@ -597,10 +718,35 @@ void HomeScreen::enterRoom (const core::Room& room)
     const auto& s = core.store().state();
     if (! core::rooms::hasRoomFor (room, s.me ? s.me->id : juce::String())) return;
     if (room.isApproval() && core.home().isRequestPending (room)) return;
+    // 방 최소화 중: 바로 입장·요청 보내기 모두 먼저 지금 방에서 나간다 (확인 모달)
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    const auto target = room;
+    confirmLeaveThen (false, room.id, [safe, target] { if (safe != nullptr) safe->joinRoomNow (target); });
+}
+
+void HomeScreen::joinRoomNow (const core::Room& room)
+{
     juce::Component::SafePointer<HomeScreen> safe (this);
     core.home().joinRoom (room.id, [safe] (core::Result<core::JoinResult> r)
     {
         if (safe != nullptr && ! r.ok() && safe->onJoinFailure) safe->onJoinFailure (r.err());
+    });
+}
+
+void HomeScreen::joinFriend (const core::Friend& f)
+{
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    const auto fr = f;
+    // 방 최소화 중이면 먼저 확인 (나가는 동안 친구 목록이 다시 만들어지므로 행이 아니라 화면이 이어받는다)
+    confirmLeaveThen (false, fr.room ? fr.room->id : juce::String(), [safe, fr]
+    {
+        if (safe == nullptr) return;
+        safe->core.home().joinFriend (fr, [safe] (core::Result<core::JoinResult> r)
+        {
+            if (safe == nullptr) return;
+            for (auto* row : safe->friendList->rows) row->refreshJoin();
+            if (! r.ok() && safe->onJoinFailure) safe->onJoinFailure (r.err());
+        });
     });
 }
 
@@ -653,6 +799,7 @@ void HomeScreen::openProfile (const core::UserPublic& u)
     {
         if (safe == nullptr) return;
         auto m = std::make_unique<ProfileModal> (safe->core, user, false);
+        m->beforeJoin = safe->leaveGuard();
         m->onJoinFailure = [safe] (const core::ApiError& e)
         {
             juce::MessageManager::callAsync ([safe, e] { if (safe != nullptr && safe->onJoinFailure) safe->onJoinFailure (e); });
@@ -664,6 +811,7 @@ void HomeScreen::openProfile (const core::UserPublic& u)
 void HomeScreen::openJoinCode()
 {
     auto m = std::make_unique<JoinCodeModal> (core);
+    m->beforeJoin = leaveGuard();
     auto* raw = m.get();
     m->onFailure = [this] (const core::ApiError& e)
     {
@@ -679,6 +827,13 @@ void HomeScreen::openJoinCode()
 }
 
 void HomeScreen::openCreateRoom()
+{
+    // 방 최소화 중이면 먼저 "지금 방에서 나가고 새 방을 만들까요?" → 나간 뒤 방 만들기 모달
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    confirmLeaveThen (true, {}, [safe] { if (safe != nullptr) safe->openCreateRoomNow(); });
+}
+
+void HomeScreen::openCreateRoomNow()
 {
     auto m = std::make_unique<CreateRoomModal> (core);
     auto* raw = m.get();
@@ -727,19 +882,100 @@ void HomeScreen::toggleNotifications()
 
 void HomeScreen::closeOverlays()
 {
+    confirm.reset();
     modal.reset();
     popover.reset();
     notifications.reset();
 }
 
+bool HomeScreen::closeTopOverlay()
+{
+    // 최소화 중 확인 모달은 그 아래 모달(코드로 입장·프로필)보다 먼저 닫힌다 (Esc = 취소)
+    if (confirm != nullptr) { confirm.reset(); grabKeyboardFocus(); return true; }
+    if (! hasOverlay()) return false;
+    closeOverlays();
+    return true;
+}
+
 bool HomeScreen::keyPressed (const juce::KeyPress& k)
 {
-    if (k == juce::KeyPress::escapeKey && hasOverlay())
-    {
-        closeOverlays();
-        return true;
-    }
+    if (k == juce::KeyPress::escapeKey) return closeTopOverlay();
     return false;
+}
+
+//==============================================================================
+void HomeScreen::setRoomBar (bool show)
+{
+    if (show == (roomBar != nullptr)) return;
+    if (show)
+    {
+        roomBar = std::make_unique<RoomBar> (*this);
+        addAndMakeVisible (*roomBar);
+    }
+    else
+    {
+        confirm.reset();   // 방이 없어졌으면 확인할 것도 없다
+        roomBar.reset();
+    }
+    resized();
+    repaint();
+}
+
+juce::Component* HomeScreen::devRoomBar() const { return roomBar.get(); }
+Button* HomeScreen::devRoomBarLeave() const     { return roomBar != nullptr ? &roomBar->leave : nullptr; }
+int HomeScreen::devRoomBarUnread() const        { return roomBar != nullptr ? roomBar->unreadChats() : -1; }
+
+std::vector<std::pair<core::Room, juce::Button*>> HomeScreen::devRoomCards() const
+{
+    std::vector<std::pair<core::Room, juce::Button*>> out;
+    for (auto* c : roomList->cards) out.emplace_back (c->room, &c->join);
+    return out;
+}
+
+void HomeScreen::devPreviewRoomBar (const juce::String& what)
+{
+    if (roomBar == nullptr) return;
+    if (what == "arm") roomBar->leave.triggerClick();
+    if (what == "create") openCreateRoom();
+    if (what == "confirm")
+    {
+        const auto& s = core.store().state();
+        for (auto& r : s.publicRooms)
+            if ((! s.currentRoom || r.id != s.currentRoom->id) && core::rooms::hasRoomFor (r, s.me ? s.me->id : juce::String()) && ! r.isApproval()) { enterRoom (r); break; }
+    }
+}
+
+LeaveGuard HomeScreen::leaveGuard()
+{
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    return [safe] (bool create, const juce::String& roomId, std::function<void()> proceed)
+    {
+        if (safe != nullptr) safe->confirmLeaveThen (create, roomId, std::move (proceed));
+    };
+}
+
+void HomeScreen::confirmLeaveThen (bool create, const juce::String& roomId, std::function<void()> proceed)
+{
+    const auto& room = core.store().state().currentRoom;
+    if (! room) { if (proceed) proceed(); return; }
+    if (! create && roomId.isNotEmpty() && roomId == room->id)
+    {
+        // 지금 방이면 나가지 않고 합주 화면으로 돌아간다
+        juce::Component::SafePointer<HomeScreen> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr && safe->onReturnToRoom) safe->onReturnToRoom(); });
+        return;
+    }
+    auto m = std::make_unique<LeaveConfirmModal> (core, create);
+    m->onLeft = std::move (proceed);
+    m->onClose = [this]
+    {
+        juce::Component::SafePointer<HomeScreen> safeSelf (this);
+        juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) { safe->confirm.reset(); safe->grabKeyboardFocus(); } });
+    };
+    confirm = std::move (m);
+    addAndMakeVisible (*confirm);
+    confirm->setBounds (getLocalBounds());
+    confirm->toFront (true);
 }
 
 //==============================================================================
@@ -749,6 +985,7 @@ void HomeScreen::stateChanged (core::StateKey k)
     switch (k)
     {
         case K::publicRooms: case K::config: case K::myRtt: case K::me:
+            if (roomBar != nullptr) roomBar->repaint();
             rebuildRooms();
             // 친구 목록의 참여·요청 버튼도 방의 입장 방식·요청 상태를 따른다 (카드에서 요청하면 친구 쪽도 "요청 보냄")
             for (auto* r : friendList->rows) r->refreshJoin();
@@ -758,6 +995,9 @@ void HomeScreen::stateChanged (core::StateKey k)
             break;
         case K::friendRequests: case K::notifications:
             refreshHeader();
+            break;
+        case K::currentRoom: case K::joinRequests:
+            if (roomBar != nullptr) { roomBar->resized(); roomBar->repaint(); }
             break;
         case K::link:
             refreshHeader();
@@ -838,8 +1078,7 @@ void HomeScreen::resized()
     // 헤더: 오른쪽에 설정, 알림
     {
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
-        const int sw = settings.getIdealWidth();
-        settings.setBounds (h.removeFromRight (sw).withSizeKeepingCentre (sw, metric::buttonH));
+        settings.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         h.removeFromRight (metric::gap);
         bell.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
     }
@@ -864,6 +1103,8 @@ void HomeScreen::resized()
         }
     }
     area.removeFromTop (bannersHeight());
+    // 방 최소화 중: 아래에 막대가 붙고 위의 목록들만 57 줄어든다
+    if (roomBar != nullptr) roomBar->setBounds (area.removeFromBottom (roomBarH));
     area.reduce (metric::padX, metric::padX);
 
     // 오른쪽: 친구 + 친구 추가
@@ -960,6 +1201,7 @@ void HomeScreen::resized()
     }
 
     if (modal != nullptr) modal->setBounds (getLocalBounds());
+    if (confirm != nullptr) confirm->setBounds (getLocalBounds());
     if (popover != nullptr && notifications != nullptr)
     {
         const int h = popover->getPreferredHeight() - 0;

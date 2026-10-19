@@ -1,5 +1,6 @@
 // MEON ui - 디자인 토큰 (docs/design/MEON_Lab.dc.html 의 값 그대로).
 // 포인트 핑크(#FFD8E4)는 면(배경·채움·테두리)에만 쓰고 글자에는 쓰지 않는다.
+// 상태·알림 표시(알림 점, 친구 상태 점 등)에 검은 원(ink)을 쓰지 않는다. 툴팁·아이콘은 해당 없음 (합주 최종 디자인).
 #pragma once
 
 #include <JuceHeader.h>
@@ -33,6 +34,8 @@ namespace col
     const juce::Colour discordHover { 0xFF4752C4u };
     const juce::Colour overlay      { 0x661A1A1Au };   // rgba(26,26,26,0.4)
     const juce::Colour statusOff    { 0xFFD5D5D5u };   // 친구 상태 점: 오프라인
+    const juce::Colour notify       { 0xFFF2545Bu };   // 알림 점 전용 (알림·입장 요청 버튼)
+    const juce::Colour live         { 0xFF34C759u };   // 친구 상태 점: 온라인·합주 중 (meterGreen 과 값은 같지만 의미가 달라 따로 둔다)
     const juce::Colour pageBg       { 0xFFFFFFFFu };
     // 홈·합주 화면의 패널들을 감싸는 작업 영역 바탕 (디자인 파일은 흰색, REMAKE_PLAN 3.6 의 결정이 우선).
     // 안쪽 카드(흰 면 + #E0E0E0 테두리)는 그대로, 상단 바·배너·모달·설정 화면은 흰색 그대로

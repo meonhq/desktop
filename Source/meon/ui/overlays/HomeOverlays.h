@@ -28,6 +28,39 @@ private:
     juce::Colour noteInk;
 };
 
+/** 방 최소화 중 다른 방에 들어가거나 새 방을 만들 때 (create = 새 방, roomId = 들어갈 방, 모르면 빈 값).
+    방에 있으면 확인 모달을 띄우고 나간 뒤 proceed, 방에 없으면 바로 proceed (HomeScreen::confirmLeaveThen) */
+using LeaveGuard = std::function<void (bool create, const juce::String& roomId, std::function<void()> proceed)>;
+
+//==============================================================================
+/** 최소화 중 확인 (합주 최종 디자인): 제목 "지금 방에서 나가고 들어갈까요?"(새 방이면 "… 새 방을 만들까요?"),
+    본문 "<방 이름>에서 나가요." (방 이름만 600 #1A1A1A, 나머지 400 13/1.5 #767676), [취소] [나가고 들어가기|나가고 만들기].
+    바깥 클릭·Esc = 취소. 확인하면 나간 뒤 onLeft, 나가기가 실패하면 진행하지 않고 아래에 오류 */
+class LeaveConfirmModal : public Modal
+{
+public:
+    LeaveConfirmModal (core::MeonCore&, bool create);
+    std::function<void()> onLeft;
+
+private:
+    core::MeonCore& core;
+    juce::String roomName;
+    struct Body : juce::Component
+    {
+        explicit Body (LeaveConfirmModal& m) : owner (m) {}
+        void paint (juce::Graphics&) override;
+        void resized() override;
+        LeaveConfirmModal& owner;
+    } body { *this };
+    Button cancel { Button::Kind::cancel, TXT ("취소") }, ok { Button::Kind::primary };
+    ModalFooter footer;
+    bool busy = false;
+    std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
+    juce::AttributedString text() const;
+    int textHeight() const;
+    void confirm();
+};
+
 //==============================================================================
 /** 코드로 입장 (308). 6칸, "방장에게 받은 6자리 코드를 입력하세요" / 오류 "이 코드로 열린 방이 없어요", 취소·입장("확인 중…") */
 class JoinCodeModal : public Modal
@@ -36,6 +69,8 @@ public:
     explicit JoinCodeModal (core::MeonCore&);
     /** 칸 아래 오류가 아닌 실패 (가득 참·닫힘·연결·버전 …): 모달을 닫고 입장 실패 상자로 */
     std::function<void (const core::ApiError&)> onFailure;
+    /** 방 최소화 중이면 입장 전에 확인 (HomeScreen) */
+    LeaveGuard beforeJoin;
     void focusCode() { code.focusFirst(); }
 
 private:
@@ -54,6 +89,7 @@ private:
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
     void submit();
+    void joinNow();
     void refresh();
 };
 
@@ -175,6 +211,7 @@ public:
     /** 닫기 버튼을 숨긴다 (연결이 끊긴 동안의 토스트: 다시 붙으면 저절로 바뀐다) */
     void setClosable (bool c) { close.setVisible (c); repaint(); }
     juce::String key;   // 초대 ID 등 (지울 때 찾는 용도)
+    const juce::String& getTitle() const { return title; }
     void paint (juce::Graphics&) override;
     void resized() override;
 

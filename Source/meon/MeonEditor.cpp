@@ -1,6 +1,7 @@
 #include "MeonEditor.h"
 #include "ui/dev/WidgetGallery.h"
 #include "ui/dev/DevJamScreen.h"
+#include "ui/dev/UiSelfTest.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
 #include "ui/screens/JamScreen.h"
@@ -92,6 +93,8 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
             devHomePreview = scr == "home" ? juce::String ("home") : scr.fromFirstOccurrenceOf (":", false, false);
         else if (scr == "jam" || scr.startsWith ("jam:") || scr.startsWith ("settings"))
             devHomePreview = scr;   // 합주 화면(가짜 계정으로 비공개 방)·설정 탭 스냅숏
+        if (meon::devOptions().containsKey ("uitest"))
+            devHomePreview = "uitest";   // 화면 자가 테스트 (가짜 계정으로 자동 가입한 홈에서 시작)
     }
    #endif
     core.auth().addListener (this);
@@ -413,6 +416,24 @@ void MeonEditor::applyHomePreview()
     if (appRoot == nullptr) return;
     auto* home = appRoot->getHome();
     const auto p = devHomePreview;
+    if (p == "uitest")
+    {
+        // 화면 자가 테스트: 끝나면 앱을 닫고 실패 수를 종료 코드로 (linux.yml)
+        uiTest = std::make_unique<ui::UiSelfTest> (core, *appRoot, meon::devOptions()["uitest"]);
+        uiTest->onDone = [] (int failures)
+        {
+            juce::MessageManager::callAsync ([failures]
+            {
+                if (auto* app = juce::JUCEApplicationBase::getInstance())
+                {
+                    app->setApplicationReturnValue (failures == 0 ? 0 : 1);
+                    app->systemRequestedQuit();
+                }
+            });
+        };
+        uiTest->start();
+        return;
+    }
     if (p == "create")      home->openCreateRoom();
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
@@ -456,7 +477,8 @@ void MeonEditor::applyHomePreview()
         if (auto* fake = core.fakeServer()) fake->devInviteMe();
         appRoot->addInfoToast (ui::msg::inviteFailure (core::ErrorCode::targetOffline), {});
     }
-    else if (p == "jam:chat" || p == "jam:links")   // 멤버가 있는 공개 방에 들어가 상대 메시지 여러 개(연달아·긴 글·나간 사람) + 내 말풍선
+    else if (p == "jam:chat" || p == "jam:links" || p == "jam:chatwide")   // 멤버가 있는 공개 방에 들어가 상대 메시지 여러 개(연달아·긴 글·나간 사람) + 내 말풍선
+                                                    // jam:chatwide — 같은 화면에서 오른쪽 패널을 가장 넓게 (1280 → 640)
                                                     // jam:links — 같은 방에서 링크가 든 메시지 (남·나, 문장 끝 마침표·괄호·한글 뒤·여러 개·줄바꿈되는 긴 링크)
     {
         const core::Room* pick = nullptr;
@@ -477,6 +499,8 @@ void MeonEditor::applyHomePreview()
                 for (auto& m : st.currentRoom->members)
                     if (! st.me || m.user.id != st.me->id) others.add (m.user.id);
                 if (others.isEmpty()) return;
+                if (p == "jam:chatwide" && safe->appRoot != nullptr)
+                    if (auto* screen = safe->appRoot->getJamScreen()) screen->setSideWidth (100000, false);
                 auto& chat = jam->chat();
                 int n = 0;
                 auto say = [&] (const juce::String& from, const juce::String& text)
@@ -495,6 +519,8 @@ void MeonEditor::applyHomePreview()
                 say (others[0], TXT ("첫 곡 템포 92로 맞춰 주세요"));
                 if (others.size() > 1) say (others[1], TXT ("넵 좋아요. 브릿지에서 한 번 쉬고 들어가는 거 맞죠? 지난번에 거기서 다들 엇갈려서 이번엔 제가 손으로 신호 드릴게요"));
                 chat.sendText (TXT ("좋아요, 저는 준비됐어요"));
+                if (p == "jam:chatwide")   // 패널이 넓으면 내 말풍선은 75% (220..420) 까지
+                    chat.sendText (TXT ("패널을 넓히면 내 말풍선도 넓어져요. 목록 안쪽 폭의 75% 까지, 최대 420 이에요. 상대 메시지는 전체 폭을 써요"));
                 if (others.size() > 2) say (others[2], TXT ("드럼 소리 잘 들려요?"));
                 say ("u_left_preview", TXT ("저는 먼저 나갈게요 (방을 나간 사람: 파트를 몰라 빈 원)"));
             });
@@ -521,13 +547,71 @@ void MeonEditor::applyHomePreview()
     }
     else if (p == "jam" || p.startsWith ("jam:"))
     {
+        // jam:mini — 방 최소화 (홈 + 아래 막대, 배지 0). jam:minihost — 방장 + 긴 방 이름 + 입장 요청 1 + 새 채팅 3.
+        // jam:miniarm — minihost 에서 막대의 나가기를 한 번 누른 상태 (방장 툴팁). jam:miniconfirm / jam:minicreate — 최소화 중
+        // 공개 방 '바로 입장' / '방 만들기' 를 누른 확인 모달
+        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide";
         core::CreateRoom c;
-        c.type = p == "jam:host" ? "public" : "private";
-        if (p == "jam:host") c.entryMode = juce::String ("approval");
-        c.title = TXT ("준호의 새벽 합주");
+        c.type = hostRoom ? "public" : "private";
+        if (hostRoom) c.entryMode = juce::String ("approval");
+        // jam:headerarm — 헤더 겹침 확인: 방장 + 비공개(입장 코드) + 긴 방 이름(30자) + 방 나가기 확인 상태 (툴팁)
+        c.title = p == "jam:minihost" || p == "jam:miniarm" ? TXT ("금요일 밤 홍대 밴드 합주 셋리스트 처음부터 끝까지")
+                : p == "jam:headerarm" ? TXT ("금요일 밤 홍대 밴드 합주 셋리스트를 처음부터 끝까지")
+                                         : TXT ("준호의 새벽 합주");
         juce::Component::SafePointer<MeonEditor> safe (this);
-        core.home().createRoom (c, [safe, p] (core::Result<core::RoomDetail>)
+        core.home().createRoom (c, [safe, p, hostRoom] (core::Result<core::RoomDetail>)
         {
+            if (safe != nullptr && p.startsWith ("jam:mini"))
+            {
+                if (hostRoom)
+                    if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();
+                juce::Timer::callAfterDelay (800, [safe, p, hostRoom]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    safe->appRoot->setMinimized (true);
+                    if (auto* jam = safe->core.jam(); jam != nullptr && hostRoom)
+                        for (int i = 1; i <= 3; ++i)   // 최소화한 뒤 받은 채팅 (막대의 "새 채팅 3")
+                            jam->chat().received ({ jam->chat().group(), "u_left_preview", "id:mini" + juce::String (i), TXT ("미리 보기 채팅 ") + juce::String (i) });
+                    if (auto* home = safe->appRoot->getHome())
+                        home->devPreviewRoomBar (p.fromFirstOccurrenceOf ("jam:mini", false, false));
+                });
+                return;
+            }
+            if (safe != nullptr && p.startsWith ("jam:input") && safe->appRoot != nullptr)
+            {
+                // 채팅 입력 (합주 최종 디자인 7). jam:input — 여러 줄 메시지(내 것·받은 것·긴 단어) + 입력 칸 2줄,
+                // jam:input=scroll — 5줄 (3줄 넘으면 칸 안에서 스크롤), jam:input=962 / jam:input=over — 바이트 표시 (1012 는 빨간색)
+                juce::Timer::callAfterDelay (500, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    auto* screen = safe->appRoot->getJamScreen();
+                    auto* jam = safe->core.jam();
+                    if (screen == nullptr || jam == nullptr) return;
+                    auto& chat = jam->chat();
+                    chat.received ({ chat.group(), "u_left_preview", "id:in1", TXT ("받은 여러 줄 메시지예요\n둘째 줄\n\n한 줄 띄고 넷째 줄") });
+                    chat.sendText (TXT ("내 여러 줄 메시지\n두 번째 줄이에요"));
+                    chat.sendText (TXT ("긴단어도줄끝에서끊겨요ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"));
+                    const auto what = p.fromFirstOccurrenceOf ("=", false, false);
+                    juce::String text = TXT ("입력 칸 첫 줄\n둘째 줄");
+                    if (what == "scroll") text = TXT ("한 줄\n두 줄\n세 줄\n네 줄 (여기부터 스크롤)\n다섯 줄");
+                    auto bytesOf = [] (int n) { juce::String s; while ((int) s.getNumBytesAsUTF8() + 3 <= n) s << TXT ("가"); while ((int) s.getNumBytesAsUTF8() < n) s << "a"; return s; };
+                    if (what == "962") text = bytesOf (962);
+                    if (what == "over") text = bytesOf (1012);
+                    screen->devSetChatInput (text);
+                });
+            }
+            if (safe != nullptr && p == "jam:headerarm" && safe->appRoot != nullptr)   // 확인 상태는 3초 뒤 풀리므로 스냅숏(5초) 직전에
+                juce::Timer::callAfterDelay (3500, [safe]
+                {
+                    if (safe != nullptr && safe->appRoot != nullptr)
+                        if (auto* screen = safe->appRoot->getJamScreen()) screen->devArmLeave();
+                });
+            if (safe != nullptr && p == "jam:wide" && safe->appRoot != nullptr)   // 오른쪽 패널을 가장 넓게 (1280 → 640, 900 → 406)
+                juce::Timer::callAfterDelay (300, [safe]
+                {
+                    if (safe != nullptr && safe->appRoot != nullptr)
+                        if (auto* screen = safe->appRoot->getJamScreen()) screen->setSideWidth (100000, false);
+                });
             if (safe != nullptr && p == "jam:sendoff")   // 셀프 모니터를 켠 채 송출 정지 (내 행이 "지금 안 들림")
                 if (auto* jam = safe->core.jam()) { jam->setSelfMonitor (true); jam->setSendMuted (true); }
             if (safe != nullptr && (p.startsWith ("jam:fold=") || p == "jam:chatfill"))

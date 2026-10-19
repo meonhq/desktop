@@ -31,6 +31,8 @@ public:
     void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 아이콘을 흐린 글자색(#AAAAAA)으로, 옆 이름과 같게
     void setInk (juce::Colour c) { ink = c; repaint(); } // 아이콘 색 = 주변 글자색 (기본 #1A1A1A)
     void setStatus (Status s) { status = s; repaint(); }
+    /** 프로필 창: 상태 점 12×12 (아바타 오른쪽 아래에 붙임) */
+    void setLargeStatusDot (bool b) { largeDot = b; repaint(); }
     void setClickable (bool c) { setMouseCursor (c ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor); }
     std::function<void()> onClick;
     void paint (juce::Graphics&) override;
@@ -52,6 +54,7 @@ private:
     bool dimmed = false;
     juce::Colour ink { col::ink };
     Status status = Status::none;
+    bool largeDot = false;
 };
 
 /** "비공개" 같은 작은 태그 (500 11px #767676, 여백 2·4, 연한 회색 면 badgeBg, 테두리 없음, 모서리 3) */
@@ -131,6 +134,47 @@ private:
     juce::Component* accessory = nullptr;
     IconButton closeButton;
     juce::BorderSize<int> insets;
+};
+
+/** 고정폭 숫자 (디자인 font-variant-numeric: tabular-nums). Pretendard 기본 숫자는 폭이 달라서,
+    숫자는 '0'~'9' 중 가장 넓은 폭의 칸 가운데에 그린다 (숫자가 바뀌어도 옆 글자가 흔들리지 않는다) */
+float tabularWidth (const juce::Font&, const juce::String&);
+/** x 에서 시작해 왼쪽 맞춤, 높이 h 의 세로 가운데. 그린 폭을 돌려준다 */
+float drawTabular (juce::Graphics&, const juce::Font&, const juce::String&, float x, float y, float h);
+
+/** 버튼 툴팁 (합주 최종 디자인): 면 #1A1A1A, 글자 500 12px 흰색, 안쪽 4·7, 모서리 4. 마우스를 받지 않는다.
+    host(그릴 부모)의 자식이고, target 의 아래(또는 위) 6 에 가운데 또는 오른쪽 끝을 맞춘다 */
+class Tip : public juce::Component
+{
+public:
+    enum class Place { belowCentre, belowRight, aboveRight };
+    Tip();
+    /** target 은 host 의 자손이어야 한다 */
+    void show (juce::Component& host, juce::Component& target, const juce::String& text, Place);
+    void hide();
+    juce::Component* getTarget() const { return target.getComponent(); }
+    void paint (juce::Graphics&) override;
+    static int widthFor (const juce::String& text);
+    static constexpr int height = 20;
+private:
+    juce::String text;
+    juce::Component::SafePointer<juce::Component> target;
+};
+
+/** target 에 마우스를 올리면 tip 을 띄우고 내리거나 누르면 감춘다 */
+struct TipOnHover : private juce::MouseListener
+{
+    TipOnHover (Tip& t, juce::Component& host, juce::Component& target, const juce::String& text, Tip::Place);
+    ~TipOnHover() override;
+private:
+    Tip& tip;
+    juce::Component& host;
+    juce::Component& target;
+    juce::String text;
+    Tip::Place place;
+    void mouseEnter (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
 };
 
 /** 팝오버 (테두리 #D5D5D5, 모서리 6, 흰 면, 폭 340). 머리말: 제목 600 15px + 숫자 500 13px #767676 + 닫기 */

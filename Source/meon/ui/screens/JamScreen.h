@@ -15,6 +15,7 @@
 #include "../theme/Icons.h"
 #include "../../core/MeonCore.h"
 #include "../overlays/JamOverlays.h"
+#include "../overlays/HomeOverlays.h"
 
 namespace meon::ui
 {
@@ -30,6 +31,8 @@ public:
     ~JamScreen() override;
 
     std::function<void()> onOpenSettings;
+    /** 로비 보기 (방 최소화): 방에 그대로 있으면서 홈을 보여 준다 (AppRoot) */
+    std::function<void()> onMinimize;
     /** 프로필 창에서 다른 방에 들어가거나 요청하다 실패 (입장 실패 상자, AppRoot) */
     std::function<void (const core::ApiError&)> onJoinFailure;
 
@@ -41,6 +44,19 @@ public:
     void resized() override;
 
     static constexpr int rowH = 59;
+    /** 오른쪽 패널 너비 (합주 최종 디자인 6). 지금 창에 맞춘 값 */
+    int sidePanelWidth() const;
+    /** w 로 바꾼다 (범위에 맞춘다). persist 면 설정에 저장 (앱·플러그인 따로) */
+    void setSideWidth (int w, bool persist);
+    /** 개발용 (화면 자가 테스트): 너비 조절 자리와 그 선 색 */
+    juce::Component* devSideResizer() const;
+    juce::Colour devSideLineColour() const;
+    /** 개발용: 채팅 목록 마지막 메시지의 줄 수 (여러 줄 표시 확인) */
+    int devLastChatLines() const;
+    /** 개발용 스냅숏: 채팅 입력 칸에 글을 넣고 커서를 끝에 */
+    void devSetChatInput (const juce::String&);
+    /** 개발용 스냅숏: 방 나가기를 한 번 누른 상태 */
+    void devArmLeave() { leave.triggerClick(); }
     /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */
     void previewFold (const juce::String& panel, float e);
     /** 개발용: 누른 것처럼 접거나 펼친다 (--screen=jam:chatfill 의 프레임 확인) */
@@ -51,6 +67,7 @@ private:
 public:
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     core::JamSession& jam;
     const bool plugin;
@@ -60,16 +77,24 @@ private:
     std::unique_ptr<Tag> privateTag;
     struct CodeBox;
     std::unique_ptr<CodeBox> codeBox;
-    Button settings { Button::Kind::quiet, TXT ("설정") }, leave { Button::Kind::secondary, TXT ("방 나가기") };
+    Button leave { Button::Kind::secondary, TXT ("방 나가기") };
     IconButton gear { (int) icons::Id::gear, IconButton::Style::plain24, 14.0f };              // 방장: 방 설정
-    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장 + 승인 방: 입장 요청
+    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장: 입장 요청 (요청이 없어도 보임)
+    IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };           // 알림 (받은 친구 요청, 홈과 같은 목록)
+    IconButton settings { (int) icons::Id::gearHeader, IconButton::Style::bordered32, 16.0f }; // 설정
+    IconButton lobby { (int) icons::Id::lobby, IconButton::Style::bordered32, 16.0f };         // 로비 보기 (방 최소화)
+    Tip tip;
+    std::unique_ptr<TipOnHover> settingsTip, lobbyTip;
 
     // 겹침 (방 설정·멤버 관리·프로필, 입장 요청 팝오버)
     std::unique_ptr<Modal> modal;
     std::unique_ptr<Popover> popover;
     std::unique_ptr<JoinRequestList> requestList;
+    std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
+    void closePopover();
     void toggleRequests();
+    void toggleNotifications();
     void openProfile (const juce::String& userId);
     void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);
@@ -88,17 +113,26 @@ private:
     MeterBox inputMeter { TXT ("입력 미터") }, outputMeter { TXT ("출력 미터") };
     bool sendOpen = true, monOpen = true;
 
+    // 오른쪽 패널 너비 조절 (멤버·패널 사이 18 전체, 끌기·더블클릭하면 기본)
+    struct SideResizer;
+    std::unique_ptr<SideResizer> sideResizer;
+    int sideSaved = 0;   // 저장값 (0 = 기본). 작은 창에서 줄어 보여도 그대로 둔다
+
     // 채팅
     Card chatCard;
     struct ChatView;
     std::unique_ptr<ChatView> chatView;
     juce::Viewport chatViewport;
-    TextInput chatInput { TXT ("메시지 입력") };
+    TextInput chatInput { TXT ("메시지 입력"), true };   // 여러 줄 (합주 최종 디자인 7): 1줄 44 ~ 3줄 84, 그다음 칸 안에서 스크롤
     Button chatSend { Button::Kind::link, TXT ("전송") };
     juce::String chatNote;
     struct ChatDecor;
     std::unique_ptr<ChatDecor> chatDecor;   // 목록·입력 사이 구분선, 남은 글자 (채팅 카드 안이라 모달 아래에 그려진다)
     bool chatOpen = true, chatAtBottom = true;
+    int chatLines = 1;                     // 입력 칸에 보이는 줄 (1..3)
+    juce::Rectangle<int> chatCounterArea;  // "962 / 1000" (900 바이트부터, 전송 왼쪽 8)
+    juce::String lastSentChat;             // 늦게 들어온 한글 확정 글자 거르기 (core::chatinput::isLateImeLeftover)
+    juce::int64 lastSentAt = 0;
     void sendChat();
 
     // 친구

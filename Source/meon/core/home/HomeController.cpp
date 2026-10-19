@@ -188,6 +188,21 @@ void HomeController::leaveRoom()
     api.leaveRoom (id, [] (Result<Done>) {});
 }
 
+void HomeController::leaveRoomThen (Callback<Done> done)
+{
+    const auto& room = store.state().currentRoom;
+    if (! room) { done (Done {}); return; }
+    const auto id = room->id;
+    std::weak_ptr<bool> weak = alive;
+    api.leaveRoom (id, [this, weak, id, done] (Result<Done> r)
+    {
+        if (weak.expired()) return;
+        if (! r.ok() && r.code() != ErrorCode::notInRoom) { done (r.err()); return; }
+        if (store.state().currentRoom && store.state().currentRoom->id == id) store.setCurrentRoom (std::nullopt);
+        done (Done {});
+    });
+}
+
 HomeController::QuitLeave HomeController::leaveOnQuit (int timeoutMs)
 {
     const auto& st = store.state();

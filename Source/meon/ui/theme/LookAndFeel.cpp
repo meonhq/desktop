@@ -152,10 +152,17 @@ juce::CaretComponent* LookAndFeel::createCaretComponent (juce::Component* owner)
     return caret;
 }
 
-void LookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar&, int x, int y, int width, int height,
+void LookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar, int x, int y, int width, int height,
                                  bool vertical, int thumbStart, int thumbSize, bool, bool)
 {
     if (thumbSize <= 0) return;
+    if (vertical && (bool) bar.getProperties()["meonChatBar"])
+    {
+        // 채팅 입력 (합주 최종 디자인 7): 칸 오른쪽 끝 4px, #D5D5D5, 모서리 2
+        g.setColour (col::field);
+        g.fillRoundedRectangle (juce::Rectangle<float> ((float) (x + width - 4), (float) thumbStart, 4.0f, (float) thumbSize), 2.0f);
+        return;
+    }
     auto thumb = vertical ? juce::Rectangle<float> ((float) x + 2.0f, (float) thumbStart, (float) width - 4.0f, (float) thumbSize)
                           : juce::Rectangle<float> ((float) thumbStart, (float) y + 2.0f, (float) thumbSize, (float) height - 4.0f);
     g.setColour (col::field);

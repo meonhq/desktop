@@ -92,6 +92,20 @@ void JoinCodeModal::refresh()
 void JoinCodeModal::submit()
 {
     if (! code.isComplete() || busy) return;
+    if (const auto& room = core.store().state().currentRoom; beforeJoin && room)
+    {
+        // 지금 방의 코드면 그 방 (나가지 않고 합주 화면으로)
+        const bool same = room->inviteCode && room->inviteCode->equalsIgnoreCase (code.getCode());
+        std::weak_ptr<bool> weak = alive;
+        beforeJoin (false, same ? room->id : juce::String(), [this, weak] { if (! weak.expired()) joinNow(); });
+        return;
+    }
+    joinNow();
+}
+
+void JoinCodeModal::joinNow()
+{
+    if (! code.isComplete() || busy) return;
     busy = true;
     refresh();
     std::weak_ptr<bool> weak = alive;
@@ -107,6 +121,76 @@ void JoinCodeModal::submit()
             return;
         }
         if (onFailure) onFailure (r.err());
+    });
+}
+
+//==============================================================================
+LeaveConfirmModal::LeaveConfirmModal (core::MeonCore& c, bool create)
+    : Modal (create ? TXT ("지금 방에서 나가고 새 방을 만들까요?") : TXT ("지금 방에서 나가고 들어갈까요?"), 340), core (c)
+{
+    setShowClose (false);
+    if (const auto& room = core.store().state().currentRoom) roomName = room->title;
+    ok.setButtonText (create ? TXT ("나가고 만들기") : TXT ("나가고 들어가기"));
+    body.addAndMakeVisible (footer);
+    footer.setButtons ({ &cancel, &ok });
+    cancel.onPress = [this] { if (onClose) onClose(); };
+    ok.onPress = [this] { confirm(); };
+    setContent (&body, 18 + textHeight() + 18 + ModalFooter::height);
+}
+
+juce::AttributedString LeaveConfirmModal::text() const
+{
+    juce::AttributedString a;
+    a.append (roomName, font (600, 13.0f), col::ink);
+    a.append (TXT ("에서 나가요."), font (400, 13.0f), col::inkSub);
+    a.setLineSpacing (13.0f * 0.6f);   // 13/1.5 (입장 실패 상자와 같은 값)
+    a.setWordWrap (juce::AttributedString::byWord);
+    return a;
+}
+
+int LeaveConfirmModal::textHeight() const
+{
+    juce::TextLayout t;
+    t.createLayout (text(), (float) (340 - metric::padX * 2));
+    return juce::jmax (20, (int) std::ceil (t.getHeight()));
+}
+
+void LeaveConfirmModal::Body::paint (juce::Graphics& g)
+{
+    g.setColour (col::line);
+    g.fillRect (0, 0, getWidth(), 1);
+    juce::TextLayout t;
+    t.createLayout (owner.text(), (float) (getWidth() - metric::padX * 2));
+    t.draw (g, juce::Rectangle<float> ((float) metric::padX, 18.0f, (float) (getWidth() - metric::padX * 2), (float) owner.textHeight()));
+}
+
+void LeaveConfirmModal::Body::resized()
+{
+    owner.footer.setBounds (getLocalBounds().removeFromBottom (ModalFooter::height));
+}
+
+void LeaveConfirmModal::confirm()
+{
+    if (busy) return;
+    busy = true;
+    ok.setDimmed (true);
+    footer.setNote ({}, col::danger);
+    std::weak_ptr<bool> weak = alive;
+    // 나가면 막대가 사라지면서 이 모달도 지워진다 (AppRoot → HomeScreen::setRoomBar). 진행할 일은 미리 받아 둔다
+    auto next = onLeft;
+    core.home().leaveRoomThen ([this, weak, next] (core::Result<core::Done> r)
+    {
+        if (! r.ok())
+        {
+            if (weak.expired()) return;
+            busy = false;
+            ok.setDimmed (false);
+            // 나가지 못했으면 진행하지 않고 오류를 보여 준다 (방은 그대로)
+            footer.setNote (TXT ("방에서 나가지 못했어요 · ") + msg::general (r.err()), col::danger);
+            return;
+        }
+        if (! weak.expired() && onClose) onClose();
+        if (next) next();
     });
 }
 

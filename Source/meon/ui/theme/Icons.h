@@ -18,7 +18,9 @@ enum class Id
     external,       // 외부 링크
     speaker,        // 볼륨
     play,           // 재생 (12×14)
-    check           // 체크
+    check,          // 체크
+    gearHeader,     // 헤더 설정 버튼 (선 1.8, 합주 최종 디자인)
+    lobby           // 로비 보기(방 최소화): 아래 화살표 + 바닥 선
 };
 
 /** area 안에 비율을 지켜 그린다. angleRad 만큼 가운데 기준 회전 */

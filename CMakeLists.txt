@@ -238,6 +238,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/dev/WidgetGallery.cpp
     Source/meon/ui/dev/DevJamScreen.h
     Source/meon/ui/dev/DevJamScreen.cpp
+    Source/meon/ui/dev/UiSelfTest.h
+    Source/meon/ui/dev/UiSelfTest.cpp
 )
 
 # 가짜 서버 초기 데이터 (MeonFixtures::world_json)
@@ -748,6 +750,7 @@ if (MEON_TESTS)
         Source/meon/tests/ConnectionTests.cpp
         Source/meon/tests/FoldTests.cpp
         Source/meon/tests/ChatLinkTests.cpp
+        Source/meon/tests/JamLayoutTests.cpp
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp

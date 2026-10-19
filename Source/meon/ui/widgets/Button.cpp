@@ -134,6 +134,7 @@ Button::Look Button::currentLook() const
             if (disabled) return { col::hoverBg, col::line, col::inkFaint, 600 };
             return { col::accent, col::accent, col::ink, 600 };
         case Kind::secondary:
+            if (armed) return { col::danger, col::danger, col::white, 600 };   // 방 나가기 확인 상태 (합주 최종 디자인)
             return { col::white, col::field, disabled ? col::inkFaint : col::ink, 600 };
         case Kind::quiet:
             return { juce::Colours::transparentWhite, col::field, disabled ? col::inkFaint : col::inkSub, 500 };
@@ -300,9 +301,9 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool)
         icons::draw (g, (icons::Id) icon, r.withSizeKeepingCentre (iconPx, iconPx), highlighted ? inkHover : ink);
         if (dot)
         {
-            // top:6 right:7, 7×7, 1.5px 흰 테두리, 검정 점
-            juce::Rectangle<float> d (r.getRight() - 7.0f - 7.0f, r.getY() + 6.0f, 7.0f, 7.0f);
-            g.setColour (col::ink);
+            // top:6 right:7, 8×8, 1.5px 흰 테두리, 알림 색 (합주 최종 디자인)
+            juce::Rectangle<float> d (r.getRight() - 7.0f - 8.0f, r.getY() + 6.0f, 8.0f, 8.0f);
+            g.setColour (col::notify);
             g.fillEllipse (d);
             g.setColour (col::white);
             g.drawEllipse (d.reduced (0.75f), 1.5f);

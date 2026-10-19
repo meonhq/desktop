@@ -94,8 +94,11 @@ public:
 
     /** 친구가 있는 방에 들어가거나 요청하다 실패 (입장 실패 상자는 화면이 띄운다. 이 창은 먼저 닫힌다) */
     std::function<void (const core::ApiError&)> onJoinFailure;
+    /** 홈(방 최소화 중): 같은 방 참여·요청 전에 확인 (HomeScreen) */
+    LeaveGuard beforeJoin;
 
 private:
+    void joinFriendRoomNow();
     core::MeonCore& core;
     core::UserPublic user;
     const bool inJam;
