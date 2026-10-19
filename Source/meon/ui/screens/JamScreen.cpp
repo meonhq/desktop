@@ -3,6 +3,8 @@
 #include "../../core/api/ApiJson.h"
 #include "../../core/util/ChatLinks.h"
 #include "../Links.h"
+#include "../../MeonSettings.h"
+#include "../../core/model/PanelWidth.h"
 
 namespace meon::ui
 {
@@ -11,7 +13,6 @@ namespace
 {
     constexpr int headerLineY = metric::headerH;
     constexpr int bottomCardH = 48 + 1 + 43;
-    constexpr int bubbleMaxW = 220;
 
     juce::String nameOf (const core::UserPublic& u) { return u.nickname.value_or (u.username); }
 
@@ -262,9 +263,14 @@ struct JamScreen::MemberRow : juce::Component
     void resized() override
     {
         const int gap = owner.plugin ? 24 : 18;
-        // 오른쪽: 핑 48 + 12 + 미터
         auto r = getLocalBounds().withTrimmedLeft (12).withTrimmedRight (18);
-        const int meterW = owner.plugin ? juce::jlimit (84, 150, r.getWidth() / 4) : 150;
+        // 폭이 모자라면 볼륨(150 → 60)이 먼저, 그다음 미터(150 → 84)가 줄어든다 (합주 최종 디자인 6)
+        const int mw = mute.getIdealWidth();
+        const int fixedW = 41 + 9 + mw + 9 + 9 + 19 + 9 + reset.getIdealWidth() + (hostLayout ? 9 + manage.getIdealWidth() : 0)
+                         + gap + 48 + 12;
+        const auto split = core::panel::shrink (r.getWidth() - fixedW);
+        // 오른쪽: 핑 48 + 12 + 미터
+        const int meterW = split.meter;
         meter.setBounds (r.removeFromRight (meterW).withSizeKeepingCentre (meterW, metric::smallH));
         r.removeFromRight (12);
         ping.setBounds (r.removeFromRight (48).withSizeKeepingCentre (48, metric::smallH));
@@ -274,10 +280,9 @@ struct JamScreen::MemberRow : juce::Component
         // 둘째 줄: 음소거 · 볼륨 150 · 패닝 19 · 초기화 (간격 9)
         const int y = 9 + 17 + 5;
         int x = r.getX();
-        const int mw = mute.getIdealWidth();
         mute.setBounds (x, y, mw, metric::smallH);
         x += mw + 9;
-        const int vw = juce::jlimit (60, 150, r.getRight() - x - 9 - 19 - 9 - reset.getIdealWidth() - (hostLayout ? 9 + manage.getIdealWidth() : 0));
+        const int vw = split.slider;
         volume.setBounds (x, y, vw, metric::smallH);
         x += vw + 9;
         pan.setBounds (x, y, 19, 19);
@@ -401,7 +406,7 @@ struct JamScreen::ChatView : juce::Component
             }
             else if (m.kind == K::mine)
             {
-                const int maxText = juce::jmin (bubbleMaxW, inner) - 24;
+                const int maxText = core::panel::myBubbleMax (inner) - 24;   // 패널이 넓으면 75% (220..420)
                 it.links = core::findLinks (m.text);
                 auto probe = makeLayout (m.text, maxText, col::ink, 15.0f, 400, it.links);
                 float tw = 0.0f;
@@ -864,10 +869,99 @@ struct JamScreen::FilePlayer : juce::Component
 };
 
 //==============================================================================
+/** 멤버·패널 사이 18 전체 (본문 높이 전체)가 끄는 자리. 가운데에 2×120 선 (모서리 1): 평소 안 보임, 호버 #D5D5D5, 끄는 중 #1A1A1A.
+    끌면 패널 너비가 바뀌고(놓을 때 저장), 더블클릭하면 기본 너비 */
+struct JamScreen::SideResizer : juce::Component, juce::SettableTooltipClient
+{
+    explicit SideResizer (JamScreen& o) : owner (o)
+    {
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        setTooltip (TXT ("끌어서 너비 조절 · 더블클릭하면 기본 너비"));
+        setRepaintsOnMouseActivity (true);
+    }
+
+    juce::Colour lineColour() const
+    {
+        if (dragging) return col::ink;
+        return isMouseOver() ? col::field : juce::Colours::transparentBlack;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto c = lineColour();
+        if (c.isTransparent()) return;
+        g.setColour (c);
+        g.fillRoundedRectangle (juce::Rectangle<float> (8.0f, (float) getHeight() * 0.5f - 60.0f, 2.0f, 120.0f), 1.0f);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = true;
+        moved = false;
+        startW = owner.sidePanelWidth();
+        startX = e.getScreenX();
+        repaint();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        // 왼쪽으로 끌면 패널이 넓어진다 (패널은 오른쪽에 붙어 있다)
+        moved = moved || e.getScreenX() != startX;
+        if (moved) owner.setSideWidth (startW + (startX - e.getScreenX()), false);
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        dragging = false;
+        if (moved) owner.setSideWidth (owner.sidePanelWidth(), true);   // 그냥 누르기만 했으면 저장값을 건드리지 않는다
+        repaint();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        owner.setSideWidth (core::panel::defaultWidth (owner.plugin), true);
+    }
+
+    JamScreen& owner;
+    bool dragging = false, moved = false;
+    int startW = 0, startX = 0;
+};
+
+juce::Component* JamScreen::devSideResizer() const { return sideResizer.get(); }
+juce::Colour JamScreen::devSideLineColour() const    { return sideResizer->lineColour(); }
+
+int JamScreen::sidePanelWidth() const
+{
+    return core::panel::shownWidth (plugin, getWidth(), sideSaved);
+}
+
+void JamScreen::setSideWidth (int w, bool persist)
+{
+    const int c = core::panel::clampWidth (plugin, getWidth(), w);
+    if (c != sideSaved)
+    {
+        sideSaved = c;
+        resized();
+    }
+    if (persist)
+    {
+        MeonSettings settings;
+        core::panel::save (settings.properties(), plugin, sideSaved);
+        settings.save();
+    }
+}
+
+//==============================================================================
 JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.isPlugin())
 {
     setOpaque (true);
     setWantsKeyboardFocus (true);
+    {
+        MeonSettings settings;
+        sideSaved = core::panel::load (settings.properties(), plugin);   // 앱·플러그인 따로
+    }
+    sideResizer = std::make_unique<SideResizer> (*this);
+    addAndMakeVisible (*sideResizer);
 
     // 헤더
     addAndMakeVisible (roomTitle);
@@ -1203,10 +1297,11 @@ void JamScreen::resized()
     area.removeFromTop (headerLineY + 1);
     area.reduce (metric::padX, metric::padX);
 
-    // 오른쪽: 채팅 · 친구 · 파일
-    const int sideW = plugin ? 240 : 320;
+    // 오른쪽: 채팅 · 친구 · 파일. 너비는 끌어서 바꾼다 (앱 320~, 플러그인 240~, 최대 min(창 50%, 창 − 54 − 440))
+    const int sideW = sidePanelWidth();
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
+    sideResizer->setBounds (side.getX() - metric::padX, headerLineY + 1, metric::padX, getHeight() - headerLineY - 1);
     const bool vMoving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
     const bool hMoving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
     {
@@ -1298,19 +1393,21 @@ void JamScreen::resized()
         const int availW = area.getWidth() - metric::gap;
         bottomAvail = availW;
         const float eSend = fold.value (foldSend), eMon = fold.value (foldMon);
-        // 미터 폭: 열리면 150 (좁거나 플러그인이면 행의 1/3, 84~150), 접히면 행 전체
-        auto meterW = [this] (int rowW, bool open)
+        // 미터 폭: 열리면 150, 폭이 모자라면 슬라이더가 먼저 60 까지 줄고 그다음 미터가 84 까지 (멤버 행과 같은 규칙,
+        // 합주 최종 디자인 6). 접히면 행 전체. bw: 그 줄 왼쪽 버튼 (송출 정지 · 전체 음소거)
+        auto meterW = [] (int rowW, bool open, int bw)
         {
-            return open ? ((plugin || rowW < 400) ? juce::jlimit (84, 150, rowW / 3) : 150) : rowW;
+            return open ? core::panel::shrink (rowW - bw - 12 - 12, std::numeric_limits<int>::max()).meter : rowW;
         };
+        const int sendBw = sendMute.getIdealWidth(), monBw = monMute.getIdealWidth();
         static constexpr int rowInset = 2 + metric::padX * 2;   // 카드 테두리 + 좌우 여백
         core::FoldLayout::Pair ws;
         int sendMeterW, monMeterW;
         if (! hMoving)
         {
             ws = core::FoldLayout::horizontalPair (availW, sendOpen, monOpen);
-            sendMeterW = meterW (ws.first - rowInset, sendOpen);
-            monMeterW = meterW (ws.second - rowInset, monOpen);
+            sendMeterW = meterW (ws.first - rowInset, sendOpen, sendBw);
+            monMeterW = meterW (ws.second - rowInset, monOpen, monBw);
         }
         else
         {
@@ -1321,8 +1418,8 @@ void JamScreen::resized()
                 for (int b = 0; b < 2; ++b)
                 {
                     L[a][b] = core::FoldLayout::horizontalPair (availW, a == 1, b == 1);
-                    MS[a][b] = meterW (L[a][b].first - rowInset, a == 1);
-                    MM[a][b] = meterW (L[a][b].second - rowInset, b == 1);
+                    MS[a][b] = meterW (L[a][b].first - rowInset, a == 1, sendBw);
+                    MM[a][b] = meterW (L[a][b].second - rowInset, b == 1, monBw);
                 }
             ws = core::FoldLayout::blend (L, eSend, eMon, foldFillH);
             sendMeterW = core::FoldLayout::blendValue (MS, eSend, eMon);
@@ -1363,7 +1460,7 @@ void JamScreen::resized()
             m.setBounds (meter);
             const int openRowW = contentW - rowInset;
             const int bw = b.getIdealWidth();
-            const int sw = juce::jmax (0, openRowW - meterW (openRowW, true) - 12 - bw - 12);
+            const int sw = juce::jmax (0, openRowW - meterW (openRowW, true, bw) - 12 - bw - 12);
             const int sx = meter.getX() - 12 - sw;
             s.setBounds (sx, meter.getY(), sw, metric::smallH);
             b.setBounds (sx - 12 - bw, meter.getY(), bw, metric::smallH);

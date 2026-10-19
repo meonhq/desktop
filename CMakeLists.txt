@@ -748,6 +748,7 @@ if (MEON_TESTS)
         Source/meon/tests/ConnectionTests.cpp
         Source/meon/tests/FoldTests.cpp
         Source/meon/tests/ChatLinkTests.cpp
+        Source/meon/tests/JamLayoutTests.cpp
         Source/meon/tests/AppStoreTests.cpp
         Source/meon/tests/MasonryTests.cpp
         Source/meon/tests/AuthTests.cpp

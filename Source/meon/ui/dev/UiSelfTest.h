@@ -54,11 +54,13 @@ private:
     // 입력 (창의 ComponentPeer 로 넣는다: 실제 마우스·키와 같은 길)
     juce::int64 clock = 0;
     juce::ComponentPeer* peer() const;
+    /** 좌표를 주지 않으면 구성 요소 가운데 */
+    static juce::Point<int> centre() { return { std::numeric_limits<int>::min(), 0 }; }
     juce::Point<float> toPeer (juce::Component&, juce::Point<int>) const;
     void mouse (juce::Point<float>, juce::ModifierKeys);
     void moveTo (juce::Component&, juce::Point<int> local);
-    void click (juce::Component&, juce::Point<int> local = { -1, -1 });
-    void doubleClick (juce::Component&, juce::Point<int> local = { -1, -1 });
+    void click (juce::Component&, juce::Point<int> local = centre());
+    void doubleClick (juce::Component&, juce::Point<int> local = centre());
     void drag (juce::Component&, juce::Point<int> from, juce::Point<int> to, int steps = 6);
     void key (const juce::KeyPress&);
     void type (const juce::String&);
@@ -78,6 +80,9 @@ private:
     // 시나리오
     void addLeaveTests();
     void addMinimizeTests();
+    void addResizeTests();
+    /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
+    static juce::String overlaps (juce::Component& parent);
 };
 
 } // namespace meon::ui

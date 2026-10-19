@@ -44,6 +44,13 @@ public:
     void resized() override;
 
     static constexpr int rowH = 59;
+    /** 오른쪽 패널 너비 (합주 최종 디자인 6). 지금 창에 맞춘 값 */
+    int sidePanelWidth() const;
+    /** w 로 바꾼다 (범위에 맞춘다). persist 면 설정에 저장 (앱·플러그인 따로) */
+    void setSideWidth (int w, bool persist);
+    /** 개발용 (화면 자가 테스트): 너비 조절 자리와 그 선 색 */
+    juce::Component* devSideResizer() const;
+    juce::Colour devSideLineColour() const;
     /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */
     void previewFold (const juce::String& panel, float e);
     /** 개발용: 누른 것처럼 접거나 펼친다 (--screen=jam:chatfill 의 프레임 확인) */
@@ -99,6 +106,11 @@ private:
     DbSlider sendGain { -30.0f, 10.0f }, master { -30.0f, 6.0f };
     MeterBox inputMeter { TXT ("입력 미터") }, outputMeter { TXT ("출력 미터") };
     bool sendOpen = true, monOpen = true;
+
+    // 오른쪽 패널 너비 조절 (멤버·패널 사이 18 전체, 끌기·더블클릭하면 기본)
+    struct SideResizer;
+    std::unique_ptr<SideResizer> sideResizer;
+    int sideSaved = 0;   // 저장값 (0 = 기본). 작은 창에서 줄어 보여도 그대로 둔다
 
     // 채팅
     Card chatCard;

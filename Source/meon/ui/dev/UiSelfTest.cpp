@@ -5,6 +5,8 @@
 #include "../screens/JamScreen.h"
 #include "../../core/api/fake/FakeMeonServer.h"
 #include "../../core/model/RoomFilter.h"
+#include "../../core/model/PanelWidth.h"
+#include "../../MeonSettings.h"
 
 namespace meon::ui
 {
@@ -27,6 +29,7 @@ void UiSelfTest::start()
     const auto want = [this] (const char* name) { return which == "all" || which == name; };
     if (want ("leave"))    addLeaveTests();
     if (want ("minimize")) addMinimizeTests();
+    if (want ("resize"))   addResizeTests();
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
 }
@@ -112,15 +115,19 @@ juce::Point<float> UiSelfTest::toPeer (juce::Component& c, juce::Point<int> loca
 {
     auto* p = peer();
     if (p == nullptr) return {};
-    if (local.x < 0) local = c.getLocalBounds().getCentre();
+    if (local == centre()) local = c.getLocalBounds().getCentre();
     return p->getComponent().getLocalPoint (&c, local).toFloat();
 }
 
 void UiSelfTest::mouse (juce::Point<float> pos, juce::ModifierKeys mods)
 {
     if (auto* p = peer())
+    {
+        // 호버 판정(isMouseOver)은 OS 포인터 위치를 보므로 포인터도 같은 자리로 옮긴다 (Xvfb)
+        juce::Desktop::setMousePosition (p->localToGlobal (pos).roundToInt());
         p->handleMouseEvent (juce::MouseInputSource::InputSourceType::mouse, pos, mods,
                              juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation, ++clock);
+    }
 }
 
 void UiSelfTest::moveTo (juce::Component& c, juce::Point<int> local)
@@ -153,7 +160,6 @@ void UiSelfTest::drag (juce::Component& c, juce::Point<int> from, juce::Point<in
 {
     clock += 1000;
     const auto a = toPeer (c, from), b = toPeer (c, to);
-    mouse (a, {});
     mouse (a, juce::ModifierKeys::leftButtonModifier);
     for (int i = 1; i <= n; ++i)
         mouse (a + (b - a) * ((float) i / (float) n), juce::ModifierKeys::leftButtonModifier);
@@ -500,6 +506,129 @@ void UiSelfTest::addMinimizeTests()
         for (auto* t : root.toasts) toast = toast || t->getTitle() == TXT ("방장이 방을 닫았어요");
         expect (toast, TXT ("\"방장이 방을 닫았어요\" 토스트"));
     }, 300);
+}
+
+//==============================================================================
+juce::String UiSelfTest::overlaps (juce::Component& parent)
+{
+    juce::Array<juce::Component*> kids;
+    for (auto* c : parent.getChildren())
+        if (c->isVisible() && ! c->getBounds().isEmpty()) kids.add (c);
+    juce::String out;
+    auto name = [] (juce::Component* c)
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getButtonText().isNotEmpty()) return b->getButtonText();
+        return juce::String (typeid (*c).name()).fromLastOccurrenceOf (":", false, false).retainCharacters ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+    };
+    for (int i = 0; i < kids.size(); ++i)
+    {
+        if (! parent.getLocalBounds().contains (kids[i]->getBounds()))
+            out << name (kids[i]) << " 밖으로; ";
+        for (int k = i + 1; k < kids.size(); ++k)
+            if (kids[i]->getBounds().intersects (kids[k]->getBounds()))
+                out << name (kids[i]) << "×" << name (kids[k]) << "; ";
+    }
+    return out;
+}
+
+// 6. 오른쪽 패널 너비 조절
+void UiSelfTest::addResizeTests()
+{
+    begin (TXT ("6 패널 너비"));
+    enterNewRoom (true);
+    const bool plugin = core.isPlugin();
+    const int def = core::panel::defaultWidth (plugin);
+    add ([this, def]
+    {
+        auto* j = jam();
+        auto* rz = j->devSideResizer();
+        expect (j->sidePanelWidth() == def, TXT ("처음: 기본 너비 ") + juce::String (j->sidePanelWidth()));
+        expect (rz->getWidth() == 18 && rz->getRight() == j->chatCard.getX() && rz->getX() == j->membersCard.getRight(), TXT ("끄는 자리: 멤버·패널 사이 18 전체"));
+        expect (rz->getY() == metric::headerH + 1 && rz->getBottom() == j->getHeight(), TXT ("끄는 자리: 본문 높이 전체"));
+        expect (rz->getMouseCursor() == juce::MouseCursor (juce::MouseCursor::LeftRightResizeCursor), TXT ("커서 col-resize"));
+        expect (j->devSideLineColour().isTransparent(), TXT ("선: 평소 안 보임"));
+        moveTo (*rz, { 9, rz->getHeight() / 2 });
+    });
+    add ([this, def]
+    {
+        auto* j = jam();
+        expect (j->devSideLineColour() == col::field, TXT ("선: 호버 #D5D5D5"));
+        auto* rz = j->devSideResizer();
+        // 누른 채 왼쪽으로 100 (넓어진다)
+        const auto p = toPeer (*rz, { 9, rz->getHeight() / 2 });
+        clock += 1000;
+        mouse (p, juce::ModifierKeys::leftButtonModifier);
+        for (int i = 1; i <= 5; ++i) mouse (p - juce::Point<float> (20.0f * (float) i, 0.0f), juce::ModifierKeys::leftButtonModifier);
+        expect (j->devSideLineColour() == col::ink, TXT ("선: 끄는 중 #1A1A1A"));
+        expect (j->sidePanelWidth() == def + 100, TXT ("왼쪽으로 100 끌면 +100 (") + juce::String (j->sidePanelWidth()) + ")");
+        mouse (p - juce::Point<float> (100.0f, 0.0f), {});
+    });
+    add ([this, plugin, def]
+    {
+        auto* j = jam();
+        MeonSettings settings;
+        expect (core::panel::load (settings.properties(), plugin) == def + 100, TXT ("놓으면 저장 (앱·플러그인 따로)"));
+        auto* rz = j->devSideResizer();
+        drag (*rz, { 9, rz->getHeight() / 2 }, { 9 - 2000, rz->getHeight() / 2 });   // 아주 멀리
+    });
+    add ([this, plugin]
+    {
+        auto* j = jam();
+        const int max = core::panel::maxWidth (plugin, j->getWidth());
+        expect (j->sidePanelWidth() == max, TXT ("최대에서 멈춤 ") + juce::String (j->sidePanelWidth()) + " = " + juce::String (max));
+        expect (j->getWidth() - 54 - j->sidePanelWidth() >= 440, TXT ("멤버 쪽 440 이상"));
+        // 가장 넓을 때 멤버 행·내 오디오·모니터가 겹치지 않는다
+        juce::String bad;
+        if (auto* list = j->memberViewport.getViewedComponent()) for (auto* row : list->getChildren()) bad << overlaps (*row);
+        expect (bad.isEmpty(), TXT ("최대 너비: 멤버 행 겹침 없음 ") + bad);
+        bad = overlaps (j->sendCard) + overlaps (j->monCard);
+        expect (bad.isEmpty(), TXT ("최대 너비: 내 오디오·모니터 겹침 없음 ") + bad);
+        auto* rz = j->devSideResizer();
+        drag (*rz, { 9, rz->getHeight() / 2 }, { 9 + 2000, rz->getHeight() / 2 });
+    });
+    add ([this, def]
+    {
+        auto* j = jam();
+        expect (j->sidePanelWidth() == def, TXT ("최소에서 멈춤 ") + juce::String (j->sidePanelWidth()));
+        auto* rz = j->devSideResizer();
+        drag (*rz, { 9, rz->getHeight() / 2 }, { 9 - 150, rz->getHeight() / 2 });
+    });
+    add ([this, def]
+    {
+        auto* j = jam();
+        expect (j->sidePanelWidth() == def + 150, TXT ("다시 넓힘 +150"));
+        doubleClick (*j->devSideResizer(), { 9, j->devSideResizer()->getHeight() / 2 });
+    });
+    add ([this, plugin, def]
+    {
+        auto* j = jam();
+        MeonSettings settings;
+        expect (j->sidePanelWidth() == def && core::panel::load (settings.properties(), plugin) == def, TXT ("더블클릭: 기본 너비로, 저장도 기본"));
+        auto* rz = j->devSideResizer();
+        drag (*rz, { 9, rz->getHeight() / 2 }, { 9 - 80, rz->getHeight() / 2 });
+    });
+    // 나갔다 다시 들어와도 (새 합주 화면 = 다시 켠 것과 같은 길) 저장한 너비
+    add ([this] { core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("방에서 나옴"), [this] { return ! inRoom() && jam() == nullptr; });
+    enterNewRoom();
+    add ([this, plugin, def]
+    {
+        auto* j = jam();
+        expect (j->sidePanelWidth() == def + 80, TXT ("다시 들어와도 저장한 너비 ") + juce::String (j->sidePanelWidth()));
+        // 작은 창에서는 최대로 보이고 저장값은 그대로
+        j->setSideWidth (100000, true);
+        MeonSettings settings;
+        const int saved = core::panel::load (settings.properties(), plugin);
+        expect (saved == core::panel::maxWidth (plugin, j->getWidth()), TXT ("가장 넓게 저장"));
+        const auto old = j->getBounds();
+        j->setBounds (old.withWidth (old.getWidth() - 200));
+        expect (j->sidePanelWidth() == core::panel::maxWidth (plugin, j->getWidth()) && j->sidePanelWidth() < saved, TXT ("창이 작으면 최대로 보임"));
+        MeonSettings again;
+        expect (core::panel::load (again.properties(), plugin) == saved, TXT ("저장값은 그대로"));
+        j->setBounds (old);
+        expect (j->sidePanelWidth() == saved, TXT ("창을 다시 키우면 저장값"));
+        j->setSideWidth (def, true);   // 다음 시험을 위해 기본으로
+    });
 }
 
 } // namespace meon::ui
