@@ -297,7 +297,7 @@ double RoundTripHistogram::percentileUs (double p) const
 
 void PluginStats::reset()
 {
-    blocks = late = notConnected = otherOwner = 0;
+    blocks = late = notConnected = otherOwner = waitSkipped = 0;
     lastWaitNs = maxWaitNs = maxProcessNs = 0;
     roundTrip.reset();
 }
@@ -416,7 +416,12 @@ void PluginEndpoint::process (const float* const* in, float* const* out, int num
 
     const Mode m = mode.load (std::memory_order_relaxed);
     const uint64_t want = (m == Mode::sameBlock) ? mySeq : mySeq - 1;
-    if (m == Mode::sameBlock)
+    // 방식 A 라도 앱이 앞 블록조차 끝내지 못했으면 기다리지 않는다. 앱이 멈추거나 얼었을 때(살아 있다고 보는 1초 동안)
+    // 매 블록 DAW 오디오 스레드 시간을 기다림에 쓰지 않게 한다
+    const bool appBehind = s->outSeq.load (std::memory_order_acquire) + 1 < mySeq;
+    if (m == Mode::sameBlock && appBehind)
+        stats.waitSkipped++;
+    if (m == Mode::sameBlock && ! appBehind)
     {
         const double blockNs = (double) numSamples / rate.load (std::memory_order_relaxed) * 1.0e9;
         const auto deadline = t0 + (int64_t) (blockNs * (double) std::clamp (timeoutFraction.load (std::memory_order_relaxed), 0.0f, 0.95f));

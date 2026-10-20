@@ -143,6 +143,7 @@ public:
           << T (" | 경과 ") << juce::String (elapsedSeconds(), 0) << T ("초")
           << T (" | 늦은 블록 ") << (juce::int64) st.late.load() << "/" << (juce::int64) blocks
           << T (" | 앱 없음 ") << (juce::int64) st.notConnected.load()
+          << T (" | A 기다림 건너뜀 ") << (juce::int64) st.waitSkipped.load()
           << T (" | 왕복 p50 ") << juce::String (st.roundTrip.percentileUs (50) / 1000.0, 2) << " ms, p99 " << juce::String (st.roundTrip.percentileUs (99) / 1000.0, 2)
           << T (" ms, 최대 ") << juce::String (st.roundTrip.maxNs.load() / 1e6, 2) << " ms"
           << T (" | 최대 기다림 ") << juce::String (st.maxWaitNs.load() / 1e6, 2) << " ms"

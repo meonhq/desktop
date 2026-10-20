@@ -97,7 +97,7 @@ struct HostResult
 {
     std::string mode;
     int sr = 0, bs = 0;
-    uint64_t blocks = 0, late = 0, notConnected = 0, overruns = 0, otherOwner = 0;
+    uint64_t blocks = 0, late = 0, notConnected = 0, overruns = 0, otherOwner = 0, waitSkipped = 0;
     double maxWaitUs = 0, maxProcessUs = 0, appMaxProcessUs = 0, maxWakeLateUs = 0;
     int64_t latMin = -1, latMax = -1;
     uint64_t clicksSent = 0, clicksBack = 0;
@@ -171,6 +171,7 @@ HostResult runHost (const std::string& name, int sr, int bs, Mode mode, double s
     r.late = ep.stats.late;
     r.notConnected = ep.stats.notConnected;
     r.otherOwner = ep.stats.otherOwner;
+    r.waitSkipped = ep.stats.waitSkipped;
     r.maxWaitUs = ep.stats.maxWaitNs / 1000.0;
     r.maxProcessUs = ep.stats.maxProcessNs / 1000.0;
     if (auto* s = ep.channel.get()) r.appMaxProcessUs = s->appMaxProcessNs.load() / 1000.0;
@@ -188,11 +189,11 @@ HostResult runHost (const std::string& name, int sr, int bs, Mode mode, double s
 
 void printResult (const HostResult& r)
 {
-    std::printf ("RESULT {\"otherOwner\":%llu,\"hostSkipped\":%llu,\"mode\":\"%s\",\"sr\":%d,\"bs\":%d,\"seconds\":%.1f,\"blocks\":%llu,\"late\":%llu,\"notConnected\":%llu,"
+    std::printf ("RESULT {\"waitSkipped\":%llu,\"otherOwner\":%llu,\"hostSkipped\":%llu,\"mode\":\"%s\",\"sr\":%d,\"bs\":%d,\"seconds\":%.1f,\"blocks\":%llu,\"late\":%llu,\"notConnected\":%llu,"
                  "\"overruns\":%llu,\"latMinSamples\":%lld,\"latMaxSamples\":%lld,\"extraMs\":%.3f,\"clicks\":\"%llu/%llu\","
                  "\"maxWaitUs\":%.1f,\"maxPluginProcessUs\":%.1f,\"appMaxProcessUs\":%.1f,\"hostWakeLateMaxUs\":%.1f,"
                  "\"hostWakeLateOverHalf\":%llu,\"rtUs\":{\"p50\":%.0f,\"p99\":%.0f,\"p99.9\":%.0f,\"max\":%.0f},\"realtime\":%d}\n",
-                 (unsigned long long) r.otherOwner, (unsigned long long) r.hostSkipped, r.mode.c_str(), r.sr, r.bs, r.seconds, (unsigned long long) r.blocks, (unsigned long long) r.late,
+                 (unsigned long long) r.waitSkipped, (unsigned long long) r.otherOwner, (unsigned long long) r.hostSkipped, r.mode.c_str(), r.sr, r.bs, r.seconds, (unsigned long long) r.blocks, (unsigned long long) r.late,
                  (unsigned long long) r.notConnected, (unsigned long long) r.overruns, (long long) r.latMin, (long long) r.latMax,
                  r.latMax >= 0 ? r.latMax * 1000.0 / r.sr : -1.0, (unsigned long long) r.clicksBack, (unsigned long long) r.clicksSent,
                  r.maxWaitUs, r.maxProcessUs, r.appMaxProcessUs, r.maxWakeLateUs, (unsigned long long) r.wakeLateOverHalf,

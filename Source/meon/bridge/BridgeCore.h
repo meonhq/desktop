@@ -137,6 +137,7 @@ private:
 struct PluginStats
 {
     std::atomic<uint64_t> blocks { 0 }, late { 0 }, notConnected { 0 }, otherOwner { 0 };
+    std::atomic<uint64_t> waitSkipped { 0 };   // 방식 A: 앱이 앞 블록도 못 끝내서 기다리지 않은 블록 (앱이 멈췄을 때 DAW 시간을 쓰지 않게)
     std::atomic<int64_t> lastWaitNs { 0 }, maxWaitNs { 0 }, maxProcessNs { 0 };
     RoundTripHistogram roundTrip;   // 플러그인이 블록을 쓴 때부터 앱 결과가 보일 때까지 (방식과 상관없이 잰다)
     void reset();
