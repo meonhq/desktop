@@ -115,5 +115,19 @@ int socket_set_nonblocking(int socket, int nonblocking);
 
 int socket_connect(int socket, const ip_address& addr, float timeout);
 
+// MEON E8: SIGPIPE 를 소켓 단위로 막는다. 닫힌 TCP 연결에 써도 프로세스가 끝나지 않고 send() 가
+// EPIPE 를 돌려준다 (그러면 지금처럼 연결 오류로 끊김 처리). 프로세스 전체 signal(SIGPIPE, SIG_IGN) 은 쓰지 않는다:
+// 플러그인이면 호스트(DAW)의 신호 처리까지 바뀐다.
+//   macOS·BSD: TCP 소켓을 만든 직후(accept 로 받은 소켓 포함) socket_set_nosigpipe → SO_NOSIGPIPE
+//   Linux: TCP 에 쓰는 send() 마다 socket_send_flags (MSG_NOSIGNAL). Windows 는 SIGPIPE 가 없어 둘 다 아무것도 하지 않는다
+#ifdef MSG_NOSIGNAL
+constexpr int socket_send_flags = MSG_NOSIGNAL;
+#else
+constexpr int socket_send_flags = 0;
+#endif
+
+/** 실패하면 -1 (SO_NOSIGPIPE 가 없는 곳에서는 늘 0) */
+int socket_set_nosigpipe(int socket);
+
 } // net
 } // aoo

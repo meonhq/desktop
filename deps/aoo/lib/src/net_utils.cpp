@@ -53,6 +53,18 @@ int socket_set_nonblocking(int socket, int nonblocking)
     return 0;
 }
 
+int socket_set_nosigpipe(int socket)
+{
+#ifdef SO_NOSIGPIPE
+    int val = 1;
+    if (setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, (char *)&val, sizeof(val)) < 0)
+        return -1;
+#else
+    (void)socket;
+#endif
+    return 0;
+}
+
 // kudos to https://stackoverflow.com/a/46062474/6063908
 int socket_connect(int socket, const ip_address& addr, float timeout)
 {
