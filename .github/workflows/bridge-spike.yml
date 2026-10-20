@@ -1,0 +1,100 @@
+# 브리지 실험 (MEON_BRIDGE_SPIKE, Source/meon/bridge/README.md). 제품 빌드·릴리스와 무관하다.
+# - 실험 플러그인 "Meon Bridge (test)" 와 실험 앱 "Meon Bridge App (test)" 를 만들어 Artifacts 로만 올린다.
+#   릴리스(mac-latest, windows-latest)·자동 업데이트 파일은 건드리지 않는다. 빌드 번호는 늘 0 (자동 업데이트 꺼짐).
+# - 리눅스·macOS 러너에서 플러그인 호스트 없이 통로를 잰다 (meon_bridge_bench). 결과는 실행 요약(Summary)에 표로 남는다.
+name: Bridge spike
+
+on:
+  pull_request:
+    paths: ['Source/meon/bridge/**', '.github/workflows/bridge-spike.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: bridge-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 시험 프로그램 빌드
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -pthread Source/meon/bridge/BridgeBench.cpp Source/meon/bridge/BridgeCore.cpp -o meon_bridge_bench -lrt
+      - name: 측정 (A/B × 블록 × 샘플레이트, 앱 종료·재시작)
+        run: |
+          set -o pipefail
+          B="sudo ./meon_bridge_bench"   # 실시간 우선순위(SCHED_FIFO)를 받으려고 sudo
+          { echo "## 리눅스 러너 (ubuntu-24.04)"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          $B matrix --seconds=10 | tee matrix.txt
+          grep '^|' matrix.txt >> "$GITHUB_STEP_SUMMARY"
+          for m in A B; do $B chaos --mode=$m --seconds=30 2>>chaos.err | tee -a chaos.txt; done
+          { echo; echo '```'; grep CHAOS chaos.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-bench-linux-${{ github.run_number }}
+          path: |
+            matrix.txt
+            chaos.txt
+
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: CMake 구성
+        run: cmake -DCMAKE_BUILD_TYPE=Release -B build -DMEON_BUILD_ID=0 -DMEON_BRIDGE_SPIKE=ON -DMEON_TESTS=OFF
+      - name: 빌드
+        run: cmake --build build --config Release --parallel 4 --target MEONBridge_AU MEONBridge_VST3 MEONBridgeApp_Standalone meon_bridge_bench
+      - name: 측정 (macOS 러너)
+        run: |
+          set -o pipefail
+          B=build/meon_bridge_bench
+          { echo "## macOS 러너 (macos-26)"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          $B matrix --seconds=10 | tee matrix.txt
+          grep '^|' matrix.txt >> "$GITHUB_STEP_SUMMARY"
+          for m in A B; do $B chaos --mode=$m --seconds=30 2>>chaos.err | tee -a chaos.txt; done
+          { echo; echo '```'; grep CHAOS chaos.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: ad-hoc 서명과 묶기
+        run: |
+          A=build/MEONBridge_artefacts/Release
+          P=build/MEONBridgeApp_artefacts/Release/Standalone
+          rm -rf out && mkdir -p out
+          cp -R "$A/AU/Meon Bridge (test).component" "$A/VST3/Meon Bridge (test).vst3" "$P/Meon Bridge App (test).app" out/
+          for b in out/*; do codesign --force --deep --sign - "$b"; codesign --verify --deep "$b"; done
+          cp Source/meon/bridge/INSTALL-mac.txt "out/설치 방법.txt"
+          cp matrix.txt chaos.txt out/
+          ditto -c -k --keepParent out MeonBridge-test-mac.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeonBridge-test-mac-${{ github.run_number }}
+          path: MeonBridge-test-mac.zip
+          retention-days: 30
+
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: ASIO SDK 받기
+        run: |
+          curl -sSL -o asiosdk.zip https://www.steinberg.net/asiosdk
+          unzip -q asiosdk.zip -d asiotmp
+          ASIODIR=$(dirname "$(dirname "$(find asiotmp -path '*common/iasiodrv.h' | head -1)")")
+          mv "$ASIODIR" ../asiosdk
+      - name: CMake 구성
+        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -DMEON_BUILD_ID=0 -DMEON_BRIDGE_SPIKE=ON -DMEON_TESTS=OFF
+      - name: 빌드
+        run: cmake --build build --config Release --parallel --target MEONBridge_VST3 MEONBridgeApp_Standalone
+      - name: 묶기
+        run: |
+          rm -rf out && mkdir -p out
+          cp -R "build/MEONBridge_artefacts/Release/VST3/Meon Bridge (test).vst3" out/
+          cp "build/MEONBridgeApp_artefacts/Release/Standalone/Meon Bridge App (test).exe" out/
+          cp Source/meon/bridge/INSTALL-windows.txt "out/설치 방법.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeonBridge-test-windows-${{ github.run_number }}
+          path: out
+          retention-days: 30
