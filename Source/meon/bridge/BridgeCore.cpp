@@ -455,7 +455,7 @@ void PluginEndpoint::process (const float* const* in, float* const* out, int num
     if (! got)
     {
         silence();
-        stats.late++;
+        if (want > 0) stats.late++;   // 방식 B 의 첫 블록은 앞 블록 결과가 원래 없다 (늦은 것이 아니다)
     }
     finish();
 }
