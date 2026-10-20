@@ -122,7 +122,8 @@ bool Channel::openOnce (const std::string& name)
         {}   // macOS 는 이미 크기가 있으면 실패한다 (다른 쪽이 먼저 만들었을 때). 아래에서 크기를 다시 본다
     for (int i = 0; i < 200 && fstat (fd, &st) == 0 && (size_t) st.st_size < size; ++i)
         usleep (1000);   // 다른 쪽이 크기를 정하는 중 (메시지 스레드에서만 부른다)
-    if ((size_t) st.st_size != size) { errorText = "공유 메모리 크기가 다름 (다른 버전?)"; stale = st.st_size != 0; ::close (fd); return false; }
+    // macOS 는 크기를 페이지 단위로 올려 보고한다 (요청보다 클 수 있다). 형식이 같은지는 아래 머리말로 본다
+    if ((size_t) st.st_size < size) { errorText = "공유 메모리 크기가 다름 (다른 버전?)"; stale = st.st_size != 0; ::close (fd); return false; }
     void* p = mmap (nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     ::close (fd);
     if (p == MAP_FAILED) { errorText = std::string ("mmap: ") + std::strerror (errno); return false; }

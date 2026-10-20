@@ -303,7 +303,8 @@ int runChaos()
     std::atomic<int64_t> hostStartNs { 0 };
     std::thread controller ([&]
     {
-        while (hostStartNs.load() == 0) std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        while (hostStartNs.load() == 0 && ! stopFlag) std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        if (hostStartNs.load() == 0) return;   // 호스트가 통로를 못 열고 끝났다
         pid_t app = -1;
         for (size_t k = 0; k < phases.size(); ++k)
         {

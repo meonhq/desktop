@@ -22,6 +22,7 @@ jobs:
         run: |
           g++ -std=c++17 -O2 -Wall -Wextra -pthread Source/meon/bridge/BridgeBench.cpp Source/meon/bridge/BridgeCore.cpp -o meon_bridge_bench -lrt
       - name: 측정 (A/B × 블록 × 샘플레이트, 앱 종료·재시작)
+        timeout-minutes: 15
         run: |
           set -o pipefail
           B="sudo ./meon_bridge_bench"   # 실시간 우선순위(SCHED_FIFO)를 받으려고 sudo
@@ -46,6 +47,7 @@ jobs:
       - name: 빌드
         run: cmake --build build --config Release --parallel 4 --target MEONBridge_AU MEONBridge_VST3 MEONBridgeApp_Standalone meon_bridge_bench
       - name: 측정 (macOS 러너)
+        timeout-minutes: 15
         run: |
           set -o pipefail
           B=build/meon_bridge_bench
