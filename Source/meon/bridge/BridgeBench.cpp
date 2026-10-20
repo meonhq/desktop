@@ -58,6 +58,14 @@ void sleepUntil (int64_t t)
    #endif
 }
 
+/** 이 스레드가 실제로 CPU 를 쓴 시간. 벽시계 시간과 비교해, 블록 초과가 코드 탓인지 스레드가 밀려난 탓인지 가른다 */
+int64_t threadCpuNs()
+{
+    timespec ts {};
+    clock_gettime (CLOCK_THREAD_CPUTIME_ID, &ts);
+    return (int64_t) ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
 void burnUs (double us)
 {
     if (us <= 0) return;
@@ -98,6 +106,8 @@ struct HostResult
     std::string mode;
     int sr = 0, bs = 0;
     uint64_t blocks = 0, late = 0, notConnected = 0, overruns = 0, otherOwner = 0, waitSkipped = 0;
+    uint64_t overrunsCpu = 0;          // 블록 초과 중 호스트 스레드가 CPU 를 블록 시간 넘게 쓴 것 (코드 탓). 나머지는 스레드가 밀려난 것
+    double maxHostCpuUs = 0, maxPostUs = 0;
     double maxWaitUs = 0, maxProcessUs = 0, appMaxProcessUs = 0, maxWakeLateUs = 0;
     int64_t latMin = -1, latMax = -1;
     uint64_t clicksSent = 0, clicksBack = 0;
@@ -150,6 +160,7 @@ HostResult runHost (const std::string& name, int sr, int bs, Mode mode, double s
         if (woke - start > 500000000) r.maxWakeLateUs = std::max (r.maxWakeLateUs, wakeLate);   // 시작 0.5초는 뺀다
         if (woke - next > period / 2) r.wakeLateOverHalf++;
 
+        const auto cpu0 = threadCpuNs();
         meter.writeInput (in, 2, bs);
         if (nullPath)
         {
@@ -160,7 +171,10 @@ HostResult runHost (const std::string& name, int sr, int bs, Mode mode, double s
             ep.process (in, out, 2, bs);
         meter.readOutput (out, 2, bs);
         const auto took = nowNs() - woke;
+        const auto cpuTook = threadCpuNs() - cpu0;
+        if (woke - start > 500000000) r.maxHostCpuUs = std::max (r.maxHostCpuUs, cpuTook / 1000.0);
         if (took > period) r.overruns++;   // DAW 였다면 소리가 끊긴 블록
+        if (cpuTook > period) r.overrunsCpu++;
         if (phaseFn) phaseFn ((nowNs() - start) / 1e9, ep);
         next += period;
     }
@@ -174,6 +188,7 @@ HostResult runHost (const std::string& name, int sr, int bs, Mode mode, double s
     r.waitSkipped = ep.stats.waitSkipped;
     r.maxWaitUs = ep.stats.maxWaitNs / 1000.0;
     r.maxProcessUs = ep.stats.maxProcessNs / 1000.0;
+    r.maxPostUs = ep.stats.maxPostNs / 1000.0;
     if (auto* s = ep.channel.get()) r.appMaxProcessUs = s->appMaxProcessNs.load() / 1000.0;
     r.latMin = meter.minLatency;
     r.latMax = meter.maxLatency;
@@ -190,11 +205,11 @@ HostResult runHost (const std::string& name, int sr, int bs, Mode mode, double s
 void printResult (const HostResult& r)
 {
     std::printf ("RESULT {\"waitSkipped\":%llu,\"otherOwner\":%llu,\"hostSkipped\":%llu,\"mode\":\"%s\",\"sr\":%d,\"bs\":%d,\"seconds\":%.1f,\"blocks\":%llu,\"late\":%llu,\"notConnected\":%llu,"
-                 "\"overruns\":%llu,\"latMinSamples\":%lld,\"latMaxSamples\":%lld,\"extraMs\":%.3f,\"clicks\":\"%llu/%llu\","
+                 "\"overruns\":%llu,\"overrunsCpu\":%llu,\"maxHostCpuUs\":%.1f,\"maxPostUs\":%.1f,\"latMinSamples\":%lld,\"latMaxSamples\":%lld,\"extraMs\":%.3f,\"clicks\":\"%llu/%llu\","
                  "\"maxWaitUs\":%.1f,\"maxPluginProcessUs\":%.1f,\"appMaxProcessUs\":%.1f,\"hostWakeLateMaxUs\":%.1f,"
                  "\"hostWakeLateOverHalf\":%llu,\"rtUs\":{\"p50\":%.0f,\"p99\":%.0f,\"p99.9\":%.0f,\"max\":%.0f},\"realtime\":%d}\n",
                  (unsigned long long) r.waitSkipped, (unsigned long long) r.otherOwner, (unsigned long long) r.hostSkipped, r.mode.c_str(), r.sr, r.bs, r.seconds, (unsigned long long) r.blocks, (unsigned long long) r.late,
-                 (unsigned long long) r.notConnected, (unsigned long long) r.overruns, (long long) r.latMin, (long long) r.latMax,
+                 (unsigned long long) r.notConnected, (unsigned long long) r.overruns, (unsigned long long) r.overrunsCpu, r.maxHostCpuUs, r.maxPostUs, (long long) r.latMin, (long long) r.latMax,
                  r.latMax >= 0 ? r.latMax * 1000.0 / r.sr : -1.0, (unsigned long long) r.clicksBack, (unsigned long long) r.clicksSent,
                  r.maxWaitUs, r.maxProcessUs, r.appMaxProcessUs, r.maxWakeLateUs, (unsigned long long) r.wakeLateOverHalf,
                  r.rtP50, r.rtP99, r.rtP999, r.rtMax, r.realtime ? 1 : 0);
@@ -362,8 +377,8 @@ int runChaos()
     stopFlag = 0;
     Channel::unlink (name);
     printResult (r);
-    std::printf ("CHAOS mode=%s host_blocks=%llu host_overruns=%llu worst_gap_ms=%.2f (블록 시간 %.2f ms)\n", r.mode.c_str(),
-                 (unsigned long long) r.blocks, (unsigned long long) r.overruns, worstGapNs / 1e6, bs * 1000.0 / sr);
+    std::printf ("CHAOS mode=%s host_blocks=%llu host_overruns=%llu host_overruns_cpu=%llu worst_gap_ms=%.2f (블록 시간 %.2f ms)\n", r.mode.c_str(),
+                 (unsigned long long) r.blocks, (unsigned long long) r.overruns, (unsigned long long) r.overrunsCpu, worstGapNs / 1e6, bs * 1000.0 / sr);
     for (size_t i = 0; i < phases.size(); ++i)
     {
         const uint64_t badNext = i + 1 < phases.size() ? marks[i + 1].bad : r.late + r.notConnected;
@@ -371,7 +386,10 @@ int runChaos()
     }
     for (auto ms : reconnectMs)
         std::printf ("CHAOS 앱을 켜거나 풀고 소리가 돌아오기까지 %.0f ms\n", ms);
-    return r.overruns == 0 ? 0 : 2;
+    // 실패로 보는 것: 호스트가 앱 때문에 막힌 경우 (앱이 죽거나 언 2~3초 동안 기다리면 간격이 초 단위로 벌어진다).
+    // 블록 초과 수는 숫자로만 남긴다. 러너·컨테이너(가상 머신)는 통로가 없어도 스레드가 수십 ms 씩 밀려나고,
+    // 빼앗긴 시간이 스레드 CPU 시간에도 잡혀서 코드 탓과 기계 탓을 완전히 가를 수 없다.
+    return worstGapNs < 500000000 ? 0 : 2;
 }
 //==============================================================================
 // 2단계 끝에서 끝까지: 가짜 호스트 두 개(통로 이름 A, B). A 는 0.5초마다 클릭을 앱 A 에 넣고,

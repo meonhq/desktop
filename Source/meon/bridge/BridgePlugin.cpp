@@ -147,7 +147,8 @@ public:
           << T (" | 왕복 p50 ") << juce::String (st.roundTrip.percentileUs (50) / 1000.0, 2) << " ms, p99 " << juce::String (st.roundTrip.percentileUs (99) / 1000.0, 2)
           << T (" ms, 최대 ") << juce::String (st.roundTrip.maxNs.load() / 1e6, 2) << " ms"
           << T (" | 최대 기다림 ") << juce::String (st.maxWaitNs.load() / 1e6, 2) << " ms"
-          << T (" | 플러그인 최대 처리 ") << juce::String (st.maxProcessNs.load() / 1e6, 2) << " ms";
+          << T (" | 플러그인 최대 처리 ") << juce::String (st.maxProcessNs.load() / 1e6, 2) << " ms"
+          << T (" | 앱 깨우기 최대 ") << juce::String (st.maxPostNs.load() / 1e6, 3) << " ms";
         if (auto* sh = endpoint.channel.get())
             s << T (" | 앱 최대 처리 ") << juce::String (sh->appMaxProcessNs.load() / 1e6, 2) << " ms";
         if (measuring.load())
@@ -295,7 +296,7 @@ public:
         line (T ("왕복 시간 (보통 · 99% · 최대)"), ms (s.roundTrip.percentileUs (50) / 1000.0) + T (" · ") + ms (s.roundTrip.percentileUs (99) / 1000.0) + T (" · ") + ms (s.roundTrip.maxNs.load() / 1e6));
         juce::String appMax = "-";
         if (auto* sh = proc.endpoint.channel.get()) appMax = ms (sh->appMaxProcessNs.load() / 1e6);
-        line (T ("최대 기다림 (A) · 앱 최대 처리"), ms (s.maxWaitNs.load() / 1e6) + T (" · ") + appMax);
+        line (T ("플러그인 최대 처리 · 최대 기다림 (A) · 앱 최대 처리"), ms (s.maxProcessNs.load() / 1e6) + T (" · ") + ms (s.maxWaitNs.load() / 1e6) + T (" · ") + appMax);
         const int e = (int) proc.elapsedSeconds();
         line (T ("경과 시간"), juce::String (e / 60).paddedLeft ('0', 2) + ":" + juce::String (e % 60).paddedLeft ('0', 2)
                                   + (e >= 600 ? T ("  (10분 지남: 기록 파일에 남겼어요)") : juce::String()));

@@ -299,7 +299,7 @@ double RoundTripHistogram::percentileUs (double p) const
 void PluginStats::reset()
 {
     blocks = late = notConnected = otherOwner = waitSkipped = 0;
-    lastWaitNs = maxWaitNs = maxProcessNs = 0;
+    lastWaitNs = maxWaitNs = maxProcessNs = maxPostNs = 0;
     roundTrip.reset();
 }
 
@@ -413,7 +413,12 @@ void PluginEndpoint::process (const float* const* in, float* const* out, int num
         stats.notConnected++;
         return finish();
     }
-    channel.post();
+    {
+        const auto p0 = nowNs();
+        channel.post();
+        const auto dp = nowNs() - p0;
+        if (dp > stats.maxPostNs.load (std::memory_order_relaxed)) stats.maxPostNs = dp;
+    }
 
     const Mode m = mode.load (std::memory_order_relaxed);
     const uint64_t want = (m == Mode::sameBlock) ? mySeq : mySeq - 1;
