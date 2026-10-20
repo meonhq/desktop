@@ -96,8 +96,9 @@ public:
     bool isInRoom() const { return phase == Phase::inRoom; }
     bool isEngineConnected() const { return engine.isConnected(); }
     /** 방 안에서 합주 서버(AOO)와 끊김: 엔진이 끊김을 알렸거나, 상대 소리가 모두 끊긴 채 합주 서버에 닿지 않음.
-        와이파이가 조용히 끊기면 엔진은 한참(TCP 시간 초과) 끊김을 모르기 때문에 두 번째로 확인한다 */
-    bool isJamServerDown() const { return serverLost || serverUnreachable; }
+        와이파이가 조용히 끊기면 엔진은 한참(TCP 시간 초과) 끊김을 모르기 때문에 두 번째로 확인한다.
+        방에 들어와 처음 붙기에 실패한 동안도 끊김이다 (E9: 3초마다 다시 시도, 붙으면 내린다) */
+    bool isJamServerDown() const { return serverLost || serverUnreachable || connectFailing; }
     static constexpr int reachCheckEveryMs = 5000;
     juce::String roomId() const { return currentRoomId; }
 
@@ -216,6 +217,7 @@ private:
     juce::int64 lostAt = 0;
     int reconnectAttempts = 0;
     bool serverLost = false;
+    bool connectFailing = false;   // 입장 뒤 처음 붙기에 실패하는 중 (붙으면 false)
     // AOO 서버 재접속 (R11 PR3): 엔진의 자동 재접속(최근 접속 목록)은 끄고 같은 Connection 으로 직접 다시 붙는다.
     // 서버가 끊겨도 엔진은 그룹 이름을 지우지 않으므로, 다시 붙으면 그룹에도 꼭 다시 들어간다 (needRejoin)
     int reconnectTask = 0, reconnectDelayMs = 0;

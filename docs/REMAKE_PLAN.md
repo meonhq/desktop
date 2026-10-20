@@ -517,6 +517,7 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 | **E6** (승인, R11 PR5 에서 구현. 2026-10-15 범위 축소) | **실제 번호 빌드에서 SonoBus 공개 서버(`aoo.sonobus.net`)로 붙는 길을 막는다**: 엔진에서 이 주소를 쓰는 곳은 `SonoStandaloneFilterApp.cpp` 의 옛 SonoBus 명령줄 연결 옵션(`-c/--connect`·`-g/--group`·`-p`·`-n`·`-q/--headless`·`-l/--load-setup`, `DEFAULT_SERVER_HOST`·`DEFAULT_SERVER_PORT` 사용) 뿐이다. 실제 번호 빌드(`MEON_BUILD_ID != 0`)에서는 이 옵션을 읽은 뒤 버리고 표준 오류에 한 줄 남긴다. 빌드 0 은 그대로이고, 빌드 0 의 가짜 서버가 주는 `aoo.sonobus.net:10998` (`Source/meon`, 1.5)도 남긴다 | 실제 번호 빌드의 MEON 은 운영 서버가 준 `aoo_host` 만 쓴다 (API 2.8). 옛 옵션은 MEON 화면과 무관하게 `aoo.sonobus.net` 에 붙을 수 있는 길이다 | 12줄 추가, 삭제 없음 (`#if`·`#endif` 2줄, 주석 2줄, 빈 줄 1줄 포함). 빌드 0 은 컴파일되는 코드가 같다 (아래 근거) |
 | **E7** (승인 2026-10-15, R11 PR5 에서 구현) | **엔진이 저장된 최근 연결 목록으로 스스로 AOO 서버에 접속하지 않게 한다**: `SonobusAudioProcessor::reconnectToMostRecent()` 가 바로 `false` 를 돌려준다. 빌드 0·실제 번호 빌드 모두 | 이 함수는 (1) 첫 상태 복원 때 `reconnectlast` 파라미터가 켜져 있으면, (2) AOO 서버가 끊겼을 때 `mReconnectAfterServerLoss` 가 켜져 있으면 불려, 최근 연결 목록 첫 항목(옛 설치에 남은 `aoo.sonobus.net` 일 수 있음)으로 접속한다. MEON 은 두 값을 켜지 않지만 상태 복원(앱 시작, DAW 프로젝트)이 다시 켤 수 있다. MEON 은 AOO 재접속을 직접 한다 (R11 PR3) | 4줄 추가, 삭제 없음 (주석 2줄, 빈 줄 1줄 포함) (아래 근거) |
 | **E8** (승인 2026-10-20) | **SIGPIPE 를 TCP 소켓 단위로 막는다**: AOO 라이브러리의 TCP 소켓(클라이언트가 AOO 서버로 붙는 소켓, 서버의 듣기·받은 소켓)에 macOS 는 만든 직후 `SO_NOSIGPIPE`, Linux 는 `send()` 마다 `MSG_NOSIGNAL`. 프로세스 전체 `signal(SIGPIPE, SIG_IGN)` 은 쓰지 않고, 자가 테스트에 있던 무시 처리도 뺐다 | 닫힌 TCP 연결에 쓰면 macOS·Linux 는 기본으로 SIGPIPE 로 프로세스를 끝낸다. 플러그인이면 DAW 전체가 꺼진다. 소켓 단위로 막으면 `send()` 가 EPIPE 를 돌려주고, AOO 는 그것을 지금처럼 연결 오류(`do_disconnect(error)`)로 처리한다 | 4개 파일, 40줄 추가·2줄 바꿈 (주석 포함). Windows 는 컴파일되는 동작이 같다 (아래 근거) |
+| **E9** (승인 2026-10-20) | **AOO 가 붙기 실패를 성공으로 알리지 않게**: `client::try_connect` 는 서버 이름 조회 실패를 실패 코드로 돌려주고, `socket_connect` 는 `select` 뒤에 `SO_ERROR` 를 확인해 거부·실패한 연결을 실패로 본다. 실패를 받는 쪽(MEON `JamSession`)은 처음 붙기 실패를 끊김(`isJamServerDown`)으로 보여 "연결이 끊겼어요" 를 띄우고, 3초마다 다시 시도하다 붙으면 내린다 | 이름을 못 찾으면(와이파이 꺼짐·DNS 실패) `try_connect` 가 0(성공)을 돌려주고, 거부된 연결은 Linux·macOS 에서 쓰기 가능으로만 보여 성공으로 읽혔다. 그러면 앱은 오류 표시도 다시 시도도 없이 연결 안 된 방에 머물렀다 (E8 전에는 이어진 쓰기에서 SIGPIPE) | AOO 2개 파일, 14줄 추가·4줄 바꿈 (주석 포함). MEON `JamSession` (아래 근거) |
 
 **E4 가 보내는 소리에 영향이 없는 근거** (줄 번호는 `remake` 의 eb7c371 기준)
 
@@ -572,6 +573,22 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
   - `--uitest=aoodrop` (이름을 찾을 수 없는 AOO 서버로 방을 빠르게 나갔다 들어가기 10번): E8 없는 빌드 3번 모두 SIGPIPE 로 끝남, E8 빌드 3번 모두 통과.
   - 실제 aooserver 에 붙은 채 방에 있다가 서버를 끝내고(kill -9) 빠르게 나갔다 들어가기 10번: 두 빌드 모두 꺼지지 않았고 평소처럼 "연결이 끊겼어요" 토스트가 떴다 (로컬에서는 연결이 바로 거부돼 쓰기 전에 끊김을 알아차린다).
   - macOS 의 `SO_NOSIGPIPE` 는 이 컨테이너에서 실행해 볼 수 없다 (CI 는 컴파일만 확인).
+
+**E9 근거** (줄 번호는 `claude/aoo-connect-failure` 브랜치 기준)
+
+- 바꾼 곳
+  - `deps/aoo/lib/src/client.cpp` 617–625 (`try_connect`): `gethostbyname` 실패 때 POSIX 는 `EHOSTUNREACH`, Windows 는 `WSAGetLastError()`(0 이면 `WSAHOST_NOT_FOUND`)를 돌려준다. 예전에는 `socket_errno()` 가 0 이라 0(성공)이 나갔다.
+  - `deps/aoo/lib/src/net_utils.cpp` 111–121 (`socket_connect`): `select` 가 끝나면 `errfds` 와 상관없이 `SO_ERROR` 를 읽어 0 이 아니면 실패(-1, errno 에 그 값). Linux·macOS 는 실패한 연결도 쓰기 가능으로만 알린다.
+  - 실패를 받는 쪽: AOO 는 원래대로 `do_connect` 가 `AOONET_CLIENT_CONNECT_EVENT`(실패)를 보내고 소켓을 닫는다. 엔진(`SPP.cpp`)은 그대로다. MEON `JamSession::engineConnected(false)` 가 입장 중(connecting)이면 `connectFailing` 을 세워 `isJamServerDown()` 이 참이 되고(→ `ConnectionWatch` 가 2초 뒤 "연결이 끊겼어요"), 3초마다 `connectEngine()` 을 다시 부른다. 붙으면 내리고("다시 연결됐어요") 그룹에 들어간다. 나가면 내린다. `engine.connect()` 가 바로 실패해도 같은 길이다.
+- 보내는 소리·오디오 처리와 무관하다: AOO 서버(TCP)에 붙는 결과 판정만 바뀐다. 붙은 연결의 동작은 그대로다.
+- 확인 (리눅스, 빌드 0. 로컬 aooserver, 가짜 서버 `--fake-aoo`)
+  - 이름을 못 찾는 서버(`aoo-e9-test`, 와이파이 꺼짐과 같은 길): `합주 서버에 붙지 못함: No route to host` → "연결이 끊겼어요". `/etc/hosts` 에 넣고 aooserver 를 켜자 15초 안에 `합주 서버에 붙음` → 토스트가 내려감.
+  - 거부(듣지 않는 포트): `Connection refused` → "연결이 끊겼어요". 그 포트에 aooserver 를 켜자 다시 붙음.
+  - 틀린 주소(닿지 않는 10.255.255.1): 5초 뒤 `Connection timed out` → "연결이 끊겼어요".
+  - 화면 자가 테스트 `--uitest=aoodrop`(이름을 찾을 수 없는 서버로 빠르게 나갔다 들어가기 10번): 앱이 살아 있고 끊김 표시(`isJamServerDown`, 토스트 lost).
+  - 단위 시험 `MEON_Tests Aoo`(AOO `net_utils.cpp` 를 넣음): 거부된 포트로 `socket_connect` → -1·`ECONNREFUSED` (E9 없으면 성공으로 나와 실패), 끊긴 연결에 쓰기 → EPIPE (E8 없으면 SIGPIPE 로 실행 파일이 끝남). mac·Windows CI 도 이 분류를 실행한다 (macOS 의 `SO_NOSIGPIPE` 를 실제로 확인).
+  - `JamTests`: 처음 붙기 실패 → 끊김, 3초마다 다시, 붙으면 내림, 나가면 내리고 더 시도하지 않음.
+- 남는 경우: TCP 는 붙었지만 로그인 응답 전에 서버가 끊으면 AOO 는 붙기 실패가 아니라 끊김 이벤트를 보낸다. `JamSession` 은 입장 중의 끊김 이벤트를 앞 방의 늦은 알림으로 보고 무시하므로(R11 PR3) 이 경우는 이번 범위에 넣지 않았다.
 
 새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E4 는 고친 뒤 승인받았다 (2026-10-14).
 E 번호는 다시 쓰지 않는다. 하지 않기로 한 수정도 번호를 그대로 두고 "안 함" 으로 표시하며, 새 수정은 다음 번호를 받는다.

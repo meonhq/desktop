@@ -614,8 +614,15 @@ int client::try_connect(const std::string &host, int port){
     // resolve host name
     struct hostent *he = gethostbyname(host.c_str());
     if (!he){
+        // MEON E9: 이름 조회 실패는 errno 를 남기지 않아(POSIX 는 h_errno) 0 이 되곤 했다.
+        // 0 은 성공으로 읽혀 연결되지 않은 소켓을 연결된 것으로 썼다. 늘 실패 코드를 돌려준다
+    #ifdef _WIN32
         int err = socket_errno();
-        LOG_ERROR("aoo_client: couldn't connect (" << err << ")");
+        if (err == 0) err = WSAHOST_NOT_FOUND;
+    #else
+        int err = EHOSTUNREACH;
+    #endif
+        LOG_ERROR("aoo_client: couldn't resolve host " << host << " (" << err << ")");
         return err;
     }
 

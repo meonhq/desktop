@@ -81,6 +81,7 @@ jobs:
           T=build/MEON_Tests_artefacts/Release/MEON_Tests.exe
           MEON_TEST_MOCK=http://127.0.0.1:18080 "$T" Transport
           MEON_TEST_TLS=1 "$T" TransportTls
+          "$T" Aoo   # AOO 소켓: 끊긴 연결에 써도 SIGPIPE 없음(E8), 거부된 연결은 실패(E9)
 
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다

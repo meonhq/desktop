@@ -68,6 +68,7 @@ jobs:
           T=build/MEON_Tests_artefacts/Release/MEON_Tests
           MEON_TEST_MOCK=http://127.0.0.1:18080 "$T" Transport
           MEON_TEST_TLS=1 "$T" TransportTls
+          "$T" Aoo   # AOO 소켓: 끊긴 연결에 써도 SIGPIPE 없음(E8), 거부된 연결은 실패(E9)
 
       - name: macOS 26 아이콘 (Icon Composer)
         # images/icons/AppIcon.icon 을 Xcode 26 의 actool 로 Assets.car 로 만들어 앱에 넣고 CFBundleIconName 을 적는다.

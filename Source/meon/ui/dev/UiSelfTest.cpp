@@ -947,9 +947,9 @@ void UiSelfTest::addFriendRequestTests()
 }
 
 //==============================================================================
-// AOO 서버에 닿지 못하는 곳에서 방을 빠르게 나갔다 들어가기 (E8). 이름을 찾을 수 없는 AOO 서버로 보낸다:
-// AOO 클라이언트는 이름 조회 실패를 연결된 것으로 보고(try_connect 가 0) 연결되지 않은 소켓에 메시지를 쓴다 → EPIPE.
-// 소켓 단위로 SIGPIPE 를 막지 못하면 이 시험에서 앱이 끝난다 (프로세스 전체 SIGPIPE 무시는 쓰지 않는다)
+// AOO 서버에 닿지 못하는 곳에서 방을 빠르게 나갔다 들어가기 (E8·E9). 이름을 찾을 수 없는 AOO 서버로 보낸다.
+// E9 전에는 AOO 가 이름 조회 실패를 연결된 것으로 보고 연결되지 않은 소켓에 썼다 (E8 없이는 SIGPIPE 로 앱이 끝났다).
+// 이제는 붙기 실패로 오고, 앱은 끊김("연결이 끊겼어요")을 보이고 3초마다 다시 시도한다
 void UiSelfTest::addAooDropTests()
 {
     begin (TXT ("AOO 끊김: 빠르게 나갔다 들어가기"));
@@ -972,7 +972,7 @@ void UiSelfTest::addAooDropTests()
         wait (100);
     }
     enterNewRoom();
-    wait (4000);   // 그사이 엔진이 끊긴 연결에 메시지를 쓴다
+    wait (4000);   // 끊김 표시는 2초 뒤에 뜬다 (ConnectionWatch)
     add ([this, oldAoo]
     {
         auto* s = core.jam();
@@ -981,6 +981,8 @@ void UiSelfTest::addAooDropTests()
                   << " serverDown=" << (s != nullptr && s->isJamServerDown()) << " toast=" << (int) toast << std::endl;
         expect (s != nullptr && inRoom() && s->getPhase() != core::JamSession::Phase::inRoom && ! s->isEngineConnected(),
                 TXT ("앱이 살아 있고 합주 서버에 붙지 못한 상태"));
+        expect (s != nullptr && s->isJamServerDown() && toast == core::ConnectionWatch::Toast::lost,
+                TXT ("붙지 못하면 끊김으로 보인다 (\"연결이 끊겼어요\")"));
         core.home().leaveRoom();
         if (auto* f = core.fakeServer()) f->devSetAoo (oldAoo->first, oldAoo->second);
     }, 300);

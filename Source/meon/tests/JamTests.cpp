@@ -752,6 +752,66 @@ public:
             o.logFolder.deleteRecursively();
         }
 
+        beginTest ("Connection: first AOO connect failing (name not found, refused, timed out) is jam server down, retried every 3 s, cleared on connect or leave (E9)");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-connfail");
+            JamSession jam (engine, store, clock, o);
+            struct LinkLog : JamSession::Listener { int changes = 0; void jamServerLinkChanged() override { ++changes; } } log;
+            jam.addListener (&log);
+
+            RoomDetail room;
+            room.id = "r_cf";
+            room.hostId = "u_me";
+            room.connection.aooHost = "aoo.invalid";
+            room.connection.aooPort = 10998;
+            room.connection.groupName = "g";
+            room.connection.aooUsername = "u_me";
+            room.connection.members = { "u_me" };
+            store.setCurrentRoom (room);
+            expect (jam.getPhase() == JamSession::Phase::connecting && ! jam.isJamServerDown());
+            const int c0 = engine.connects;
+
+            engine.failConnect();   // 엔진(AOO)이 붙기 실패를 알림
+            expect (jam.isJamServerDown(), "처음 붙기 실패: 끊김 (\"연결이 끊겼어요\")");
+            expectEquals (log.changes, 1);
+            clock.advance (2999);
+            expectEquals (engine.connects, c0);
+            clock.advance (1);
+            expectEquals (engine.connects, c0 + 1, "3초 뒤 다시");
+            engine.failConnect();
+            expect (jam.isJamServerDown());
+            expectEquals (log.changes, 1, "실패가 이어지는 동안 한 번만 알린다");
+            clock.advance (3000);
+            expectEquals (engine.connects, c0 + 2);
+
+            // 네트워크가 돌아와 붙는다 → 내리고 그룹에 들어간다
+            engine.finishConnect();
+            expect (! jam.isJamServerDown(), "붙으면 내린다 (\"다시 연결됐어요\")");
+            expectEquals (log.changes, 2);
+            engine.finishJoin();
+            expect (jam.isInRoom());
+            clock.advance (30000);
+            expectEquals (engine.connects, c0 + 2, "붙은 뒤에는 더 시도하지 않는다");
+
+            // 실패 중에 나가면 내린다
+            store.setCurrentRoom (std::nullopt);
+            room.id = "r_cf2";
+            store.setCurrentRoom (room);
+            engine.failConnect();
+            expect (jam.isJamServerDown());
+            store.setCurrentRoom (std::nullopt);
+            expect (! jam.isJamServerDown() && jam.getPhase() == JamSession::Phase::idle, "나가면 내린다");
+            const int c1 = engine.connects;
+            clock.advance (10000);
+            expectEquals (engine.connects, c1, "나간 뒤에는 다시 시도하지 않는다");
+            jam.removeListener (&log);
+            o.logFolder.deleteRecursively();
+        }
+
         beginTest ("Home monitor only on the signed-in home screen: start, logout, 4000, forced update, back home");
         {
             using S = AuthController::Step;
