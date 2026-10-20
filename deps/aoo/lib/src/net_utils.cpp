@@ -108,10 +108,13 @@ int socket_connect(int socket, const ip_address& addr, float timeout)
             return -1;
         }
 
-        if (FD_ISSET(socket, &errfds)) // connection failed
+        // MEON E9: 연결이 끝나면 성공·실패 모두 쓰기 가능이 된다. Linux·macOS 는 실패해도 errfds 에 표시하지 않으므로
+        // 결과는 SO_ERROR 로만 알 수 있다 (예전에는 errfds 만 봐서 거부된 연결을 성공으로 봤다)
+        int err = 0; socklen_t len = sizeof(err);
+        if (getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&err, &len) < 0)
+            err = socket_errno();
+        if (err != 0) // connection failed
         {
-            int err; socklen_t len = sizeof(err);
-            getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
         #ifdef _WIN32
             WSASetLastError(err);
         #else

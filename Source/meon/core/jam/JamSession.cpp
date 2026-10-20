@@ -134,7 +134,7 @@ void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
     myId = connection.aooUsername;
     peerStates.clear();
     mix.clear();
-    serverLost = serverUnreachable = peersSilent = false;
+    serverLost = serverUnreachable = peersSilent = connectFailing = false;
     serverLinkMaybeChanged();
     needRejoin = false;
     reconnectAttempts = 0;
@@ -183,11 +183,7 @@ void JamSession::connectEngine()
     }
     if (engine.isConnected()) engine.disconnect();
     if (! engine.connect (connection.aooHost, connection.aooPort, connection.aooUsername, connection.aooUserPassword))
-    {
-        std::weak_ptr<bool> weak = alive;
-        scheduler.cancel (retryTask);
-        retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::connecting) connectEngine(); });
-    }
+        engineConnected (false, LOGTXT ("엔진이 접속을 시작하지 못함"));   // 붙기 실패와 같이: 끊김 표시, 3초 뒤 다시
 }
 
 void JamSession::joinGroup()
@@ -212,7 +208,7 @@ void JamSession::exit (const String& reason)
     scheduler.cancel (reachTask);
     tickTask = retryTask = reconnectTask = reachTask = 0;
     needRejoin = false;
-    serverLost = serverUnreachable = peersSilent = false;
+    serverLost = serverUnreachable = peersSilent = connectFailing = false;
     serverLinkMaybeChanged();
     if (connection.groupName.isNotEmpty()) engine.leaveGroup (connection.groupName);
     engine.disconnect();
@@ -281,7 +277,6 @@ void JamSession::applyAllowed()
 void JamSession::engineConnected (bool ok, const String& message)
 {
     if (phase == Phase::idle) return;
-    juce::ignoreUnused (message);
     if (! ok)
     {
         if (serverLost)
@@ -291,6 +286,14 @@ void JamSession::engineConnected (bool ok, const String& message)
         }
         if (phase == Phase::connecting)
         {
+            // 처음 붙기 실패 (서버 이름을 못 찾음, 거부, 시간 초과): 끊김으로 보인다 ("연결이 끊겼어요", 붙으면 "다시 연결됐어요")
+            if (! connectFailing)
+            {
+                connectFailing = true;
+                AppLog::write ("jam", LOGTXT ("합주 서버에 붙지 못함: ") + message + " (" + connection.aooHost + ":" + String (connection.aooPort) + ")");
+                if (sessionLog.isActive()) sessionLog.addEvent ("serverConnectFailed", message);
+                serverLinkMaybeChanged();
+            }
             std::weak_ptr<bool> weak = alive;
             scheduler.cancel (retryTask);
             retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::connecting) connectEngine(); });
@@ -304,7 +307,12 @@ void JamSession::engineConnected (bool ok, const String& message)
                                                       + String ((scheduler.nowMs() - lostAt) / 1000.0, 1) + " s");
         AppLog::write ("jam", LOGTXT ("합주 서버에 다시 연결됨 (") + String (reconnectAttempts) + LOGTXT ("번 시도)"));
     }
-    serverLost = false;
+    if (connectFailing)
+    {
+        AppLog::write ("jam", LOGTXT ("합주 서버에 붙음 (처음 붙기 실패 뒤)"));
+        if (sessionLog.isActive()) sessionLog.addEvent ("serverConnected", {});
+    }
+    serverLost = connectFailing = false;
     serverLinkMaybeChanged();
     scheduler.cancel (reconnectTask);
     reconnectTask = 0;

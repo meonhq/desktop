@@ -763,8 +763,11 @@ if (MEON_TESTS)
         Source/meon/tests/ContractTests.cpp
         Source/meon/tests/SessionTests.cpp
         Source/meon/tests/SocialTests.cpp
+        Source/meon/tests/AooSocketTests.cpp
+        deps/aoo/lib/src/net_utils.cpp   # AOO 소켓 시험 (E8·E9)
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
+    target_include_directories(MEON_Tests PRIVATE deps/aoo/lib/src)
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
     target_compile_options(MEON_Tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
     target_compile_definitions(MEON_Tests PRIVATE
