@@ -1,5 +1,4 @@
 #include "UiSelfTest.h"
-#include <csignal>
 #include "../AppRoot.h"
 #include "../screens/HomeScreen.h"
 #include "../screens/JamScreen.h"
@@ -22,16 +21,12 @@ UiSelfTest::~UiSelfTest() { stopTimer(); }
 
 void UiSelfTest::start()
 {
-   #if JUCE_LINUX || JUCE_MAC
-    // 이 컨테이너·CI 처럼 AOO 서버(TCP)가 연결을 끊는 곳에서는 엔진이 닫힌 소켓에 쓰다 SIGPIPE 로 앱이 끝난다.
-    // 자가 테스트는 화면을 보는 것이므로 무시한다 (엔진 코드는 그대로)
-    std::signal (SIGPIPE, SIG_IGN);
-   #endif
     const auto want = [this] (const char* name) { return which == "all" || which == name; };
     if (want ("leave"))    addLeaveTests();
     if (want ("minimize")) addMinimizeTests();
     if (want ("resize"))   addResizeTests();
     if (want ("chat"))     addChatInputTests();
+    if (want ("aoodrop"))  addAooDropTests();
     if (want ("rooms"))    addRoomListTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
@@ -788,7 +783,6 @@ void UiSelfTest::addChatInputTests()
     add ([this] { expect (jam()->devLastChatLines() > 1, TXT ("받은 긴 단어도 끊김")); });
 }
 
-
 //==============================================================================
 // 공개 방 목록: 혼자 있던 공개 방에서 나가면 목록에 남지 않는다 (0명 방도 보이지 않는다). 닫힌 방 카드를 누르면 빠지고 토스트
 void UiSelfTest::addRoomListTests()
@@ -949,6 +943,46 @@ void UiSelfTest::addFriendRequestTests()
         expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("합주 화면 줄 수락: 그 줄의 id"));
         expect (requestIds().isEmpty(), TXT ("목록 비움"));
         if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
+    }, 300);
+}
+
+//==============================================================================
+// AOO 서버에 닿지 못하는 곳에서 방을 빠르게 나갔다 들어가기 (E8). 이름을 찾을 수 없는 AOO 서버로 보낸다:
+// AOO 클라이언트는 이름 조회 실패를 연결된 것으로 보고(try_connect 가 0) 연결되지 않은 소켓에 메시지를 쓴다 → EPIPE.
+// 소켓 단위로 SIGPIPE 를 막지 못하면 이 시험에서 앱이 끝난다 (프로세스 전체 SIGPIPE 무시는 쓰지 않는다)
+void UiSelfTest::addAooDropTests()
+{
+    begin (TXT ("AOO 끊김: 빠르게 나갔다 들어가기"));
+    auto oldAoo = std::make_shared<std::pair<juce::String, int>>();
+    add ([this, oldAoo]
+    {
+        if (inRoom()) core.home().leaveRoom();
+        if (auto* f = core.fakeServer())
+        {
+            *oldAoo = f->devAoo();
+            f->devSetAoo ("aoo-selftest.invalid", 10998);   // .invalid: 이름 조회가 늘 실패한다 (RFC 2606)
+        }
+    }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    for (int i = 0; i < 10; ++i)
+    {
+        enterNewRoom();
+        add ([this] { core.home().leaveRoom(); }, 0);
+        waitUntil (TXT ("나감"), [this] { return ! inRoom() && jam() == nullptr; });
+        wait (100);
+    }
+    enterNewRoom();
+    wait (4000);   // 그사이 엔진이 끊긴 연결에 메시지를 쓴다
+    add ([this, oldAoo]
+    {
+        auto* s = core.jam();
+        const auto toast = core.connection().toast();
+        std::cerr << "UITEST INFO aoodrop phase=" << (s != nullptr ? (int) s->getPhase() : -1)
+                  << " serverDown=" << (s != nullptr && s->isJamServerDown()) << " toast=" << (int) toast << std::endl;
+        expect (s != nullptr && inRoom() && s->getPhase() != core::JamSession::Phase::inRoom && ! s->isEngineConnected(),
+                TXT ("앱이 살아 있고 합주 서버에 붙지 못한 상태"));
+        core.home().leaveRoom();
+        if (auto* f = core.fakeServer()) f->devSetAoo (oldAoo->first, oldAoo->second);
     }, 300);
 }
 

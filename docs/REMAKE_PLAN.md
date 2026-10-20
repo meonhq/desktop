@@ -516,6 +516,7 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 | **E5** (승인, R11 PR3 에서 구현) | **서버에 로그인하지 않았을 때 모르는 상대의 연결 요청 거절**: `AOO_INVITE_EVENT`(더미 소스, `SPP.cpp` 3550 근처)는 AOO 서버에 로그인하지 않은 동안(홈, 서버 끊김 중) 어느 주소의 요청이든 받아 이름 없는 피어를 만든다. E1 허용 목록이 켜져 있으면 이 요청을 받지 않는다 | 이름 없는 피어는 E1 필터에 걸리지 않아(`setAllowedPeerNames` 가 이름 없는 피어를 건너뜀), 멤버가 아닌 상대와 소리가 오갈 수 있다 (API 2.8 위반) | 2줄 추가·1줄 삭제 (추가 중 1줄은 주석). 허용 목록이 꺼져 있으면 지금 동작과 같다 (아래 근거) |
 | **E6** (승인, R11 PR5 에서 구현. 2026-10-15 범위 축소) | **실제 번호 빌드에서 SonoBus 공개 서버(`aoo.sonobus.net`)로 붙는 길을 막는다**: 엔진에서 이 주소를 쓰는 곳은 `SonoStandaloneFilterApp.cpp` 의 옛 SonoBus 명령줄 연결 옵션(`-c/--connect`·`-g/--group`·`-p`·`-n`·`-q/--headless`·`-l/--load-setup`, `DEFAULT_SERVER_HOST`·`DEFAULT_SERVER_PORT` 사용) 뿐이다. 실제 번호 빌드(`MEON_BUILD_ID != 0`)에서는 이 옵션을 읽은 뒤 버리고 표준 오류에 한 줄 남긴다. 빌드 0 은 그대로이고, 빌드 0 의 가짜 서버가 주는 `aoo.sonobus.net:10998` (`Source/meon`, 1.5)도 남긴다 | 실제 번호 빌드의 MEON 은 운영 서버가 준 `aoo_host` 만 쓴다 (API 2.8). 옛 옵션은 MEON 화면과 무관하게 `aoo.sonobus.net` 에 붙을 수 있는 길이다 | 12줄 추가, 삭제 없음 (`#if`·`#endif` 2줄, 주석 2줄, 빈 줄 1줄 포함). 빌드 0 은 컴파일되는 코드가 같다 (아래 근거) |
 | **E7** (승인 2026-10-15, R11 PR5 에서 구현) | **엔진이 저장된 최근 연결 목록으로 스스로 AOO 서버에 접속하지 않게 한다**: `SonobusAudioProcessor::reconnectToMostRecent()` 가 바로 `false` 를 돌려준다. 빌드 0·실제 번호 빌드 모두 | 이 함수는 (1) 첫 상태 복원 때 `reconnectlast` 파라미터가 켜져 있으면, (2) AOO 서버가 끊겼을 때 `mReconnectAfterServerLoss` 가 켜져 있으면 불려, 최근 연결 목록 첫 항목(옛 설치에 남은 `aoo.sonobus.net` 일 수 있음)으로 접속한다. MEON 은 두 값을 켜지 않지만 상태 복원(앱 시작, DAW 프로젝트)이 다시 켤 수 있다. MEON 은 AOO 재접속을 직접 한다 (R11 PR3) | 4줄 추가, 삭제 없음 (주석 2줄, 빈 줄 1줄 포함) (아래 근거) |
+| **E8** (승인 2026-10-20) | **SIGPIPE 를 TCP 소켓 단위로 막는다**: AOO 라이브러리의 TCP 소켓(클라이언트가 AOO 서버로 붙는 소켓, 서버의 듣기·받은 소켓)에 macOS 는 만든 직후 `SO_NOSIGPIPE`, Linux 는 `send()` 마다 `MSG_NOSIGNAL`. 프로세스 전체 `signal(SIGPIPE, SIG_IGN)` 은 쓰지 않고, 자가 테스트에 있던 무시 처리도 뺐다 | 닫힌 TCP 연결에 쓰면 macOS·Linux 는 기본으로 SIGPIPE 로 프로세스를 끝낸다. 플러그인이면 DAW 전체가 꺼진다. 소켓 단위로 막으면 `send()` 가 EPIPE 를 돌려주고, AOO 는 그것을 지금처럼 연결 오류(`do_disconnect(error)`)로 처리한다 | 4개 파일, 40줄 추가·2줄 바꿈 (주석 포함). Windows 는 컴파일되는 동작이 같다 (아래 근거) |
 
 **E4 가 보내는 소리에 영향이 없는 근거** (줄 번호는 `remake` 의 eb7c371 기준)
 
@@ -554,6 +555,23 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 - 확인 (리눅스, 빌드 0 로컬 빌드. 최근 연결 `127.0.0.1:10998` 을 넣은 저장 상태, 10998 에서 접속을 기록하는 리스너):
   - 시작할 때 (`reconnectlast` 켬): E7 없는 빌드는 켜자마자 10998 에 접속했고, E7 빌드는 20초 동안 접속하지 않았다.
   - 서버 끊김 (방 안에서 `mReconnectAfterServerLoss` 를 디버거로 켜고 로컬 aooserver 를 8초 멈춤): E7 없는 빌드는 1초마다 10998 에 15번 접속했고, E7 빌드는 한 번도 접속하지 않았다. 두 빌드 모두 MEON 재접속으로 방의 AOO 서버에 다시 붙었다 (4번째 시도).
+
+**E8 근거** (줄 번호는 `claude/sigpipe-socket-guard` 브랜치 기준)
+
+- 바꾼 곳 (모두 `deps/aoo/lib/src`)
+  - `net_utils.hpp` 118–131, `net_utils.cpp` 56–67: `socket_send_flags`(`MSG_NOSIGNAL` 이 있으면 그것, 없으면 0)와 `socket_set_nosigpipe(sock)`(`SO_NOSIGPIPE` 가 있으면 켬, 없으면 아무것도 안 함)
+  - `client.cpp` 610–613 (`try_connect`: TCP 소켓을 만든 직후 `socket_set_nosigpipe`), 929 (`send_server_message_tcp` 의 `::send` 플래그 0 → `socket_send_flags`)
+  - `server.cpp` 107–110 (`aoonet_server_new`: 듣기 소켓), 894–897 (`client_endpoint` 생성자: accept 로 받은 소켓), 1011 (`client_endpoint::send_message` 의 `::send`)
+- 찾아본 범위: 엔진(`Source/` 의 SonoBus 코드)은 TCP 소켓을 직접 만들지 않는다 (`SPP.cpp` 187 의 `SOCK_STREAM` 은 주소 조회 힌트뿐). AOO 의 TCP 는 위 두 곳뿐이고, 소리(피어 간)는 UDP(`sendto`)라 SIGPIPE 와 무관하다. 앱은 AOO 서버를 띄우지 않는다(`startAooServer` 를 부르는 곳이 없음) — 서버 쪽은 같은 코드라 함께 막았다.
+  - AOO 의 `write(waitpipe_[1], …)` 는 같은 객체가 두 끝을 모두 가진 내부 파이프다 (읽는 끝은 소멸할 때만 닫힘). TCP 가 아니어서 이번 범위에서 뺐다.
+  - 엔진 밖(MEON): IXWebSocket 은 이미 소켓 단위로 막는다 (`IXSocketConnect.cpp` 의 `SO_NOSIGPIPE`, `IXSocket.cpp` 의 `MSG_NOSIGNAL`). mbedTLS 의 `mbedtls_net_send` 는 `write()` 라 Linux 에서는 막히지 않지만 macOS 에서는 IX 가 켠 `SO_NOSIGPIPE` 가 적용된다. mbedTLS 의 `signal(SIGPIPE, SIG_IGN)`(`net_prepare`)은 `mbedtls_net_connect/bind` 에서만 불리는데 MEON 은 그 함수를 쓰지 않는다. JUCE 의 HTTP 는 macOS 에서 NSURLSession 이다.
+- 보내는 소리·오디오 처리와 무관하다: 바뀐 것은 AOO 서버와 주고받는 TCP 제어 메시지의 오류 처리뿐이다. 연결이 살아 있을 때 `send()` 결과는 이전과 같다 (`MSG_NOSIGNAL`·`SO_NOSIGPIPE` 는 끊긴 연결에 쓸 때만 다르게 동작한다). Windows 에는 둘 다 정의되지 않아 컴파일되는 코드가 이전과 같다.
+- 확인 (리눅스, 빌드 0 로컬 빌드)
+  - 원인: 이 컨테이너처럼 AOO 서버 이름(`aoo.sonobus.net`)을 찾지 못하면 AOO `try_connect` 가 `couldn't connect (0)` 을 찍고 0(성공)을 돌려준다. 그 뒤 연결되지 않은 소켓에 공개 그룹 감시 메시지를 쓰다 SIGPIPE 로 끝났다 (gdb: `client::send_server_message_tcp` ← `do_group_watch_public`, `client.cpp` 925, flags=0).
+  - 화면 자가 테스트 `--uitest=all` 에서 SIGPIPE 무시를 빼면: E8 없는 빌드 2번 모두 종료 코드 141(SIGPIPE), E8 빌드 2번 모두 통과. E8 빌드 로그에는 `send() failed (32)`(EPIPE)가 찍히고 끊김으로 처리된다.
+  - `--uitest=aoodrop` (이름을 찾을 수 없는 AOO 서버로 방을 빠르게 나갔다 들어가기 10번): E8 없는 빌드 3번 모두 SIGPIPE 로 끝남, E8 빌드 3번 모두 통과.
+  - 실제 aooserver 에 붙은 채 방에 있다가 서버를 끝내고(kill -9) 빠르게 나갔다 들어가기 10번: 두 빌드 모두 꺼지지 않았고 평소처럼 "연결이 끊겼어요" 토스트가 떴다 (로컬에서는 연결이 바로 거부돼 쓰기 전에 끊김을 알아차린다).
+  - macOS 의 `SO_NOSIGPIPE` 는 이 컨테이너에서 실행해 볼 수 없다 (CI 는 컴파일만 확인).
 
 새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E4 는 고친 뒤 승인받았다 (2026-10-14).
 E 번호는 다시 쓰지 않는다. 하지 않기로 한 수정도 번호를 그대로 두고 "안 함" 으로 표시하며, 새 수정은 다음 번호를 받는다.
