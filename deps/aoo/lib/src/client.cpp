@@ -607,6 +607,10 @@ int client::try_connect(const std::string &host, int port){
         LOG_ERROR("aoo_client: couldn't create socket (" << err << ")");
         return err;
     }
+    // MEON E8: 서버가 끊은 연결에 써도 SIGPIPE 로 프로세스가 끝나지 않게 (macOS)
+    if (socket_set_nosigpipe(tcpsocket_) < 0){
+        LOG_WARNING("aoo_client: couldn't set SO_NOSIGPIPE");
+    }
     // resolve host name
     struct hostent *he = gethostbyname(host.c_str());
     if (!he){
@@ -922,7 +926,7 @@ void client::send_server_message_tcp(const char *data, int32_t size){
 
                 int32_t nbytes = 0;
                 while (nbytes < total){
-                    auto res = ::send(tcpsocket_, (char *)buf + nbytes, total - nbytes, 0);
+                    auto res = ::send(tcpsocket_, (char *)buf + nbytes, total - nbytes, socket_send_flags); // MEON E8 (Linux)
                     if (res >= 0){
                         nbytes += res;
                     #if 0

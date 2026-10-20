@@ -104,6 +104,10 @@ aoonet_server * aoonet_server_new(int port, int32_t *err) {
         aoo::net::socket_close(udpsocket);
         return nullptr;
     }
+    // MEON E8: 받은 연결도 client_endpoint 에서 따로 설정한다 (accept 가 소켓 옵션을 물려주지 않을 수 있다)
+    if (aoo::net::socket_set_nosigpipe(tcpsocket) < 0){
+        LOG_WARNING("aoo_server: couldn't set SO_NOSIGPIPE");
+    }
 
     // set SO_REUSEADDR
     val = 1;
@@ -887,6 +891,10 @@ client_endpoint::client_endpoint(server &s, int sock, const ip_address &addr)
     int val = 0;
     // NOTE: on POSIX systems, the socket returned by accept() does *not*
     // inherit file status flags and it might not inherit socket options, either.
+    // MEON E8: 클라이언트가 끊은 연결에 써도 SIGPIPE 로 프로세스가 끝나지 않게 (macOS)
+    if (aoo::net::socket_set_nosigpipe(socket) < 0){
+        LOG_WARNING("client_endpoint: couldn't set SO_NOSIGPIPE");
+    }
 #ifdef _WIN32
     event = WSACreateEvent();
     WSAEventSelect(socket, event, FD_READ | FD_WRITE | FD_CLOSE);
@@ -1000,7 +1008,7 @@ void client_endpoint::send_message(const char *msg, int32_t size){
 
             int32_t nbytes = 0;
             while (nbytes < total){
-                auto res = ::send(socket, (char *)buf + nbytes, total - nbytes, 0);
+                auto res = ::send(socket, (char *)buf + nbytes, total - nbytes, aoo::net::socket_send_flags); // MEON E8 (Linux)
                 if (res >= 0){
                     nbytes += res;
                 #if 0

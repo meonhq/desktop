@@ -1,4 +1,4 @@
-// MEON ui - 개발용 화면 자가 테스트 (--uitest=all|leave|minimize). 빌드 0 (MEON_DEV_OPTIONS) 전용.
+// MEON ui - 개발용 화면 자가 테스트 (--uitest=all|leave|minimize|resize|chat|aoodrop). 빌드 0 (MEON_DEV_OPTIONS) 전용.
 // 실제 창에 마우스·키 이벤트를 넣고(ComponentPeer) 화면·store·엔진 상태를 확인한다. 가짜 서버로 자동 가입한 홈에서 시작한다.
 // 결과는 표준 오류에 "UITEST PASS|FAIL <구역> · <확인>" 한 줄씩, 끝에 "UITEST DONE <통과> passed, <실패> failed".
 // 끝나면 앱을 닫고 실패 수를 종료 코드로 돌려준다 (linux.yml 이 Xvfb 에서 돌린다).
@@ -83,6 +83,7 @@ private:
     void addMinimizeTests();
     void addResizeTests();
     void addChatInputTests();
+    void addAooDropTests();
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

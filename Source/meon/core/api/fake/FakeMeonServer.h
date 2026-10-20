@@ -74,6 +74,9 @@ public:
     void devFriendRequest();                    // 가짜 사용자가 나에게 친구 요청
     void devInviteMe();                         // 가짜 친구가 나를 초대
     void devJoinRequest();                      // 내가 방장인 승인 방에 가짜 사용자가 요청
+    /** 이제부터 만드는·들어가는 방의 AOO 서버 주소 (자가 테스트: 연결을 끊는 서버 흉내) */
+    void devSetAoo (const juce::String& host, int port) { options.aooHost = host; options.aooPort = port; }
+    std::pair<juce::String, int> devAoo() const { return { options.aooHost, options.aooPort }; }
     void setScriptsEnabled (bool);
 
     /** 가짜 기간: 실제 AOO 상대가 내 방(그룹)에 들어오고 나갈 때 (FakeAooDirectory 가 부른다, R4) */
