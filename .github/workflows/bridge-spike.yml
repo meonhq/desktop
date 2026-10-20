@@ -8,6 +8,10 @@ on:
   pull_request:
     paths: ['Source/meon/bridge/**', '.github/workflows/bridge-spike.yml']
   workflow_dispatch:
+    inputs:
+      long_minutes:
+        description: '긴 측정 (분, 48 kHz·128 샘플에서 A·B 각각). 0 이면 하지 않는다'
+        default: '0'
 
 concurrency:
   group: bridge-spike-${{ github.ref }}
@@ -31,12 +35,26 @@ jobs:
           grep '^|' matrix.txt >> "$GITHUB_STEP_SUMMARY"
           for m in A B; do $B chaos --mode=$m --seconds=30 2>>chaos.err | tee -a chaos.txt; done
           { echo; echo '```'; grep CHAOS chaos.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: 긴 측정 (A·B 각 ${{ inputs.long_minutes }}분)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.long_minutes != '0' }}
+        timeout-minutes: 60
+        run: |
+          set -o pipefail
+          B="sudo ./meon_bridge_bench"
+          K="sudo kill"
+          N=${{ inputs.long_minutes }}
+          $B app --name=long1 2>long-app.err & APP=$!
+          sleep 1
+          for m in A B; do $B host --name=long1 --sr=48000 --bs=128 --mode=$m --seconds=$((N * 60)) | tee -a long.txt; done
+          $K $APP; wait $APP || true
+          { echo; echo "### 긴 측정 (48 kHz, 128 샘플, A·B 각 ${N}분)"; echo; echo '```'; grep RESULT long.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: bridge-bench-linux-${{ github.run_number }}
           path: |
             matrix.txt
             chaos.txt
+            long.txt
 
   macos:
     runs-on: macos-26
@@ -56,6 +74,19 @@ jobs:
           grep '^|' matrix.txt >> "$GITHUB_STEP_SUMMARY"
           for m in A B; do $B chaos --mode=$m --seconds=30 2>>chaos.err | tee -a chaos.txt; done
           { echo; echo '```'; grep CHAOS chaos.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: 긴 측정 (A·B 각 ${{ inputs.long_minutes }}분)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.long_minutes != '0' }}
+        timeout-minutes: 60
+        run: |
+          set -o pipefail
+          B="build/meon_bridge_bench"
+          K="kill"
+          N=${{ inputs.long_minutes }}
+          $B app --name=long1 2>long-app.err & APP=$!
+          sleep 1
+          for m in A B; do $B host --name=long1 --sr=48000 --bs=128 --mode=$m --seconds=$((N * 60)) | tee -a long.txt; done
+          $K $APP; wait $APP || true
+          { echo; echo "### 긴 측정 (48 kHz, 128 샘플, A·B 각 ${N}분)"; echo; echo '```'; grep RESULT long.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: ad-hoc 서명과 묶기
         run: |
           A=build/MEONBridge_artefacts/Release
@@ -65,6 +96,7 @@ jobs:
           for b in out/*; do codesign --force --deep --sign - "$b"; codesign --verify --deep "$b"; done
           cp Source/meon/bridge/INSTALL-mac.txt "out/설치 방법.txt"
           cp matrix.txt chaos.txt out/
+          [ -f long.txt ] && cp long.txt out/ || true
           ditto -c -k --keepParent out MeonBridge-test-mac.zip
       - uses: actions/upload-artifact@v4
         with:
