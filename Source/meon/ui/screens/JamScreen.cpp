@@ -1379,7 +1379,7 @@ void JamScreen::resized()
     area.removeFromTop (headerLineY + 1);
     area.reduce (metric::padX, metric::padX);
 
-    // 오른쪽: 채팅 · 친구 · 파일. 너비는 끌어서 바꾼다 (앱 320~, 플러그인 240~, 최대 min(창 50%, 창 − 54 − 440))
+    // 오른쪽: 채팅 · 친구 · 파일. 너비는 끌어서 바꾼다 (앱 320~, 플러그인 240~, 최대 min(창 50%, 창 − 54 − 566))
     const int sideW = sidePanelWidth();
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
