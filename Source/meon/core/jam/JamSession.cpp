@@ -20,6 +20,19 @@ JamSession::JamSession (Engine& e, AppStore& s, Scheduler& sc, Options o)
     engine.addListener (this);
     store.addListener (this);
     chatChannel.addListener (this);
+    // 채팅 아바타·이름: 받은 순간의 보낸 사람 파트·닉네임 (지금 방 멤버 정보에서)
+    chatChannel.senderLookup = [this] (const String& userId)
+    {
+        ChatChannel::Sender s;
+        if (const auto& room = store.state().currentRoom)
+            for (auto& m : room->members)
+                if (m.user.id == userId)
+                {
+                    s.part = m.user.part.value_or (String());
+                    s.name = m.user.nickname.value_or (String());
+                }
+        return s;
+    };
 
     // 방 밖(홈)의 엔진 값도 여기서 맞춘다. 앱·플러그인은 지난 실행의 엔진 상태(셀프 모니터 dry 등)를 다시 읽어 오므로,
     // 그대로 두면 홈에서도 내 소리가 스피커로 나왔다 (버그 21·22). 방 밖에서는 셀프 모니터를 끈다 (설정값은 그대로)
@@ -236,6 +249,7 @@ void JamSession::roomUpdated (const RoomDetail& room)
     connection = room.connection;
     if (connection.aooUsername.isEmpty()) connection.aooUsername = username;
     applyAllowed();
+    chatChannel.fillMissingSenders();   // 가짜 기간처럼 프로필이 늦게 온 상대: 몰랐던 메시지에만 한 번 채운다
     listeners.call ([] (Listener& l) { l.jamMembersChanged(); });
 }
 
@@ -501,7 +515,7 @@ void JamSession::chatMessageAdded (const ChatChannel::Message& m)
     }
     String name;
     if (m.kind == K::mine) { if (const auto& me = store.state().me) name = me->nickname.value_or (String()); }
-    else name = nameOf (m.fromUser);
+    else name = m.senderName;   // 화면과 같은 값: 받은 순간의 닉네임
     if (name.isEmpty()) name = m.fromUser;
     chatLog.add (m.kind == K::mine ? ChatLog::Kind::mine : ChatLog::Kind::other, name, m.text);
 }

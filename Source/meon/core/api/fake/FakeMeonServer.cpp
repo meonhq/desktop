@@ -381,6 +381,7 @@ void FakeMeonServer::emit (const String& toUser, const String& type, const var& 
 {
     if (onEmitForTest) onEmitForTest (toUser, type, data);
     if (! wsOpen || wsUser.isEmpty() || toUser != wsUser || sink == nullptr) return;
+    if (dropEventForTest && dropEventForTest (type, data)) return;
     auto msg = RealtimeEvent::encode (type, ++seq, data);
     std::weak_ptr<bool> weak = alive;
     const int gen = connectionGen;
@@ -627,9 +628,25 @@ void FakeMeonServer::fakeHostConsider (const String& requestId)
 
 void FakeMeonServer::send (const HttpRequest& req, std::function<void (HttpResponse)> done)
 {
-    auto response = handle (req);
+    if (holdForTest)
+        if (const int ms = holdForTest (req); ms > 0)
+        {
+            std::weak_ptr<bool> weak = alive;
+            scheduler.post (ms, [this, weak, req, done] { if (! weak.expired()) respond (req, done); });
+            return;
+        }
+    respond (req, std::move (done));
+}
+
+void FakeMeonServer::respond (const HttpRequest& req, std::function<void (HttpResponse)> done)
+{
+    if (onRequestForTest) onRequestForTest (req);
+    std::optional<HttpResponse> canned;
+    if (replyForTest) canned = replyForTest (req);
+    auto response = canned ? *canned : handle (req);
+    const int extra = slowForTest ? juce::jmax (0, slowForTest (req)) : 0;
     std::weak_ptr<bool> weak = alive;
-    scheduler.post (options.latencyMs, [weak, done, response]
+    scheduler.post (options.latencyMs + extra, [weak, done, response]
     {
         if (! weak.expired() && done) done (response);
     });

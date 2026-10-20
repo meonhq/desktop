@@ -27,6 +27,7 @@ public:
         r.id = id;
         r.title = id;
         r.hostId = "u_h";
+        r.memberCount = 1;
         r.createdAt = "2026-10-13T07:33:00Z";
         return r;
     }
@@ -47,6 +48,21 @@ public:
         expectEquals (store.state().findPublicRoom ("b")->title, juce::String ("B2"));
         store.event (ev ("rooms.removed", json::obj ({ { "room_id", "a" } })));
         expect (store.state().findPublicRoom ("a") == nullptr);
+
+        beginTest ("rooms with no members are not shown (closing; GET /rooms can read the room before and its members after the last leave)");
+        {
+            auto empty = room ("z");
+            empty.memberCount = 0;
+            store.setPublicRooms ({ room ("a"), empty, room ("b") });
+            expect (store.state().findPublicRoom ("z") == nullptr && store.state().publicRooms.size() == 2, "목록 응답의 0명 방");
+            store.event (ev ("rooms.added", json::encode (empty)));
+            expect (store.state().findPublicRoom ("z") == nullptr, "rooms.added 0명");
+            auto emptied = room ("a");
+            emptied.memberCount = 0;
+            store.event (ev ("rooms.updated", json::encode (emptied)));
+            expect (store.state().findPublicRoom ("a") == nullptr, "rooms.updated 로 0명이 되면 뺀다");
+            expect (store.state().findPublicRoom ("b") != nullptr);
+        }
 
         beginTest ("friend request → unread dot");
         keys.clear();

@@ -28,6 +28,7 @@ void AppStore::setConfig (const Config& c)        { s.config = c; s.configLoaded
 
 void AppStore::setPublicRooms (std::vector<Room> list)
 {
+    list.erase (std::remove_if (list.begin(), list.end(), [] (const Room& r) { return r.memberCount <= 0; }), list.end());
     s.publicRooms = std::move (list);
     s.publicRoomsLoaded = true;
     changed (StateKey::publicRooms);
@@ -35,10 +36,19 @@ void AppStore::setPublicRooms (std::vector<Room> list)
 
 void AppStore::upsertPublicRoom (const Room& r)
 {
+    if (r.memberCount <= 0) { removePublicRoom (r.id); return; }
     for (auto& x : s.publicRooms)
         if (x.id == r.id) { x = r; changed (StateKey::publicRooms); return; }
     s.publicRooms.insert (s.publicRooms.begin(), r);   // 새 방은 앞 (생성 시각 내림차순)
     changed (StateKey::publicRooms);
+}
+
+void AppStore::removePublicRoom (const String& roomId)
+{
+    auto& v = s.publicRooms;
+    const auto before = v.size();
+    v.erase (std::remove_if (v.begin(), v.end(), [&] (const Room& r) { return r.id == roomId; }), v.end());
+    if (v.size() != before) changed (StateKey::publicRooms);
 }
 
 void AppStore::sortFriends (std::vector<Friend>& list)
@@ -80,6 +90,14 @@ void AppStore::removeFriendRequest (const String& id)
 {
     auto& v = s.friendRequests;
     v.erase (std::remove_if (v.begin(), v.end(), [&] (const FriendRequest& f) { return f.id == id; }), v.end());
+    changed (StateKey::friendRequests);
+}
+
+void AppStore::restoreFriendRequest (const FriendRequest& fr, size_t index)
+{
+    auto& v = s.friendRequests;
+    if (std::any_of (v.begin(), v.end(), [&] (const FriendRequest& f) { return f.id == fr.id; })) return;
+    v.insert (v.begin() + (std::ptrdiff_t) juce::jmin (index, v.size()), fr);
     changed (StateKey::friendRequests);
 }
 
@@ -225,12 +243,8 @@ void AppStore::event (const RealtimeEvent& e)
             break;
 
         case K::roomsRemoved:
-        {
-            auto& v = s.publicRooms;
-            v.erase (std::remove_if (v.begin(), v.end(), [&] (const Room& r) { return r.id == e.roomId; }), v.end());
-            changed (StateKey::publicRooms);
+            removePublicRoom (e.roomId);
             break;
-        }
 
         case K::roomUpdated:
             if (s.currentRoom && s.currentRoom->id == e.roomDetail->id)

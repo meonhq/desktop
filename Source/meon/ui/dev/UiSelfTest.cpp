@@ -27,6 +27,8 @@ void UiSelfTest::start()
     if (want ("resize"))   addResizeTests();
     if (want ("chat"))     addChatInputTests();
     if (want ("aoodrop"))  addAooDropTests();
+    if (want ("rooms"))    addRoomListTests();
+    if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
 }
@@ -535,6 +537,28 @@ void UiSelfTest::addResizeTests()
     enterNewRoom (true);
     const bool plugin = core.isPlugin();
     const int def = core::panel::defaultWidth (plugin);
+    // 끌어서 바꾼 너비는 지금 창의 최대에서 멈춘다 (플러그인 900: 240 ~ 280)
+    auto widened = [this, plugin] (int w) { return core::panel::clampWidth (plugin, jam()->getWidth(), w); };
+    // 멤버 행·내 오디오·모니터에서 볼륨이 60, 미터가 84 아래로 줄어든 곳 (없으면 빈 문자열)
+    auto tooSmall = [] (JamScreen& j)
+    {
+        juce::String small;
+        auto check = [&small] (juce::Component& c, const juce::String& where)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* v = dynamic_cast<DbSlider*> (child); v != nullptr && v->isVisible() && v->getWidth() < 60)
+                    small << where << TXT (" 볼륨 ") << v->getWidth() << " ";
+                if (auto* m = dynamic_cast<MeterBox*> (child); m != nullptr && m->isVisible() && m->getWidth() < 84)
+                    small << where << TXT (" 미터 ") << m->getWidth() << " ";
+            }
+        };
+        if (auto* list = j.memberViewport.getViewedComponent())
+            for (auto* row : list->getChildren()) check (*row, TXT ("멤버 행"));
+        check (j.sendCard, TXT ("내 오디오"));
+        check (j.monCard, TXT ("모니터"));
+        return small;
+    };
     add ([this, def]
     {
         auto* j = jam();
@@ -546,7 +570,7 @@ void UiSelfTest::addResizeTests()
         expect (j->devSideLineColour().isTransparent(), TXT ("선: 평소 안 보임"));
         moveTo (*rz, { 9, rz->getHeight() / 2 });
     });
-    add ([this, def]
+    add ([this, def, widened]
     {
         auto* j = jam();
         expect (j->devSideLineColour() == col::field, TXT ("선: 호버 #D5D5D5"));
@@ -557,29 +581,31 @@ void UiSelfTest::addResizeTests()
         mouse (p, juce::ModifierKeys::leftButtonModifier);
         for (int i = 1; i <= 5; ++i) mouse (p - juce::Point<float> (20.0f * (float) i, 0.0f), juce::ModifierKeys::leftButtonModifier);
         expect (j->devSideLineColour() == col::ink, TXT ("선: 끄는 중 #1A1A1A"));
-        expect (j->sidePanelWidth() == def + 100, TXT ("왼쪽으로 100 끌면 +100 (") + juce::String (j->sidePanelWidth()) + ")");
+        expect (j->sidePanelWidth() == widened (def + 100), TXT ("왼쪽으로 100 끌면 +100 (최대에서 멈춤) ") + juce::String (j->sidePanelWidth()));
         mouse (p - juce::Point<float> (100.0f, 0.0f), {});
     });
-    add ([this, plugin, def]
+    add ([this, plugin, def, widened]
     {
         auto* j = jam();
         MeonSettings settings;
-        expect (core::panel::load (settings.properties(), plugin) == def + 100, TXT ("놓으면 저장 (앱·플러그인 따로)"));
+        expect (core::panel::load (settings.properties(), plugin) == widened (def + 100), TXT ("놓으면 저장 (앱·플러그인 따로)"));
         auto* rz = j->devSideResizer();
         drag (*rz, { 9, rz->getHeight() / 2 }, { 9 - 2000, rz->getHeight() / 2 });   // 아주 멀리
     });
-    add ([this, plugin]
+    add ([this, plugin, tooSmall]
     {
         auto* j = jam();
         const int max = core::panel::maxWidth (plugin, j->getWidth());
         expect (j->sidePanelWidth() == max, TXT ("최대에서 멈춤 ") + juce::String (j->sidePanelWidth()) + " = " + juce::String (max));
-        expect (j->getWidth() - 54 - j->sidePanelWidth() >= 440, TXT ("멤버 쪽 440 이상"));
-        // 가장 넓을 때 멤버 행·내 오디오·모니터가 겹치지 않는다
+        expect (j->getWidth() - 54 - j->sidePanelWidth() >= 566, TXT ("멤버 쪽 566 이상"));
+        // 가장 넓을 때 멤버 행·내 오디오·모니터가 겹치지 않고, 볼륨 60·미터 84 아래로 줄지 않는다
         juce::String bad;
         if (auto* list = j->memberViewport.getViewedComponent()) for (auto* row : list->getChildren()) bad << overlaps (*row);
         expect (bad.isEmpty(), TXT ("최대 너비: 멤버 행 겹침 없음 ") + bad);
         bad = overlaps (j->sendCard) + overlaps (j->monCard);
         expect (bad.isEmpty(), TXT ("최대 너비: 내 오디오·모니터 겹침 없음 ") + bad);
+        const auto small = tooSmall (*j);
+        expect (small.isEmpty(), TXT ("최대 너비: 볼륨 60·미터 84 이상 ") + small);
         auto* rz = j->devSideResizer();
         drag (*rz, { 9, rz->getHeight() / 2 }, { 9 + 2000, rz->getHeight() / 2 });
     });
@@ -590,10 +616,10 @@ void UiSelfTest::addResizeTests()
         auto* rz = j->devSideResizer();
         drag (*rz, { 9, rz->getHeight() / 2 }, { 9 - 150, rz->getHeight() / 2 });
     });
-    add ([this, def]
+    add ([this, def, widened]
     {
         auto* j = jam();
-        expect (j->sidePanelWidth() == def + 150, TXT ("다시 넓힘 +150"));
+        expect (j->sidePanelWidth() == widened (def + 150), TXT ("다시 넓힘 +150 (최대에서 멈춤)"));
         doubleClick (*j->devSideResizer(), { 9, j->devSideResizer()->getHeight() / 2 });
     });
     add ([this, plugin, def]
@@ -608,10 +634,10 @@ void UiSelfTest::addResizeTests()
     add ([this] { core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("방에서 나옴"), [this] { return ! inRoom() && jam() == nullptr; });
     enterNewRoom();
-    add ([this, plugin, def]
+    add ([this, plugin, def, widened, tooSmall]
     {
         auto* j = jam();
-        expect (j->sidePanelWidth() == def + 80, TXT ("다시 들어와도 저장한 너비 ") + juce::String (j->sidePanelWidth()));
+        expect (j->sidePanelWidth() == widened (def + 80), TXT ("다시 들어와도 저장한 너비 ") + juce::String (j->sidePanelWidth()));
         // 작은 창에서는 최대로 보이고 저장값은 그대로
         j->setSideWidth (100000, true);
         MeonSettings settings;
@@ -620,6 +646,12 @@ void UiSelfTest::addResizeTests()
         const auto old = j->getBounds();
         j->setBounds (old.withWidth (old.getWidth() - 200));
         expect (j->sidePanelWidth() == core::panel::maxWidth (plugin, j->getWidth()) && j->sidePanelWidth() < saved, TXT ("창이 작으면 최대로 보임"));
+        // 창 최소 크기(앱 1024, 플러그인 900) 이상일 때만: 여기서는 시험을 위해 그보다 작게 줄일 수도 있다
+        if (j->getWidth() >= (plugin ? 900 : 1024))
+        {
+            const auto small = tooSmall (*j);
+            expect (small.isEmpty(), TXT ("작은 창의 최대 너비: 볼륨 60·미터 84 이상 ") + small);
+        }
         MeonSettings again;
         expect (core::panel::load (again.properties(), plugin) == saved, TXT ("저장값은 그대로"));
         j->setBounds (old);
@@ -749,6 +781,169 @@ void UiSelfTest::addChatInputTests()
         chat.received ({ chat.group(), "u_left_preview", "id:ml2", TXT ("받은긴단어") + juce::String::repeatedString ("B", 200) });
     }, 300);
     add ([this] { expect (jam()->devLastChatLines() > 1, TXT ("받은 긴 단어도 끊김")); });
+}
+
+//==============================================================================
+// 공개 방 목록: 혼자 있던 공개 방에서 나가면 목록에 남지 않는다 (0명 방도 보이지 않는다). 닫힌 방 카드를 누르면 빠지고 토스트
+void UiSelfTest::addRoomListTests()
+{
+    auto saved = std::make_shared<core::Room>();
+    auto listed = [this] (const juce::String& id) { return core.store().state().findPublicRoom (id) != nullptr; };
+    auto cardButton = [this] (const juce::String& id) -> juce::Button*
+    {
+        for (auto& [room, b] : home().devRoomCards()) if (room.id == id) return b;
+        return nullptr;
+    };
+    auto hasToast = [this] (const juce::String& title)
+    {
+        for (auto* t : root.toasts) if (t->getTitle() == title) return true;
+        return false;
+    };
+
+    begin (TXT ("방 목록: 혼자 있던 공개 방에서 나가기"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this]
+    {
+        core::CreateRoom c;
+        c.type = "public";
+        c.entryMode = juce::String ("instant");
+        c.title = TXT ("혼자 공개 방");
+        core.home().createRoom (c, [] (core::Result<core::RoomDetail>) {});
+    }, 0);
+    waitUntil (TXT ("공개 방에 들어감"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); });
+    add ([this, saved] { *saved = *core.store().state().currentRoom; click (jam()->leave); }, 300);
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("나가서 홈"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this, saved, listed] { expect (! listed (saved->id), TXT ("나가자마자 목록에 없음")); }, 1500);
+    add ([this, saved, listed, cardButton]
+    {
+        expect (! listed (saved->id) && cardButton (saved->id) == nullptr, TXT ("다시 받은 목록에도 없음 (카드 없음)"));
+        auto zero = *saved;
+        zero.id = "r_zero_selftest";
+        zero.memberCount = 0;
+        zero.members.clear();
+        core.store().upsertPublicRoom (zero);
+    }, 300);
+    add ([this, listed, cardButton] { expect (! listed ("r_zero_selftest") && cardButton ("r_zero_selftest") == nullptr, TXT ("0명 방은 보이지 않음")); });
+
+    begin (TXT ("방 목록: 닫힌 방 카드를 누르면"));
+    add ([this, saved] { core.store().upsertPublicRoom (*saved); }, 300);   // rooms.removed 를 놓친 목록
+    waitUntil (TXT ("닫힌 방 카드가 보임"), [saved, cardButton] { return cardButton (saved->id) != nullptr; });
+    add ([this, saved, cardButton] { if (auto* b = cardButton (saved->id)) click (*b); }, 0);
+    waitUntil (TXT ("\"이미 닫힌 방이에요\" 토스트"), [hasToast] { return hasToast (TXT ("이미 닫힌 방이에요")); });
+    add ([this, saved, listed, cardButton]
+    {
+        expect (! listed (saved->id) && cardButton (saved->id) == nullptr, TXT ("목록에서 빠짐"));
+        expect (root.fail == nullptr, TXT ("입장 실패 창은 뜨지 않음"));
+        expect (! inRoom(), TXT ("들어가지 않음"));
+    }, 300);
+}
+
+//==============================================================================
+// 알림 목록의 친구 요청 수락·거절: 누르면 목록이 다시 만들어지며 그 줄이 지워진다. 그래도 그 줄의 요청 id 가 서버로 가야 한다.
+// 실패하면 요청이 되돌아오고 토스트. 홈과 합주 화면이 같은 목록(NotificationList)이다
+void UiSelfTest::addFriendRequestTests()
+{
+    auto sent = std::make_shared<juce::StringArray>();          // 가짜 서버가 받은 수락·거절 요청 ("POST /friends/requests/<id>/accept")
+    auto reqs = std::make_shared<std::vector<core::FriendRequest>>();
+    auto requestIds = [this]
+    {
+        juce::StringArray a;
+        for (auto& f : core.store().state().friendRequests) a.add (f.id);
+        return a;
+    };
+    auto isFriend = [this] (const juce::String& userId)
+    {
+        for (auto& f : core.store().state().friends) if (f.user.id == userId) return true;
+        return false;
+    };
+    auto hasToast = [this] (const juce::String& title)
+    {
+        for (auto* t : root.toasts) if (t->getTitle() == title) return true;
+        return false;
+    };
+    auto list = [this]() -> juce::Component*
+    {
+        if (auto* j = jam(); j != nullptr && j->isShowing()) return j->notifications.get();
+        return home().notifications.get();
+    };
+    auto press = [this, list] (const juce::String& text) { if (auto* l = list()) if (auto* b = findButton (*l, text)) click (*b); };
+    const auto failText = TXT ("친구 요청을 처리하지 못했어요. 다시 시도해 주세요");
+
+    begin (TXT ("친구 요청: 홈 알림 목록"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this, sent]
+    {
+        if (auto* f = core.fakeServer())
+            f->onRequestForTest = [sent] (const core::HttpRequest& q) { if (q.path.startsWith ("/friends/requests/")) sent->add (q.method + " " + q.path); };
+    }, 0);
+    waitUntil (TXT ("받은 친구 요청 2개"), [this] { return core.store().state().friendRequests.size() == 2; });
+    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (home().bell); });
+    waitUntil (TXT ("알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
+    add ([press] { press (TXT ("수락")); }, 0);
+    waitUntil (TXT ("수락이 서버로"), [sent] { return sent->size() == 1; });
+    waitUntil (TXT ("수락한 사람이 친구 목록에"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    add ([this, sent, reqs, requestIds, list]
+    {
+        expect ((*sent)[0] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("첫 줄 수락: 그 줄의 id (") + (*sent)[0] + ")");
+        expect (requestIds() == juce::StringArray ((*reqs)[1].id), TXT ("수락한 요청만 목록에서 빠짐"));
+        expect (list() != nullptr && findButton (*list(), TXT ("수락")) != nullptr, TXT ("남은 줄"));
+    }, 0);
+    add ([press] { press (TXT ("거절")); }, 0);
+    waitUntil (TXT ("거절이 서버로"), [sent] { return sent->size() == 2; });
+    add ([this, sent, reqs, requestIds, list]
+    {
+        expect ((*sent)[1] == "POST /friends/requests/" + (*reqs)[1].id + "/decline", TXT ("남은 줄 거절: 그 줄의 id (") + (*sent)[1] + ")");
+        expect (requestIds().isEmpty() && list() != nullptr && findButton (*list(), TXT ("수락")) == nullptr, TXT ("목록 비움"));
+    }, 300);
+
+    begin (TXT ("친구 요청: 실패하면 되돌리고 토스트"));
+    add ([this] { if (auto* f = core.fakeServer()) f->devFriendRequest(); }, 0);
+    waitUntil (TXT ("새 친구 요청"), [this, list] { return core.store().state().friendRequests.size() == 1 && list() != nullptr && findButton (*list(), TXT ("수락")) != nullptr; });
+    add ([this, reqs, press]
+    {
+        *reqs = core.store().state().friendRequests;
+        if (auto* f = core.fakeServer())
+            f->replyForTest = [] (const core::HttpRequest& q) -> std::optional<core::HttpResponse>
+            {
+                if (q.path.startsWith ("/friends/requests/")) return core::HttpResponse {};   // 네트워크 오류
+                return std::nullopt;
+            };
+        press (TXT ("수락"));
+    }, 0);
+    waitUntil (TXT ("실패 토스트"), [hasToast, failText] { return hasToast (failText); });
+    add ([this, reqs, requestIds, list, isFriend]
+    {
+        expect (requestIds() == juce::StringArray ((*reqs)[0].id), TXT ("요청이 목록에 되돌아옴"));
+        expect (list() != nullptr && findButton (*list(), TXT ("수락")) != nullptr, TXT ("알림 목록에 줄이 다시 보임"));
+        expect (! isFriend ((*reqs)[0].from.id), TXT ("친구가 되지 않음"));
+        if (auto* f = core.fakeServer()) f->replyForTest = nullptr;
+    }, 300);
+    add ([press] { press (TXT ("수락")); }, 0);
+    waitUntil (TXT ("다시 누르면 수락됨"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    add ([this, sent, reqs, requestIds]
+    {
+        expect (sent->size() == 4 && (*sent)[3] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("재시도: 같은 id"));
+        expect (requestIds().isEmpty(), TXT ("목록 비움"));
+        click (home().bell);   // 닫기
+    }, 300);
+
+    begin (TXT ("친구 요청: 합주 화면 알림 목록"));
+    enterNewRoom();
+    add ([this] { if (auto* f = core.fakeServer()) f->devFriendRequest(); }, 0);
+    waitUntil (TXT ("방 안에서 새 친구 요청"), [this] { return core.store().state().friendRequests.size() == 1; });
+    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (jam()->bell); });
+    waitUntil (TXT ("합주 화면 알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
+    add ([press] { press (TXT ("수락")); }, 0);
+    waitUntil (TXT ("합주 화면에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    add ([this, sent, reqs, requestIds]
+    {
+        expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("합주 화면 줄 수락: 그 줄의 id"));
+        expect (requestIds().isEmpty(), TXT ("목록 비움"));
+        if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
+    }, 300);
 }
 
 //==============================================================================

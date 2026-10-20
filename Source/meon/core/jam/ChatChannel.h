@@ -28,7 +28,14 @@ public:
         enum class Delivery { none, sending, delivered, failed } delivery = Delivery::none;
         juce::StringArray waitingFor;   // 내 메시지: 아직 확인이 없는 멤버
         int attempt = 0;
+        /** 남의 메시지: 받은 순간의 보낸 사람 파트·닉네임 (화면·채팅 기록이 이 값을 쓴다). 그때 모르면 비어 있고,
+            처음 알게 된 값으로 한 번만 채운다 (fillMissingSenders). 채운 뒤에는 그 사람이 바꾸거나 나가도 그대로 */
+        juce::String senderPart, senderName;
     };
+
+    /** 보낸 사람의 지금 파트·닉네임 (모르면 빈 값). JamSession 이 방 멤버 정보로 알려 준다 */
+    struct Sender { juce::String part, name; };
+    std::function<Sender (const juce::String& userId)> senderLookup;
 
     enum class SendResult { sent, empty, tooLong, localOnly, failed };
 
@@ -166,10 +173,31 @@ public:
         m.fromUser = c.from;
         m.text = c.message.substring (0, juce::jmin (c.message.length(), maxBytes));
         m.time = scheduler.nowMs();
+        if (senderLookup)
+        {
+            const auto s = senderLookup (c.from);
+            m.senderPart = s.part;
+            m.senderName = s.name;
+        }
         messages.push_back (m);
         ++unread;
         added (messages.back());
         changed();
+    }
+
+    /** 받을 때 몰랐던 보낸 사람 파트·닉네임을 지금 알게 된 값으로 채운다 (빈 칸만, 한 번). 채웠으면 화면을 다시 그린다 */
+    void fillMissingSenders()
+    {
+        if (! senderLookup) return;
+        bool any = false;
+        for (auto& m : messages)
+        {
+            if (m.kind != Message::Kind::other || (m.senderPart.isNotEmpty() && m.senderName.isNotEmpty())) continue;
+            const auto s = senderLookup (m.fromUser);
+            if (m.senderPart.isEmpty() && s.part.isNotEmpty()) { m.senderPart = s.part; any = true; }
+            if (m.senderName.isEmpty() && s.name.isNotEmpty()) { m.senderName = s.name; any = true; }
+        }
+        if (any) changed();
     }
 
     const std::vector<Message>& getMessages() const { return messages; }

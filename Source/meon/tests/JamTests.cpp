@@ -1271,6 +1271,109 @@ public:
             rt.removeListener (&store);
             o.logFolder.deleteRecursively();
         }
+
+        beginTest ("Chat sender snapshot: part/nickname at receive time stay (part change, nickname change, left); unknown filled once; chat log uses it");
+        {
+            ManualScheduler clock;
+            FakeMeonServer::Options fo;
+            fo.latencyMs = 0;
+            fo.scripts = false;
+            FakeMeonServer server { clock, fo };
+            server.loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+            MeonApi api { server, 0 };
+            Realtime rt { server, clock, 0 };
+            AppStore store;
+            rt.addListener (&store);
+            auto run = [&] (auto&& fn) { fn(); clock.advance (50); };
+            auto u8 = [] (const char* t) { return juce::String::fromUTF8 (t); };
+            run ([&] { api.signup ("snap@example.com", "snap_keys", "abcd123!", true, [] (auto) {}); });
+            run ([&] { api.verifyEmail (server.getLastMailedCode(), [] (auto) {}); });
+            MePatch p; p.nickname = u8 ("스냅"); p.part = juce::String ("keys");
+            run ([&] { api.patchMe (p, [&] (Result<Me> r) { store.setMe (r.get()); }); });
+            rt.connect ([&] { return api.getTokens().accessToken; });
+            clock.advance (100);
+
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-snapshot");
+            o.logFolder.deleteRecursively();
+            o.fake = &server;
+            JamSession jam (engine, store, clock, o);
+            run ([&] { api.joinRoom ("r_f_3", [&] (Result<JoinResult> r) { store.setCurrentRoom (r.get().room); }); });
+            engine.finishConnect();
+            engine.finishJoin();
+            expect (jam.isInRoom());
+
+            ChatChannel::Message none;
+            auto msg = [&] (const juce::String& id) -> const ChatChannel::Message*
+            {
+                for (auto& m : jam.chat().getMessages()) if (m.id == id) return &m;
+                expect (false, "메시지 없음: " + id);
+                return &none;
+            };
+            auto memberPart = [&] (const juce::String& uid)
+            {
+                if (store.state().currentRoom)
+                    for (auto& m : store.state().currentRoom->members) if (m.user.id == uid) return m.user.part.value_or (juce::String());
+                return juce::String ("(없음)");
+            };
+
+            // 기타인 채로 보낸 메시지 → 보컬로 바꾼 뒤 보낸 메시지: 메시지마다 그때의 파트
+            server.remotePeerJoined ("u_snap", u8 ("민준"), "guitar", false);
+            clock.advance (50);
+            jam.chat().received ({ engine.group, "u_snap", "id:s1", u8 ("기타로 보냄") });
+            server.remotePeerJoined ("u_snap", {}, "vocal", false);
+            clock.advance (50);
+            expectEquals (memberPart ("u_snap"), juce::String ("vocal"));
+            jam.chat().received ({ engine.group, "u_snap", "id:s2", u8 ("보컬로 보냄") });
+            expectEquals (msg ("s1")->senderPart, juce::String ("guitar"), "파트를 바꿔도 지난 메시지는 그대로");
+            expectEquals (msg ("s2")->senderPart, juce::String ("vocal"));
+            expectEquals (msg ("s1")->senderName, u8 ("민준"));
+
+            // 닉네임을 바꿔도 지난 메시지 이름은 그대로, 새 메시지는 새 이름
+            server.remotePeerJoined ("u_snap", u8 ("준"), {}, false);
+            clock.advance (50);
+            jam.chat().received ({ engine.group, "u_snap", "id:s3", u8 ("새 이름") });
+            expectEquals (msg ("s1")->senderName, u8 ("민준"));
+            expectEquals (msg ("s2")->senderName, u8 ("민준"));
+            expectEquals (msg ("s3")->senderName, u8 ("준"));
+
+            // 보낸 사람이 방을 나가도 그대로 (멤버 목록에서 빠져도)
+            server.remotePeerLeft ("u_snap");
+            clock.advance (50);
+            expectEquals (memberPart ("u_snap"), juce::String ("(없음)"));
+            expect (msg ("s1")->senderPart == "guitar" && msg ("s1")->senderName == u8 ("민준"), "나간 뒤에도 남는다");
+            expect (msg ("s3")->senderPart == "vocal" && msg ("s3")->senderName == u8 ("준"));
+
+            // 받을 때 몰랐던 사람 (가짜 기간처럼 프로필이 늦게 옴): 처음 알게 된 값으로 한 번만 채운다
+            jam.chat().received ({ engine.group, "u_late", "id:l1", u8 ("프로필 전") });
+            expect (msg ("l1")->senderPart.isEmpty() && msg ("l1")->senderName.isEmpty(), "모르면 빈 값 (빈 원·\"멤버\")");
+            server.remotePeerJoined ("u_late", u8 ("서연"), "drums", false);
+            clock.advance (50);
+            expectEquals (msg ("l1")->senderPart, juce::String ("drums"), "처음 알게 된 값으로 채움");
+            expectEquals (msg ("l1")->senderName, u8 ("서연"));
+            server.remotePeerJoined ("u_late", u8 ("연"), "bass", false);
+            clock.advance (50);
+            expectEquals (msg ("l1")->senderPart, juce::String ("drums"), "채운 뒤에는 덮어쓰지 않는다");
+            expectEquals (msg ("l1")->senderName, u8 ("서연"));
+            // 내 메시지·시스템 줄은 그대로 (스냅샷 없음)
+            expect (jam.chat().sendText ("mine") != ChatChannel::SendResult::failed);
+            expect (jam.chat().getMessages().back().senderPart.isEmpty());
+
+            // 채팅 기록도 받은 순간의 이름 (몰랐으면 user id)
+            store.setCurrentRoom (std::nullopt);
+            clock.advance (50);
+            const auto files = o.logFolder.getChildFile ("chat").findChildFiles (juce::File::findFiles, false, "*.txt");
+            expectEquals (files.size(), 1);
+            if (files.size() == 1)
+            {
+                const auto text = files[0].loadFileAsString();
+                expect (text.contains (u8 ("민준: 기타로 보냄")) && text.contains (u8 ("민준: 보컬로 보냄")) && text.contains (u8 ("준: 새 이름")), text);
+                expect (text.contains (u8 ("u_late: 프로필 전")), text);
+            }
+            rt.removeListener (&store);
+            o.logFolder.deleteRecursively();
+        }
     }
 };
 

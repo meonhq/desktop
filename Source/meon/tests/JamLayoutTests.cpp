@@ -14,26 +14,27 @@ public:
 
     void runTest() override
     {
-        beginTest ("panel width: app 320 ~ min(50%, W - 54 - 440), plugin 240 ~ same");
+        beginTest ("panel width: app 320 ~ min(50%, W - 54 - 566), plugin 240 ~ same");
         {
             expectEquals (panel::defaultWidth (false), 320);
             expectEquals (panel::defaultWidth (true), 240);
-            expectEquals (panel::maxWidth (false, 1280), 640);     // min(640, 786)
-            expectEquals (panel::maxWidth (true, 900), 406);       // min(450, 406)
-            expectEquals (panel::maxWidth (false, 1024), 512);     // 앱 최소 창
-            expectEquals (panel::maxWidth (false, 1512), 756);     // MacBook Pro 14
+            expectEquals (panel::maxWidth (false, 1280), 640);     // min(640, 660)
+            expectEquals (panel::maxWidth (true, 900), 280);       // min(450, 280)
+            expectEquals (panel::maxWidth (true, 1200), 580);      // 플러그인을 키우면 최대도 커진다: min(600, 580)
+            expectEquals (panel::maxWidth (false, 1024), 404);     // 앱 최소 창: min(512, 404)
+            expectEquals (panel::maxWidth (false, 1512), 756);     // MacBook Pro 14: min(756, 892)
             expectEquals (panel::maxWidth (true, 700), 240);       // 아주 작은 창에서도 기본보다 작아지지 않는다
             // 최소·최대에서 멈춘다
             expectEquals (panel::clampWidth (false, 1280, 100), 320);
             expectEquals (panel::clampWidth (false, 1280, 5000), 640);
             expectEquals (panel::clampWidth (false, 1280, 500), 500);
             expectEquals (panel::clampWidth (true, 900, 100), 240);
-            expectEquals (panel::clampWidth (true, 900, 5000), 406);
-            // 멤버 쪽은 440 아래로 내려가지 않는다 (창 − 54 − 패널)
+            expectEquals (panel::clampWidth (true, 900, 5000), 280);
+            // 멤버 쪽은 566 아래로 내려가지 않는다 (창 − 54 − 패널. 앱 최소 1024, 플러그인 최소 900)
             for (int w : { 1024, 1280, 1512, 1920 })
-                expect (w - 54 - panel::maxWidth (false, w) >= 440, juce::String (w));
+                expect (w - 54 - panel::maxWidth (false, w) >= 566, juce::String (w));
             for (int w : { 900, 1000, 1280 })
-                expect (w - 54 - panel::maxWidth (true, w) >= 440, juce::String (w));
+                expect (w - 54 - panel::maxWidth (true, w) >= 566, juce::String (w));
         }
 
         beginTest ("panel width: shown value follows the window, saved value stays");
@@ -41,7 +42,7 @@ public:
             expectEquals (panel::shownWidth (false, 1280, 0), 320);     // 저장 없음 → 기본
             expectEquals (panel::shownWidth (true, 900, 0), 240);
             expectEquals (panel::shownWidth (false, 1280, 600), 600);
-            expectEquals (panel::shownWidth (false, 1024, 600), 512);   // 작은 창: 최대로 보인다
+            expectEquals (panel::shownWidth (false, 1024, 600), 404);   // 작은 창: 최대로 보인다
             expectEquals (panel::shownWidth (false, 1280, 600), 600);   // 다시 키우면 저장값 그대로
         }
 
@@ -96,9 +97,7 @@ public:
             s = panel::shrink (144);
             expect (s.slider == 60 && s.meter == 84, "미터 최소 84");
             s = panel::shrink (100);
-            expect (s.slider == 60 && s.meter == 40, "60 + 84 도 안 들어가면 겹치지 않게 미터가 더 줄어든다");
-            s = panel::shrink (40);
-            expect (s.slider == 40 && s.meter == 0);
+            expect (s.slider == 60 && s.meter == 84, "60·84 아래로는 줄이지 않는다 (멤버 쪽 566 이상이라 늘 들어간다)");
             // 내 오디오·모니터: 슬라이더는 남는 만큼
             s = panel::shrink (400, std::numeric_limits<int>::max());
             expect (s.slider == 250 && s.meter == 150);

@@ -122,7 +122,7 @@ void RoomController::acceptJoinRequest (const juce::String& requestId, Callback<
     });
 }
 
-void RoomController::declineJoinRequest (const juce::String& requestId)
+void RoomController::declineJoinRequest (juce::String requestId)
 {
     const auto id = currentId();
     if (id.isEmpty()) return;

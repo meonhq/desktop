@@ -78,13 +78,18 @@ public:
     // REST 결과 반영
     void setMe (const Me&);
     void setConfig (const Config&);
+    /** 멤버가 0명인 방은 넣지 않는다 (아래 upsert 도). 마지막 사람이 나가 닫히는 방이다: 서버 목록(GET /rooms)이
+        방과 멤버를 따로 읽어, 그 사이 닫히면 0명으로 온다 */
     void setPublicRooms (std::vector<Room>);
     void upsertPublicRoom (const Room&);
+    void removePublicRoom (const juce::String& roomId);
     void setFriends (std::vector<Friend>);
     /** 친구 목록 순서 (API 7.1). setFriends·friend.updated·friend.added 때마다 */
     static void sortFriends (std::vector<Friend>&);
     void setFriendRequests (std::vector<FriendRequest>);
     void removeFriendRequest (const juce::String& requestId);
+    /** 지웠던 요청을 그 자리에 되돌린다 (수락·거절 실패). 그사이 다시 받아 이미 있으면 그대로 */
+    void restoreFriendRequest (const FriendRequest&, size_t index);
     void setHasUnread (bool);
     void removeInvite (const juce::String& inviteId);
     void setCurrentRoom (std::optional<RoomDetail>);   // 입장·설정 변경 응답, 나가기(nullopt)
