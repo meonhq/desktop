@@ -44,7 +44,9 @@ void WsTransport::open (Sink* sink)
     c->ws.disableAutomaticReconnection();
     c->ws.disablePerMessageDeflate();
     c->ws.setHandshakeTimeout (handshakeTimeoutSecs);
-    c->ws.setPingInterval (0);   // 하트비트는 앱이 JSON ping 으로 (API 10.3)
+    // 하트비트는 앱이 JSON ping 으로 (API 10.3). IXWebSocket 자체 ping 은 끈다 (기본값 -1 = 끔).
+    // 0 을 넣으면 안 된다: 연결된 동안 이 값이 poll 대기 시간이 되어 0 이면 쉬지 않고 돌아 CPU 코어 하나를 다 쓴다 (엔진 멈춤 조사, 2026-10)
+    c->ws.setPingInterval (-1);
 
     juce::String tlsNote;
     if (url.startsWithIgnoreCase ("wss://"))

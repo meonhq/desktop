@@ -311,11 +311,31 @@ void EngineLink::setAllowedPeers (const juce::StringArray& users, bool enabled)
 }
 
 //==============================================================================
-int EngineLink::indexOf (const String& user) const
+void EngineLink::rebuildPeerNames() const
 {
     const int n = processor.getNumberRemotePeers();
-    for (int i = 0; i < n; ++i)
-        if (processor.getRemotePeerUserName (i) == user) return i;
+    peerNames.resize ((size_t) n);
+    for (int i = 0; i < n; ++i) peerNames[(size_t) i] = processor.getRemotePeerUserName (i);
+}
+
+int EngineLink::lookup (const String& user) const
+{
+    // 사람이 들어오거나 나가면 엔진의 사람 수(잠금 없이 읽는 값)가 바뀐다. 그때는 번호가 밀렸을 수 있어 표를 새로 만든다
+    if ((int) peerNames.size() != processor.getNumberRemotePeers()) rebuildPeerNames();
+    for (size_t i = 0; i < peerNames.size(); ++i)
+        if (peerNames[i] == user) return (int) i;
+    return -1;
+}
+
+int EngineLink::indexOf (const String& user) const
+{
+    // 사람을 지우거나 설정을 바꾸는 곳은 번호가 틀리면 다른 사람에게 적용되므로, 표의 번호가 아직 그 사람인지 확인한다.
+    // 아니면(같은 순간 한 명이 나가고 한 명이 들어와 사람 수는 같은데 번호가 밀린 경우) 표를 새로 만들어 다시 찾는다
+    const int i = lookup (user);
+    if (i >= 0 && processor.getRemotePeerUserName (i) == user) return i;
+    rebuildPeerNames();
+    for (size_t k = 0; k < peerNames.size(); ++k)
+        if (peerNames[k] == user) return (int) k;
     return -1;
 }
 
@@ -323,10 +343,12 @@ std::vector<EnginePeer> EngineLink::peers() const
 {
     std::vector<EnginePeer> out;
     const int n = processor.getNumberRemotePeers();
+    peerNames.resize ((size_t) n);
     for (int i = 0; i < n; ++i)
     {
         EnginePeer p;
         p.user = processor.getRemotePeerUserName (i);
+        peerNames[(size_t) i] = p.user;
         p.connected = processor.getRemotePeerConnected (i);
         p.recvActive = processor.getRemotePeerRecvActive (i);
         p.sendActive = processor.getRemotePeerSendActive (i);
@@ -393,7 +415,10 @@ float EngineLink::meter (foleys::LevelMeterSource& src, int channel)
 
 float EngineLink::peerLevel (const String& user, int channel) const
 {
-    const int i = indexOf (user);
+    // 화면 그릴 때마다 불리므로 표에서만 찾는다 (엔진 잠금은 아래 미터 원본을 얻을 때 한 번).
+    // 번호가 밀렸는데 사람 수가 같은 드문 경우 다음 스냅숏(0.4초 안)까지 다른 사람 미터가 보일 수 있다. 엔진에는 아무것도 바꾸지 않는다.
+    // 미터 원본은 들고 있지 않는다 (사람이 빠지면 그 메모리가 사라진다)
+    const int i = lookup (user);
     if (i < 0) return 0.0f;
     if (auto* src = processor.getRemotePeerRecvMeterSource (i))
     {

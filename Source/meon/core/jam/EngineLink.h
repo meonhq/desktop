@@ -102,7 +102,13 @@ private:
     void push (Event e);
     void handleAsyncUpdate() override;
 
-    int indexOf (const juce::String& user) const;
+    // 이름 → 엔진 번호 표 (메시지 스레드에서만 쓴다). 엔진의 번호별 함수는 부를 때마다 엔진 잠금(mCoreLock)을 잡는데,
+    // 미터는 화면 그릴 때마다(초당 약 60번) 사람마다 이름을 찾는다. 표로 찾아 잠금 횟수를 줄인다 (엔진 멈춤 조사, 2026-10).
+    // peers() 스냅숏(0.4초마다)과 엔진의 사람 수가 바뀐 것을 본 순간에 새로 만든다.
+    mutable std::vector<juce::String> peerNames;
+    void rebuildPeerNames() const;
+    int lookup (const juce::String& user) const;   // 표에서만 찾는다 (사람 수가 바뀌었으면 먼저 표를 새로 만든다)
+    int indexOf (const juce::String& user) const;  // 표에서 찾고, 그 번호가 아직 그 사람인지 엔진에 한 번 확인한다
     void setParam (const juce::String& id, float value);   // 이미 같은 값이면 건드리지 않는다 (DAW 에 변경 알림을 보내지 않게)
     void applyMonitorParams();
     void applySendGain();
