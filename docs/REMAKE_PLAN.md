@@ -591,6 +591,69 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
   - `JamTests`: 처음 붙기 실패 → 끊김, 3초마다 다시, 붙으면 내림, 나가면 내리고 더 시도하지 않음.
 - 남는 경우: TCP 는 붙었지만 로그인 응답 전에 서버가 끊으면 AOO 는 붙기 실패가 아니라 끊김 이벤트를 보낸다. `JamSession` 은 입장 중의 끊김 이벤트를 앞 방의 늦은 알림으로 보고 무시하므로(R11 PR3) 이 경우는 이번 범위에 넣지 않았다.
 
+**E10 근거** (줄 번호는 `claude/e10-rt-gate` 브랜치 기준)
+
+- 원인 (조사 2026-10-21, 측정 도구는 `scripts/stall/`)
+  - 오디오 스레드가 `processBlock` 의 `const ScopedReadLock sl (mCoreLock)` 에서 `juce::ReadWriteLock::enterRead` → `SpinLock` → `Thread::yield` 로 돌며 기다렸다.
+  - 그 스핀락은 읽기 잠금을 풀 때(`exitRead`)도 잡힌다. 이걸 쥔 스레드(메인·이벤트·보내기·받기, 일반 우선순위)가 CPU 를 못 받는 동안, 실시간 오디오 스레드는 70~960 ms 멈췄다 (우선순위 역전).
+- 바꾼 곳
+  - `Source/meon/MeonRtGate.h` (새 파일): `meon::RtGate`
+    - 오디오 스레드는 `Reader` 를 만든다. 원자 변수 2개만 쓴다 (잠금·스핀·시스템 호출 없음).
+    - 쓰는 쪽은 `Writer` 를 만든다. 생성자가 오디오 스레드가 지금 블록을 끝내고 나갈 때까지 기다린다.
+    - `ScopedGatedWrite` 는 쓰기 잠금을 먼저 잡고 그다음 `Writer` 를 만든다.
+  - `SonobusPluginProcessor.cpp`
+    - `processBlock` 7870–8154: 상대 소리 섞기·보내기 구간이 `mCoreLock` 읽기 잠금 대신 관문을 본다 (`if (Reader; entered())`).
+      - 이 구간 안의 `sinkLock` 읽기 잠금(7918)은 없앴다. 그 잠금을 쓰는 곳은 모두 관문 안이다.
+      - `tempBuffer.clear` 는 구간 앞으로 옮겼다 (건너뛴 블록에서 상대 소리가 비게).
+    - `mCoreLock` 쓰기 잠금 9곳 → `ScopedGatedWrite`.
+      - `initializeAoo` 920, `cleanupAoo` 1075, `startAooServer` 1096, `stopAooServer` 1118
+      - `removeAllRemotePeers` 4714, `removeRemotePeer` 4756
+      - `doAddRemotePeerIfNecessary` 6173
+      - `removeAllRemotePeersWithEndpoint` 6328, `doRemoveRemotePeerIfNecessary` 6355
+    - 형식 바꾸기 두 곳 → `RtGate::Writer`.
+      - `AOO_SOURCE_FORMAT_EVENT` 3814–3912: 받는 채널 수·미터·채널 그룹·sink 설정. 리스너를 부르기 전에 연다.
+      - `setupSourceFormatsForAll` 7173 (함수 전체): 보내는·받는 형식, `workBuffer`, 미터, 채널 그룹 초기화.
+  - `SonobusPluginProcessor.h`: `mRtGate` 멤버와 진단용 `getPeerMixSkippedBlocks()`.
+- 기다리는 쪽이 지금 블록을 다 읽은 뒤에 바꾸는 근거 (seq_cst, 데커 방식)
+  - 오디오는 `inside += 1` → `writers` 읽기, 쓰는 쪽은 `writers += 1` → `inside == 0` 될 때까지 읽기.
+  - 하나의 전체 순서 안에서 적어도 한쪽은 상대 표시를 본다.
+    - 오디오가 `writers == 0` 을 봤으면, 쓰는 쪽은 그 블록의 `exit` 까지 기다린다.
+    - 쓰는 쪽이 `inside == 0` 을 봤으면, 오디오는 그 블록을 건너뛴다.
+  - 그래서 `Writer` 가 있는 동안 오디오 스레드는 같은 자료를 읽지 않는다.
+  - 단위 시험 `RtGateTests`
+    - 쓰는 쪽이 60 ms 블록이 끝날 때까지 기다린다.
+    - 스트레스 1.5초: 쓰기 약 206만 번 동안 표를 지우고 새로 만들어도, 오디오 쪽이 반쯤 바뀐·지운 표를 읽은 횟수 0.
+- 교착이 생기지 않는 근거
+  - 오디오 스레드는 관문 구간 안에서 `mCoreLock`·`sinkLock` 을 잡지 않는다. 쓰는 쪽은 잠금 → 관문 순서로만 기다린다.
+  - 관문 구간 안에서 부르는 AOO `process` 가 잡는 AOO 내부 잠금을, 그 잠금을 쥔 채 `mCoreLock` 을 기다리는 스레드는 없다. AOO 가 부르는 `endpoint_send` 는 소켓에 쓰기만 한다.
+  - `handle_events` 는 잠금 없이 콜백을 부른다 (`sink.cpp` 497).
+- 보내는 소리·내 소리에 미치는 영향
+  - 평소(쓰는 쪽이 없을 때) 오디오 처리는 이전과 같다.
+  - 쓰는 쪽과 겹친 블록만 상대 소리 섞기·보내기를 건너뛴다. 상대 소리 2.67 ms 가 비고, 보내는 소리 한 블록이 빠진다.
+  - 내 소리는 관문 밖이라 그대로 나간다: 셀프 모니터(`inputBuffer` → `buffer`, 8171·8174)·메트로놈·파일·입력 리버브.
+  - 이전에는 그 순간 오디오 스레드가 기다렸다.
+  - 건너뛴 블록 수는 앱 로그에 남는다 (`엔진이 상대 소리 섞기를 건너뛴 블록 (누적, E10)`).
+- 남는 것 (이번 범위 밖)
+  - `processBlock` 의 `ensureBuffers` 경로(7481 → 7392)는 아직 `mCoreLock` 읽기 잠금을 잡는다. 블록 크기·입력 채널 수가 바뀐 첫 블록에서만 탄다 (원래 코드도 "THIS SHOULDN'T GENERALLY HAPPEN" 로 표시).
+  - AOO 내부 잠금(`source`·`source_desc` 의 `shared_mutex`)은 그대로다. 측정 중 10 ms 넘는 콜백이 없어 이 잠금에서 멈춘 기록은 없었다. 다시 걸리면 `stallprobe` 스택에 `pthread_rwlock_rdlock ← aoo::…::process` 로 나온다.
+  - 잠금 없이 오디오 스레드가 읽는 값을 다른 스레드가 읽기 잠금만 잡고 바꾸는 곳(볼륨·패닝·뮤트·압축기 값 등)은 E10 전과 같다. ThreadSanitizer 가 원래부터 보고하던 경고들이다 (아래 시험).
+- 확인 (Linux, JACK dummy 48 kHz 128 프레임, 로컬 meon 서버·AOO 서버, `scripts/stall/run-jam.sh`, 각 10분)
+
+  | 시험 | 앱 | 최대 콜백 (A / B) | 100 ms 넘은 콜백 | 100 ms 넘은 끊김 |
+  |---|---|---|---|---|
+  | 한 JACK 서버 | main | 292.4 / 193.2 ms | 1 / 1 | 3 |
+  | 한 JACK 서버 | E10 | 9.9 / 7.0 ms | 0 / 0 | 0 |
+  | 서버 따로 | main | 5.2 / 88.2 ms | 0 / 0 | 0 |
+  | 서버 따로 | E10 | 5.8 / 4.5 ms | 0 / 0 | 0 |
+  | 서버 따로 + 2명이 들어오고 나가기 133번 | E10 | 4.1 / 5.2 ms | 0 / 0 | 0 |
+
+  - main 의 10 ms 넘은 콜백은 모두 `juce::ReadWriteLock::enterRead` 에서 기다렸다. E10 은 10 ms 넘은 콜백이 0번이다.
+  - 들어오고 나가기: 133번 (정상 종료 67, 강제 종료 66).
+    - A·B 모두 끝까지 살아 있었다.
+    - 건너뛴 블록은 A·B 각 1개.
+    - 셀프 모니터를 켠 A 의 출력에 무음 0번 (건너뛴 블록에도 내 소리가 이어짐).
+  - ThreadSanitizer: (시험 뒤 채움)
+
 새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E4 는 고친 뒤 승인받았다 (2026-10-14).
 E 번호는 다시 쓰지 않는다. 하지 않기로 한 수정도 번호를 그대로 두고 "안 함" 으로 표시하며, 새 수정은 다음 번호를 받는다.
 
