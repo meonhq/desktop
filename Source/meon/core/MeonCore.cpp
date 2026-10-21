@@ -58,7 +58,9 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     rt = std::make_unique<Realtime> (*realtimeLink, sched, options.build);
     rt->addListener (&appStore);
     // 로그인 토큰은 서버마다 다른 항목에 둔다 (가짜·로컬·운영 토큰이 섞이지 않게)
-    tokenStore = TokenStore::createDefault (options.server.tokenItem);
+    // 소개 페이지 캡처는 메모리에만 둔다 (CI 의 빈 HOME 에서 macOS 키체인·Windows 자격 증명을 건드리지 않게)
+    if (options.showcaseScene.isNotEmpty()) tokenStore = std::make_unique<MemoryTokenStore>();
+    else tokenStore = TokenStore::createDefault (options.server.tokenItem);
     if (options.resetFakeState && options.server.isFake()) tokenStore->clear();
     // 같은 컴퓨터의 다른 MEON(앱·플러그인)과 토큰 갱신을 나눠 쓴다 (가짜 서버는 프로세스마다 따로라 필요 없다)
     if (! options.server.isFake())

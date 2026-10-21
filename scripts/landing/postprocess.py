@@ -128,12 +128,12 @@ if frames:
 
     pattern = os.path.join(work, "%04d.png")
     common = ["-y", "-hide_banner", "-loglevel", "error", "-framerate", str(FPS), "-i", pattern, "-an"]
-    subprocess.run(["ffmpeg", *common, "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-pix_fmt", "yuv420p",
+    subprocess.run(["ffmpeg", *common, "-c:v", "libx264", "-preset", "slow", "-crf", "12", "-pix_fmt", "yuv420p",
                     "-profile:v", "high", "-movflags", "+faststart", os.path.join(OUT, "hero@2x.mp4")], check=True)
     scale = ["-vf", "scale=1512:982:flags=lanczos"]
-    subprocess.run(["ffmpeg", *common, *scale, "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
+    subprocess.run(["ffmpeg", *common, *scale, "-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p",
                     "-profile:v", "high", "-movflags", "+faststart", os.path.join(OUT, "hero.mp4")], check=True)
-    subprocess.run(["ffmpeg", *common, *scale, "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-row-mt", "1",
+    subprocess.run(["ffmpeg", *common, *scale, "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "26", "-row-mt", "1",
                     "-deadline", "good", "-cpu-used", "2", "-pix_fmt", "yuv420p", os.path.join(OUT, "hero.webm")], check=True)
     shutil.rmtree(work)
     save(first, "hero-poster")

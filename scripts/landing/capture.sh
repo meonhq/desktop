@@ -17,31 +17,40 @@ OFF=$(( (21 - 10#$H + 36) % 24 - 12 ))
 export TZ="MEON$(( -OFF ))"
 echo "TZ=$TZ (지금 $(date +%H:%M))"
 
-run() {   # $1 = 이름, 나머지 = 앱 옵션
-  local name=$1; shift
+run() {   # $1 = 이름, $2 = 제한 시간(초), 나머지 = 앱 옵션
+  local name=$1 limit=$2; shift 2
   local home="$WORK/home-$name"
   rm -rf "$home"; mkdir -p "$home"
   local cmd=("$APP" --allow-multi --no-input --capture-out="$RAW" "$@")
+  [ "$(uname)" = Linux ] && cmd=(xvfb-run -a -s "-screen 0 1920x1200x24" "${cmd[@]}")
   echo "== $name: ${cmd[*]}"
-  if [ "$(uname)" = Linux ]; then
-    HOME="$home" timeout 1800 xvfb-run -a -s "-screen 0 1920x1200x24" "${cmd[@]}" > "$WORK/$name.log" 2>&1
+  HOME="$home" "${cmd[@]}" > "$WORK/$name.log" 2>&1 &
+  local pid=$! code=0 t=0
+  while kill -0 $pid 2>/dev/null && [ $t -lt $limit ]; do sleep 1; t=$((t + 1)); done
+  if kill -0 $pid 2>/dev/null; then
+    echo "::error::$name 이 ${limit}초 안에 끝나지 않음"
+    pkill -9 -P $pid 2>/dev/null; kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null
+    code=124
   else
-    HOME="$home" "${cmd[@]}" > "$WORK/$name.log" 2>&1
+    wait $pid; code=$?
   fi
-  local code=$?
-  grep "^SHOWCASE" "$WORK/$name.log" | grep -v "SHOWCASE step\|SHOWCASE frame" || true
-  if [ $code -ne 0 ]; then echo "::error::$name 실패 (종료 코드 $code)"; tail -20 "$WORK/$name.log"; return 1; fi
+  grep "^SHOWCASE" "$WORK/$name.log" | grep -v "SHOWCASE frame" | tail -40 || true
+  if [ $code -ne 0 ]; then
+    echo "::error::$name 실패 (종료 코드 $code)"; tail -40 "$WORK/$name.log"
+    find "$home" -name app.log -exec tail -40 {} \; 2>/dev/null   # 앱 진단 로그 (macOS: ~/Library/Logs/MEON)
+    return 1
+  fi
 }
 
 status=0
 if [ "$WHAT" = still ] || [ "$WHAT" = all ]; then
-  run jam     --showcase=jam     --window=0,0,1512,982 --capture-size=1512x982 || status=1
-  run rooms   --showcase=rooms   --window=0,0,1512,982 --capture-size=1512x982 || status=1
-  run friends --showcase=friends --window=0,0,1512,982 --capture-size=1512x982 || status=1
-  run daw     --showcase=jam --as-plugin --window=0,0,900,600 --capture-size=900x600 || status=1
+  run jam     240 --showcase=jam     --window=0,0,1512,982 --capture-size=1512x982 || status=1
+  run rooms   240 --showcase=rooms   --window=0,0,1512,982 --capture-size=1512x982 || status=1
+  run friends 240 --showcase=friends --window=0,0,1512,982 --capture-size=1512x982 || status=1
+  run daw     240 --showcase=jam --as-plugin --window=0,0,900,600 --capture-size=900x600 || status=1
 fi
 if [ "$WHAT" = video ] || [ "$WHAT" = all ]; then
-  run video   --showcase=jam --capture=video --window=0,0,1512,982 --capture-size=1512x982 || status=1
+  run video   2400 --showcase=jam --capture=video --window=0,0,1512,982 --capture-size=1512x982 || status=1
 fi
 ls -la "$RAW"
 exit $status
