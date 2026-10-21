@@ -6,7 +6,7 @@
 #include "../../MeonSettings.h"
 #include "../../core/model/PanelWidth.h"
 #include "../../core/util/ChatInput.h"
-#include "../../core/util/EmojiCluster.h"
+#include "../../core/util/ChatWrap.h"
 
 namespace meon::ui
 {
@@ -355,63 +355,27 @@ struct JamScreen::ChatView : juce::Component
         return k >= 0 && k < maxTaggedLinks ? k : -1;
     }
 
-    /** 한 줄보다 긴 단어(공백 없는 글·긴 링크)를 줄 끝에서 끊는다 (디자인 overflow-wrap:anywhere).
-        JUCE 기본 배치(리눅스·윈도우의 내장 글꼴)는 byChar 를 무시하고 단어를 쪼개지 않아 말풍선 밖으로 잘렸다.
-        끊을 자리에 \n 을 넣은 표시용 글과, 원래 글자 위치 → 표시용 위치 (map, 크기 = 글자 수 + 1) 를 돌려준다.
-        cuts: 단어를 나누는 자리 (링크 시작·끝. JUCE 도 색이 바뀌는 곳에서 단어를 나눈다) */
-    static juce::String hardWrap (const juce::String& text, const juce::Font& f, float maxW, std::vector<int>& map,
-                                  const std::vector<int>& cuts = {})
-    {
-        auto isCut = [&cuts] (int k) { return std::find (cuts.begin(), cuts.end(), k) != cuts.end(); };
-        const int n = text.length();
-        map.assign ((size_t) n + 1, 0);
-        juce::String out;
-        float x = 0.0f;
-        const float limit = maxW - 1.0f;   // 글자 폭 합과 JUCE 의 단어 폭 차이 여유
-        auto isBreak = [] (juce::juce_wchar c) { return c == '\n' || c == '\r'; };
-        auto put = [&] (int from, int to)
-        {
-            for (int k = from; k < to; ++k) { map[(size_t) k] = out.length(); out += juce::String::charToString (text[k]); }
-        };
-        int i = 0;
-        while (i < n)
-        {
-            if (isBreak (text[i])) { put (i, i + 1); x = 0.0f; ++i; continue; }
-            const bool ws = juce::CharacterFunctions::isWhitespace (text[i]);
-            int j = i;
-            while (j < n && ! isBreak (text[j]) && juce::CharacterFunctions::isWhitespace (text[j]) == ws && (j == i || ! isCut (j))) ++j;
-            const float w = f.getStringWidthFloat (text.substring (i, j));
-            if (ws || x + w <= limit) { put (i, j); x += w; i = j; continue; }
-            if (w <= limit) { put (i, j); x = w; i = j; continue; }   // 다음 줄에 들어간다 (JUCE 가 옮긴다)
-            // 한 줄보다 길다: 지금 줄을 채우고 넘치는 글자 앞에서 끊는다 (이모지 묶음은 쪼개지 않는다)
-            for (int k = i; k < j;)
-            {
-                const int e = juce::jmax (k + 1, juce::jmin (j, core::emojiClusterEnd (text, k)));
-                const float cw = f.getStringWidthFloat (text.substring (k, e));
-                if (x + cw > limit && x > 0.0f) { out += "\n"; x = 0.0f; }
-                put (k, e);
-                x += cw;
-                k = e;
-            }
-            i = j;
-        }
-        map[(size_t) n] = out.length();
-        return out;
-    }
-
-    static juce::TextLayout makeLayout (const juce::String& rawText, int width, juce::Colour ink, float px, int weight,
-                                        const std::vector<juce::Range<int>>& links = {})
+    /** 줄바꿈은 core::chatwrap 이 정한다: 띄어쓰기 자리에서 바꾸고, 한 줄보다 긴 단어(긴 링크, 띄어쓰기 없는 문장)만 글자 단위로 끊는다.
+        플랫폼 배치는 줄을 다시 바꾸지 않는다 (WordWrap::none). macOS(CoreText) 의 글자 단위 줄바꿈은 한글 단어 중간에서 줄을 바꿨고,
+        Linux·Windows 의 단어 단위 줄바꿈은 긴 단어를 끊지 않았다.
+        wrapWidth: 줄을 바꾸는 폭. layoutWidth: 배치 폭 (0 이면 wrapWidth). 왼쪽 정렬은 넉넉히 줘서 플랫폼 글자 폭 차이로 잘리지 않게 한다 */
+    static juce::TextLayout makeLayout (const juce::String& rawText, int wrapWidth, juce::Colour ink, float px, int weight,
+                                        const std::vector<juce::Range<int>>& links = {},
+                                        juce::Justification just = juce::Justification::topLeft, int layoutWidth = 0)
     {
         juce::AttributedString a;
         const auto f = font (weight, px);
-        std::vector<int> map, cuts;
+        std::vector<int> cuts;
         for (auto r : links) { cuts.push_back (r.getStart()); cuts.push_back (r.getEnd()); }
-        const auto text = hardWrap (rawText, f, (float) width, map, cuts);
+        const auto wrapped = core::chatwrap::wrap (rawText, [&f] (const juce::String& s) { return f.getStringWidthFloat (s); },
+                                                   (float) wrapWidth, cuts);
+        const auto& text = wrapped.text;
+        const auto& map = wrapped.map;
         if (links.empty())
             a.append (text, f, ink);
         else
         {
-            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다 (링크 위치는 끊은 글 기준으로 옮긴다)
+            // 같은 글꼴로 색만 나눠 붙인다: 글자 폭·줄바꿈은 링크가 없을 때와 같다 (링크 위치는 줄을 바꾼 글 기준으로 옮긴다)
             int pos = 0;
             for (size_t k = 0; k < links.size(); ++k)
             {
@@ -423,10 +387,20 @@ struct JamScreen::ChatView : juce::Component
             if (pos < text.length()) a.append (text.substring (pos), f, ink);
         }
         a.setLineSpacing (px * 0.5f);
-        a.setWordWrap (juce::AttributedString::byChar);
+        a.setWordWrap (juce::AttributedString::none);
+        a.setJustification (just);
         juce::TextLayout t;
-        t.createLayout (a, (float) width);
+        t.createLayout (a, (float) (layoutWidth > 0 ? layoutWidth : wrapWidth));
         return t;
+    }
+
+    /** 줄마다 실제 글자 폭 중 가장 넓은 것 (내 말풍선 너비) */
+    static float widestLine (const juce::TextLayout& t)
+    {
+        float w = 0.0f;
+        for (int i = 0; i < t.getNumLines(); ++i)
+            w = juce::jmax (w, t.getLine (i).getLineBoundsX().getLength());
+        return w;
     }
 
     int layoutFor (int width)
@@ -443,7 +417,9 @@ struct JamScreen::ChatView : juce::Component
             if (m.kind == K::system)
             {
                 if (m.fromUser.isNotEmpty()) it.msg.text = owner.memberName (m.fromUser) + TXT ("님이 입장했어요");
-                it.layout = makeLayout (clockText (m.time) + " · " + it.msg.text, inner, col::inkFaint, 12.0f, 400);
+                // 가운데 정렬: 같은 규칙으로 줄을 바꾸고 가운데에 놓는다 (그릴 때도 이 배치)
+                it.layout = makeLayout (clockText (m.time) + " · " + it.msg.text, inner - 4, col::inkFaint, 12.0f, 400, {},
+                                        juce::Justification::centredTop, inner);
                 const int h = (int) std::ceil (it.layout.getHeight());
                 it.bounds = { 18, y, inner, h };
                 y += h + 14;
@@ -452,12 +428,9 @@ struct JamScreen::ChatView : juce::Component
             {
                 const int maxText = core::panel::myBubbleMax (inner) - 24;   // 패널이 넓으면 75% (220..420)
                 it.links = core::findLinks (m.text);
-                auto probe = makeLayout (m.text, maxText, col::ink, 15.0f, 400, it.links);
-                float tw = 0.0f;
-                for (int i = 0; i < probe.getNumLines(); ++i)
-                    tw = juce::jmax (tw, probe.getLine (i).getLineBoundsX().getLength());
-                const int bw = juce::jmin (maxText, (int) std::ceil (tw) + 1);
-                it.layout = makeLayout (m.text, bw, col::ink, 15.0f, 400, it.links);
+                // 줄은 최대 폭(maxText)에서 바꾸고, 말풍선은 가장 긴 줄에 맞춘다 (오른쪽에 빈 공간이 남지 않게)
+                it.layout = makeLayout (m.text, maxText, col::ink, 15.0f, 400, it.links, juce::Justification::topLeft, maxText + 64);
+                const int bw = (int) std::ceil (widestLine (it.layout)) + 1;
                 const int h = (int) std::ceil (it.layout.getHeight()) + 16;
                 it.bounds = { 18 + inner - (bw + 24), y, bw + 24, h };
                 it.textArea = it.bounds.toFloat().reduced (12.0f, 8.0f);
@@ -474,7 +447,7 @@ struct JamScreen::ChatView : juce::Component
                 // 남의 메시지: 왼쪽 아바타 30(위쪽 정렬) + 9, 이름·본문은 오른쪽 남은 폭 (줄바꿈 폭도 39 줄어든다)
                 const int textW = juce::jmax (1, inner - avatarSize - avatarGap);
                 it.links = core::findLinks (m.text);
-                it.layout = makeLayout (m.text, textW, col::ink, 15.0f, 400, it.links);
+                it.layout = makeLayout (m.text, textW, col::ink, 15.0f, 400, it.links, juce::Justification::topLeft, textW + 64);
                 const int h = 16 + 3 + (int) std::ceil (it.layout.getHeight());
                 it.bounds = { 18 + avatarSize + avatarGap, y, textW, h };
                 it.textArea = it.bounds.withTrimmedTop (19).toFloat();
@@ -493,12 +466,7 @@ struct JamScreen::ChatView : juce::Component
                 const auto& m = it.msg;
             if (m.kind == K::system)
             {
-                juce::AttributedString a;   // 가운데 정렬
-                a.append (clockText (m.time) + " · " + m.text, font (400, 12.0f), col::inkFaint);
-                a.setJustification (juce::Justification::centredTop);
-                juce::TextLayout t;
-                t.createLayout (a, (float) it.bounds.getWidth());
-                t.draw (g, it.bounds.toFloat());
+                it.layout.draw (g, it.bounds.toFloat());   // 가운데 정렬 (layoutFor 에서 만든 배치)
             }
             else if (m.kind == K::mine)
             {

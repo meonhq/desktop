@@ -47,6 +47,7 @@ Showcase::Showcase (core::MeonCore& c, AppRoot& r, juce::Component& t, const juc
     if (dev.containsKey ("capture-scale"))  scale = juce::jlimit (1.0f, 4.0f, dev["capture-scale"].getFloatValue());
     if (dev.containsKey ("capture-wait"))   waitMs = juce::jmax (0, dev["capture-wait"].getIntValue());
     captureName = dev["capture-name"];
+    chatCase = dev["chat-case"];
     if (dev.containsKey ("capture-size"))
         size = { dev["capture-size"].upToFirstOccurrenceOf ("x", false, false).getIntValue(),
                  dev["capture-size"].fromFirstOccurrenceOf ("x", false, false).getIntValue() };
@@ -80,6 +81,7 @@ void Showcase::start()
     if (scene == "jam") buildJam();
     else if (scene == "rooms") buildHome (false);
     else if (scene == "friends") buildHome (true);
+    else if (scene == "chat") buildChat();
     else { fail ("unknown scene " + scene); return; }
     addCapture();
     startTimer (steps.empty() ? 1 : juce::jmax (1, steps.front().delayMs));
@@ -203,6 +205,57 @@ void Showcase::buildHome (bool friendsScene)
     if (friendsScene)
         add (300, "invite", [this] { if (auto* fake = core.fakeServer()) fake->devInviteMe(); },
              [this] { return ! core.store().state().invites.empty(); });
+}
+
+void Showcase::buildChat()
+{
+    // 채팅 말풍선 줄바꿈 확인: 서연(상대) 한 줄, 나 한 줄. 띄어쓰기 자리에서 줄이 바뀌고, 한 줄보다 긴 단어만 글자 단위로 끊는지 본다
+    struct Case { const char* id; const char* other; const char* mine; };
+    static const Case cases[] = {
+        { "ko",      "오늘 합주 끝나고 다음 주 셋리스트도 같이 정해 볼까요? 저는 시티팝 한 곡 더 넣고 싶어요",
+                     "좋아요. 첫 곡은 템포 120으로 갈게요. 키는 원곡보다 하나 올려서 해 봐요" },
+        { "en",      "Let's run the bridge one more time and then take a short break before the last song",
+                     "Sounds good. I will count in four and we start again from the second verse" },
+        { "link",    "악보 여기 올렸어요 https://drive.example.com/folder/1A2b3C4d5E6f7G8h9I0jKlMnOpQr/setlist-final.pdf",
+                     "녹음은 https://music.example.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=a1b2c3d4 에 있어요" },
+        { "nospace", "띄어쓰기없이아주길게쓴문장도말풍선안에서글자단위로자연스럽게끊어져야해요",
+                     "합주끝나고녹음파일정리해서단톡방에올려둘게요다들확인해주세요" },
+    };
+    const Case* c = &cases[0];
+    for (auto& k : cases)
+        if (chatCase == k.id) c = &k;
+
+    auto* jam = core.jam();
+    if (jam == nullptr) { fail ("no jam session"); return; }
+    add (300, "logged in", {}, [this] { return core.store().state().me.has_value() && root.getHome() != nullptr; });
+    add (300, "create room", [this]
+    {
+        core::CreateRoom r;
+        r.type = "public";
+        r.entryMode = String ("approval");
+        r.title = String::fromUTF8 ("금요일 밤 잼");
+        r.capacity = 7;
+        core.home().createRoom (r, [] (core::Result<core::RoomDetail>) {});
+    }, [jam] { return jam->isInRoom(); });
+    const auto& m = cast()[1];   // 서연
+    add (300, "join", [this, &m]
+    {
+        ShowcaseEngine::setPart (m.id, m.part);
+        ShowcaseEngine::setPing (m.id, m.pingMs, 0.0, 0.0, m.pingMs);
+        if (auto* fake = core.fakeServer())
+            fake->remotePeerJoined (m.id, String::fromUTF8 (m.nickname), m.part, false);
+    }, [jam, &m]
+    {
+        for (auto& p : jam->members())
+            if (p.userId == m.id) return p.state == core::PeerState::State::connected;
+        return false;
+    });
+    add (400, "other", [jam, c, &m]
+    {
+        auto& chat = jam->chat();
+        chat.received ({ chat.group(), m.id, "id:wrap1", String::fromUTF8 (c->other) });
+    });
+    add (300, "mine", [jam, c] { jam->chat().sendText (String::fromUTF8 (c->mine)); });
 }
 
 void Showcase::addCapture()

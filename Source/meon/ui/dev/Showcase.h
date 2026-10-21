@@ -56,6 +56,8 @@ private:
 
     void buildJam();
     void buildHome (bool friendsScene);
+    void buildChat();          // 채팅 줄바꿈 확인 (--showcase=chat --chat-case=ko|en|link|nospace)
+    juce::String chatCase;
     void addCapture();
 
     // 렌더링
