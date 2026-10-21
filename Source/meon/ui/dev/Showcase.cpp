@@ -170,7 +170,7 @@ void Showcase::buildJam()
     join (c[5]);
     add (600, "chat 5", [say] { say ("u_s_yuna", "늦어서 죄송해요! 바로 준비할게요"); });
     add (400, "chat 6", [mine] { mine ("괜찮아요. 첫 곡은 템포 120으로\n갈게요"); });
-    add (400, "chat 7", [say] { say ("u_s_seoyeon", "키 하나 올려서 가도 될까요?"); });
+    add (400, "chat 7", [say] { say ("u_s_seoyeon", "키 하나 올려도 될까요?"); });
     add (400, "chat 8", [mine] { mine ("좋아요, 그렇게 가요"); });
 
     add (300, "mix", [jam]
