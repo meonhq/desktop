@@ -1,0 +1,93 @@
+# PR 확인용 캡처 (captures/ 브랜치 전용, PR 에는 넣지 않는다).
+# 같은 장면을 바꾸기 전(main 의 JamScreen.cpp)과 바꾼 뒤로 2배 렌더링해 docs/pr/chat-word-wrap/<mac|windows>/ 에 커밋한다.
+name: PR captures
+on:
+  push:
+    branches: ['captures/**']
+    paths-ignore: ['docs/pr/**']
+permissions:
+  contents: write
+jobs:
+  mac:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pillow
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pillow
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: CMake 구성 (빌드 0)
+        run: cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUniversalBinary=OFF -DMEON_BUILD_ID=0 -DMEON_TESTS=OFF -B build
+      - name: 빌드 (바꾼 뒤, 바꾸기 전)
+        run: |
+          cmake --build build --config RelWithDebInfo --parallel 4 --target MEON_Standalone
+          cp -R build/MEON_artefacts/RelWithDebInfo/Standalone/Meon.app "$RUNNER_TEMP/after.app"
+          git show origin/main:Source/meon/ui/screens/JamScreen.cpp > Source/meon/ui/screens/JamScreen.cpp
+          cmake --build build --config RelWithDebInfo --parallel 4 --target MEON_Standalone
+          cp -R build/MEON_artefacts/RelWithDebInfo/Standalone/Meon.app "$RUNNER_TEMP/before.app"
+          git checkout -- Source/meon/ui/screens/JamScreen.cpp
+      - name: 캡처
+        run: |
+          bash scripts/captures/chat-wrap.sh "$RUNNER_TEMP/before.app/Contents/MacOS/Meon" cap before-
+          bash scripts/captures/chat-wrap.sh "$RUNNER_TEMP/after.app/Contents/MacOS/Meon" cap after-
+          mkdir -p docs/pr/chat-word-wrap/mac && cp cap/*.png docs/pr/chat-word-wrap/mac/
+      - name: 브랜치에 커밋
+        run: bash -c "$COMMIT"
+        env:
+          COMMIT: |
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/pr/chat-word-wrap/mac
+            git commit -m "PR 자료: 채팅 줄바꿈 macOS 캡처 (바꾸기 전·후)"
+            for i in 1 2 3 4 5; do git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME" && exit 0; sleep 7; done
+            exit 1
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: ASIO SDK 받기
+        run: |
+          curl -sSL -o asiosdk.zip https://www.steinberg.net/asiosdk
+          unzip -q asiosdk.zip -d asiotmp
+          ASIODIR=$(dirname "$(dirname "$(find asiotmp -path '*common/iasiodrv.h' | head -1)")")
+          mv "$ASIODIR" ../asiosdk
+      - name: Pillow
+        run: python -m pip install --quiet pillow
+      - name: CMake 구성 (빌드 0)
+        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -DMEON_BUILD_ID=0 -DMEON_TESTS=OFF
+      - name: 빌드 (바꾼 뒤, 바꾸기 전)
+        run: |
+          cmake --build build --config Release --parallel --target MEON_Standalone
+          mkdir -p after before && cp build/MEON_artefacts/Release/Standalone/*.exe after/
+          git show origin/main:Source/meon/ui/screens/JamScreen.cpp > Source/meon/ui/screens/JamScreen.cpp
+          cmake --build build --config Release --parallel --target MEON_Standalone
+          cp build/MEON_artefacts/Release/Standalone/*.exe before/
+          git checkout -- Source/meon/ui/screens/JamScreen.cpp
+          ls after before
+      - name: 캡처
+        run: |
+          export PYTHON=python
+          EXE=$(ls after/*.exe | head -1); NAME=$(basename "$EXE")
+          bash scripts/captures/chat-wrap.sh "before/$NAME" cap before-
+          bash scripts/captures/chat-wrap.sh "after/$NAME" cap after-
+          mkdir -p docs/pr/chat-word-wrap/windows && cp cap/*.png docs/pr/chat-word-wrap/windows/
+      - name: 브랜치에 커밋
+        run: bash -c "$COMMIT"
+        env:
+          COMMIT: |
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/pr/chat-word-wrap/windows
+            git commit -m "PR 자료: 채팅 줄바꿈 Windows 캡처 (바꾸기 전·후)"
+            for i in 1 2 3 4 5; do git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME" && exit 0; sleep 7; done
+            exit 1
