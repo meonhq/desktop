@@ -2,6 +2,7 @@
 #include "ui/dev/WidgetGallery.h"
 #include "ui/dev/DevJamScreen.h"
 #include "ui/dev/UiSelfTest.h"
+#include "ui/dev/Showcase.h"
 #include "ui/screens/OnboardingScreen.h"
 #include "ui/AppRoot.h"
 #include "ui/screens/JamScreen.h"
@@ -95,6 +96,8 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
             devHomePreview = scr;   // 합주 화면(가짜 계정으로 비공개 방)·설정 탭 스냅숏
         if (meon::devOptions().containsKey ("uitest"))
             devHomePreview = "uitest";   // 화면 자가 테스트 (가짜 계정으로 자동 가입한 홈에서 시작)
+        if (meon::devOptions().containsKey ("showcase"))
+            devHomePreview = "showcase";   // 소개 페이지 캡처 (ui/dev/Showcase: 가상 인물 승찬으로 자동 가입)
     }
    #endif
     core.auth().addListener (this);
@@ -289,6 +292,8 @@ void MeonEditor::updateOnboarding()
     // 개발용 자동 가입 (--dev-signup=아이디): 두 인스턴스 자동 시험용. 비밀번호 abcd123!x, 인증 코드는 가짜 서버 값
     auto autoUser = meon::devOptions()["dev-signup"];
     if (autoUser.isEmpty() && devHomePreview.isNotEmpty()) autoUser = "snapshot";   // 홈 스냅숏: 가짜 계정으로 자동 가입
+    juce::String autoNickname = autoUser, autoPart = "guitar";
+    if (devHomePreview == "showcase") { autoUser = "seungchan"; autoNickname = juce::String::fromUTF8 ("승찬"); autoPart = "keys"; }
     if (autoUser.isNotEmpty())
     {
         auto& auth = core.auth();
@@ -302,8 +307,8 @@ void MeonEditor::updateOnboarding()
             });
         }
         else if (step == Step::verify && core.fakeServer() != nullptr) auth.verify (core.fakeServer()->getLastMailedCode(), ignore);
-        else if (step == Step::nickname) auth.setNickname (autoUser, ignore);
-        else if (step == Step::part) auth.setPart ("guitar", ignore);
+        else if (step == Step::nickname) auth.setNickname (autoNickname, ignore);
+        else if (step == Step::part) auth.setPart (autoPart, ignore);
         else if (step == Step::discord) auth.finishDiscord();
         else if (step == Step::done) auth.finishDone();
         if (auth.step() != step) return;   // 위에서 단계가 넘어갔으면 그 호출이 이미 처리했다
@@ -432,6 +437,24 @@ void MeonEditor::applyHomePreview()
             });
         };
         uiTest->start();
+        return;
+    }
+    if (p == "showcase")
+    {
+        // 소개 페이지 캡처: 끝나면 앱을 닫는다 (종료 코드 0 = 저장함)
+        showcase = std::make_unique<ui::dev::Showcase> (core, *appRoot, *this, meon::devOptions());
+        showcase->onDone = [] (int code)
+        {
+            juce::MessageManager::callAsync ([code]
+            {
+                if (auto* app = juce::JUCEApplicationBase::getInstance())
+                {
+                    app->setApplicationReturnValue (code);
+                    app->systemRequestedQuit();
+                }
+            });
+        };
+        showcase->start();
         return;
     }
     if (p == "create")      home->openCreateRoom();

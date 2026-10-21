@@ -12,7 +12,7 @@
 namespace meon
 {
 
-namespace ui { class OnboardingScreen; class LookAndFeel; class AppRoot; class UiSelfTest; }
+namespace ui { class OnboardingScreen; class LookAndFeel; class AppRoot; class UiSelfTest; namespace dev { class Showcase; } }
 
 class MeonEditor : public juce::AudioProcessorEditor,
                    public ShellHooks,
@@ -95,6 +95,7 @@ private:
     bool devPreview = false, devJam = false, devSignupStarted = false;
     juce::String devHomePreview;   // --screen=home[:create|filter|code|notif|fail|toast|disc] | jam (스냅숏용)
     std::unique_ptr<ui::UiSelfTest> uiTest;   // --uitest (appRoot 보다 먼저 지워진다)
+    std::unique_ptr<ui::dev::Showcase> showcase;   // --showcase (소개 페이지 캡처, appRoot 보다 먼저 지워진다)
 
     // 업데이트 (버그 #16): 켤 때 + 6시간마다 확인, 서버 config 의 latest_build 가 내 빌드보다 크면 바로 확인.
     // 받기·설치는 "업데이트"를 눌렀을 때만, 합주 중에는 막는다

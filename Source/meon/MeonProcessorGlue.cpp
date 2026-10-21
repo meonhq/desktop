@@ -2,6 +2,7 @@
 #include "../SonobusPluginProcessor.h"
 #include "core/MeonCore.h"
 #include "core/jam/EngineLink.h"
+#include "ui/dev/ShowcaseEngine.h"
 #include "core/log/AppLog.h"
 #include "MeonSettings.h"
 #include "MeonCrashDump.h"
@@ -96,8 +97,17 @@ meon::core::MeonCore& SonobusAudioProcessor::getMeonCore()
         meon::crashdump::installForStandalone();   // 장치를 연 뒤 드라이버가 처리기를 바꿔 놓았으면 다시 건다
         meon::crashdump::tidyAndLog();
 
-        auto link = std::make_unique<meon::core::EngineLink> (*this, o.plugin);
-        link->deviceManager = [] { auto& p = meon::deviceManagerProvider(); return p ? p() : nullptr; };
+        std::unique_ptr<meon::core::Engine> engine;
+       #if MEON_DEV_OPTIONS
+        if (o.showcaseScene.isNotEmpty())   // 소개 페이지 캡처: 소리 없이 정해 둔 멤버가 연주하는 것처럼 보이는 엔진
+            engine = std::make_unique<meon::ui::dev::ShowcaseEngine>();
+       #endif
+        if (engine == nullptr)
+        {
+            auto link = std::make_unique<meon::core::EngineLink> (*this, o.plugin);
+            link->deviceManager = [] { auto& p = meon::deviceManagerProvider(); return p ? p() : nullptr; };
+            engine = std::move (link);
+        }
         meon::core::JamSession::Options jo;
         jo.logFolder = meon::MeonSettings::getLogFolder();
         jo.prefs = loadPrefs (o.plugin);
@@ -112,7 +122,7 @@ meon::core::MeonCore& SonobusAudioProcessor::getMeonCore()
             meon::MeonSettings s;
             return (int) s.getEarGuardLevel();
         };
-        mMeonCore->attachEngine (std::move (link), std::move (jo));
+        mMeonCore->attachEngine (std::move (engine), std::move (jo));
     }
     return *mMeonCore;
 }

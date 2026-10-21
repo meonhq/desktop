@@ -58,7 +58,9 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     rt = std::make_unique<Realtime> (*realtimeLink, sched, options.build);
     rt->addListener (&appStore);
     // 로그인 토큰은 서버마다 다른 항목에 둔다 (가짜·로컬·운영 토큰이 섞이지 않게)
-    tokenStore = TokenStore::createDefault (options.server.tokenItem);
+    // 소개 페이지 캡처는 메모리에만 둔다 (CI 의 빈 HOME 에서 macOS 키체인·Windows 자격 증명을 건드리지 않게)
+    if (options.showcaseScene.isNotEmpty()) tokenStore = std::make_unique<MemoryTokenStore>();
+    else tokenStore = TokenStore::createDefault (options.server.tokenItem);
     if (options.resetFakeState && options.server.isFake()) tokenStore->clear();
     // 같은 컴퓨터의 다른 MEON(앱·플러그인)과 토큰 갱신을 나눠 쓴다 (가짜 서버는 프로세스마다 따로라 필요 없다)
     if (! options.server.isFake())
@@ -114,7 +116,10 @@ void MeonCore::leaveOnQuit()
 void MeonCore::createFake()
 {
     fake = std::make_unique<FakeMeonServer> (sched, options.fake);
-    fake->loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+    if (options.showcaseScene.isEmpty())
+        fake->loadWorld (juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::world_json, MeonFixtures::world_jsonSize)));
+    else
+        fake->loadWorld (showcaseWorld (options.showcaseScene));
 
     // 가짜 계정(이 설치의 계정 ID·AOO 비밀번호·refresh 토큰)은 설정 폴더의 파일에 둔다 (빌드 0 의 기본·--server=fake 전용)
     fakeStateFile = options.dataFolder.getChildFile ("MEONFakeServer.json");
@@ -277,6 +282,31 @@ void MeonCore::applyDevOptions (Options& o, const juce::StringPairArray& dev)
         if (v.containsChar (':')) o.fake.aooPort = v.fromLastOccurrenceOf (":", false, false).getIntValue();
     }
     if (keys.contains ("fake-reset")) o.resetFakeState = true;
+    if (keys.contains ("showcase"))
+    {
+        // 소개 페이지 캡처: 가상 인물 데이터로 매번 새로 시작하고, 시간에 따라 바뀌는 각본은 끈다
+        o.showcaseScene = dev["showcase"].isNotEmpty() ? dev["showcase"] : juce::String ("jam");
+        o.fake.scripts = false;
+        o.fake.fakeHostsAccept = false;   // 보낸 입장 요청이 "요청 보냄" 으로 남게
+        o.resetFakeState = true;
+    }
+}
+
+juce::var MeonCore::showcaseWorld (const juce::String& scene)
+{
+    // showcase.json 의 친구 목록은 장면마다 다르다: 합주 장면은 jam_friends (합주 멤버와 이름이 겹치지 않게).
+    // 합주 장면에서는 합주 멤버(고정 인물)를 다른 방에서 뺀다 (그 사람들은 내 방에 들어온다)
+    auto world = juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::showcase_json, MeonFixtures::showcase_jsonSize));
+    auto* o = world.getDynamicObject();
+    if (o == nullptr || scene != "jam") return world;
+    o->setProperty ("friends", world.getProperty ("jam_friends", juce::var()));
+    const juce::StringArray cast { "u_s_minjun", "u_s_seoyeon", "u_s_doyun", "u_s_haeun", "u_s_jiho", "u_s_yuna" };
+    if (auto* rooms = world.getProperty ("rooms", juce::var()).getArray())
+        for (auto& r : *rooms)
+            if (auto* ms = r.getProperty ("members", juce::var()).getArray())
+                for (int i = ms->size(); --i >= 0;)
+                    if (cast.contains (ms->getReference (i).toString())) ms->remove (i);
+    return world;
 }
 
 } // namespace meon::core
