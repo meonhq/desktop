@@ -85,7 +85,11 @@ for i in $(seq 1 240); do [ -n "$(jack_clients srvA)" ] && break; sleep 0.5; don
 CA=$(jack_clients srvA | head -1)
 PB=$(start_app b app-b --dev-join=$CODE)
 SB=$(srv_of b)
-for i in $(seq 1 240); do CB=$(jack_clients $SB | grep -v -x "$CA" | head -1); [ -n "$CB" ] && break; sleep 0.5; done
+for i in $(seq 1 240); do   # 같은 서버면 A 를 빼고 찾는다 (서버가 따로면 B 도 이름이 Meon 일 수 있다)
+  if [ "$SB" = srvA ]; then CB=$(jack_clients srvA | grep -v -x "$CA" | head -1); else CB=$(jack_clients "$SB" | head -1); fi
+  [ -n "$CB" ] && break; sleep 0.5
+done
+[ -n "$CB" ] || { echo "B 의 JACK 클라이언트 없음"; env_stop; exit 1; }
 echo "JACK: A=$CA@srvA B=$CB@$SB" | tee "$OUT/clients.txt"
 sleep 2
 
@@ -116,14 +120,17 @@ else
 fi
 for s in $SERVERS; do JACK_DEFAULT_SERVER=$s jack_lsp -c > "$OUT/ports-$s.txt" 2>/dev/null; done
 
-# 들어오고 나가기 반복: 붙어서 2~6초 있다가 나간다 (번갈아 정상 종료·강제 종료), 1~2초 쉬고 다시
+# 들어오고 나가기 반복: 붙어서 3~8초 있다가 나간다 (번갈아 정상 종료·강제 종료), 1~2초 쉬고 다시
+entries() { local n; n=$(grep -c "방 입장" "$1" 2>/dev/null); echo "${n:-0}"; }   # 앱 로그의 방 입장 횟수
 churn() {   # $1 = c|d
   local u=$1 n=0 end=$(( $(date +%s) + SECS - 5 ))
   while [ "$(date +%s)" -lt "$end" ]; do
     n=$((n + 1))
+    local log=$OUT/home-$u/.config/meon/logs/app.log
+    local before; before=$(entries "$log")
     local pid; pid=$(start_app $u app-$u --dev-join=$CODE)
-    for i in $(seq 1 80); do jack_clients srvC | grep -q . && break; sleep 0.25; done
-    sleep $(( 2 + RANDOM % 5 ))
+    for i in $(seq 1 80); do [ "$(entries "$log")" -gt "$before" ] && break; sleep 0.25; done
+    sleep $(( 3 + RANDOM % 6 ))
     if [ $((n % 2)) -eq 0 ]; then kill -KILL $pid 2>/dev/null; how=KILL; else kill -TERM $pid 2>/dev/null; how=TERM; fi
     for i in $(seq 1 40); do kill -0 $pid 2>/dev/null || break; sleep 0.25; done
     kill -KILL $pid 2>/dev/null
