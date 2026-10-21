@@ -36,6 +36,26 @@ env_start() {
 
 env_stop() { for p in api smtp aoo; do [ -f "$STALL_WORK/env/$p.pid" ] && kill "$(cat "$STALL_WORK/env/$p.pid")" 2>/dev/null; done; return 0; }
 
+login_token() {
+  curl -s "$API/auth/login" -H 'Content-Type: application/json' -H 'X-Meon-Build: 1' \
+    -d "{\"email\":\"$1@example.com\",\"password\":\"$TEST_PASSWORD\"}" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("access_token",""))
+except Exception: print("")'
+}
+
+# 지난 시험에서 들어간 방에서 모두 나간다 (앱을 끝내도 서버에는 방 멤버로 남아, 다음 --dev-create 가 방을 만들지 않는다)
+# 방 번호는 앱 로그의 "방 입장" 줄과 $STALL_WORK/rooms.txt 에서 모은다. 사용: leave_rooms 계정 …
+leave_rooms() {
+  grep -h -o "방 입장: r_[0-9a-f-]*" "$STALL_WORK"/out-*/home-*/.config/meon/logs/app.log 2>/dev/null | awk '{print $3}' >> "$STALL_WORK/rooms.txt"
+  [ -f "$STALL_WORK/rooms.txt" ] || return 0
+  sort -u -o "$STALL_WORK/rooms.txt" "$STALL_WORK/rooms.txt"
+  local u tok r
+  for u; do
+    tok=$(login_token "$u"); [ -n "$tok" ] || continue
+    while read -r r; do curl -s -o /dev/null -X POST "$API/rooms/$r/leave" -H "Authorization: Bearer $tok" -H 'X-Meon-Build: 1'; done < "$STALL_WORK/rooms.txt"
+  done
+}
+
 # 시험 계정 만들기: 가입 → 메일 코드 → 인증 → 닉네임·파트. 이미 있으면 아무것도 하지 않는다
 make_user() {
   local u=$1 E=$STALL_WORK/env

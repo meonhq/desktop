@@ -19,7 +19,9 @@ STALL_DIR=$(cd "$(dirname "$0")" && pwd)
 NAME=$1; SECS=$2; LAYOUT=$3
 BS=${BS:-128}; CHURN=${CHURN:-0}; U=${USERS:-stall}
 : "${APP:?APP 이 필요합니다}"
-OUT=$STALL_WORK/out-$NAME; rm -rf "$OUT"; mkdir -p "$OUT"
+OUT=$STALL_WORK/out-$NAME
+mkdir -p "$STALL_WORK"; grep -h -o "방 입장: r_[0-9a-f-]*" "$OUT"/home-*/.config/meon/logs/app.log 2>/dev/null | awk '{print $3}' >> "$STALL_WORK/rooms.txt"
+rm -rf "$OUT"; mkdir -p "$OUT"
 BIN=$STALL_WORK/bin; mkdir -p "$BIN"
 [ "$BIN/stallprobe.so" -nt "$STALL_DIR/stallprobe.c" ] || gcc -O2 -g -fPIC -shared -o "$BIN/stallprobe.so" "$STALL_DIR/stallprobe.c" -ldl -lpthread
 [ "$BIN/jamprobe" -nt "$STALL_DIR/jamprobe.c" ] || gcc -O2 -g -o "$BIN/jamprobe" "$STALL_DIR/jamprobe.c" -ljack -lm
@@ -37,6 +39,7 @@ for s in $SERVERS; do JACK_DEFAULT_SERVER=$s jack_wait -w -t 10 >/dev/null || { 
 srv_of() { case $1 in a) echo srvA;; b) [ "$LAYOUT" = sep ] && echo srvB || echo srvA;; *) echo srvC;; esac; }
 
 env_start || exit 1
+leave_rooms ${U}a ${U}b ${U}c ${U}d   # 지난 시험의 방에서 나간다
 
 # 앱마다 HOME (오디오 장치 = JACK, 셀프 모니터)
 for u in a b c d; do
