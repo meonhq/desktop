@@ -1,0 +1,30 @@
+Meon Bridge (test) 설치 방법 (맥)
+
+실험용 빌드입니다. 지금 쓰시는 Meon 앱·플러그인과 이름이 달라서 따로 설치되고, 서로 영향을 주지 않습니다.
+
+1. 이 zip 을 풀면 아래 세 개가 있습니다.
+   - Meon Bridge (test).component   Logic 용 플러그인 (AU)
+   - Meon Bridge (test).vst3        Ableton·Cubase 용 플러그인 (VST3)
+   - Meon Bridge App (test).app     브리지 앱
+
+2. 플러그인 넣기
+   Finder 에서 Shift + Command + G 를 누르고 아래 주소를 붙여 넣은 뒤 Enter.
+     ~/Library/Audio/Plug-Ins/Components
+   열린 폴더에 "Meon Bridge (test).component" 를 끌어다 놓습니다.
+   다시 Shift + Command + G 를 누르고 아래 주소로 가서 "Meon Bridge (test).vst3" 를 끌어다 놓습니다.
+     ~/Library/Audio/Plug-Ins/VST3
+
+3. 앱 넣기: "Meon Bridge App (test).app" 을 '응용 프로그램' 폴더에 끌어다 놓습니다.
+
+4. 서명 경고 풀기 (Apple 서명이 없는 실험 빌드라 맥이 막습니다)
+   응용 프로그램 > 유틸리티 > 터미널 을 열고, 아래 세 줄을 한 줄씩 붙여 넣고 Enter 를 누릅니다.
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Meon Bridge (test).component"
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Meon Bridge (test).vst3"
+     xattr -dr com.apple.quarantine /Applications/"Meon Bridge App (test).app"
+
+5. Logic 은 처음 켤 때 새 플러그인을 검사합니다. "Meon Bridge (test)" 가 '실패' 로 나오면
+   Logic Pro > 설정 > 플러그인 관리자 에서 제조사 Meon 아래 "Meon Bridge (test)" 를 고르고
+   '재설정 및 다시 검사' 를 누릅니다.
+
+지우기: 위에서 넣은 세 개를 휴지통에 버리면 끝입니다.
+기록 파일은 '문서 > Meon Bridge (test) > 기록.txt' 에 쌓입니다 (시험 결과를 보낼 때 같이 주세요).
