@@ -240,11 +240,16 @@ set(MEON_UI_SOURCES
     Source/meon/ui/dev/DevJamScreen.cpp
     Source/meon/ui/dev/UiSelfTest.h
     Source/meon/ui/dev/UiSelfTest.cpp
+    Source/meon/ui/dev/ShowcaseEngine.h
+    Source/meon/ui/dev/ShowcaseEngine.cpp
+    Source/meon/ui/dev/Showcase.h
+    Source/meon/ui/dev/Showcase.cpp
 )
 
 # 가짜 서버 초기 데이터 (MeonFixtures::world_json)
 juce_add_binary_data(MEON_Fixtures HEADER_NAME MeonFixtures.h NAMESPACE MeonFixtures SOURCES
-    Source/meon/core/api/fake/fixtures/world.json)
+    Source/meon/core/api/fake/fixtures/world.json
+    Source/meon/core/api/fake/fixtures/showcase.json)
 set_target_properties(MEON_Fixtures PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 

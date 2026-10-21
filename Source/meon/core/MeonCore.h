@@ -38,6 +38,8 @@ public:
         bool resetFakeState = false;            // 개발용: 가짜 계정을 지우고 시작
         bool fakeAooGiven = false;              // --fake-aoo 를 줬으면 가짜 서버의 AOO 주소를 그대로 둔다
         juce::File logFile;                     // 진단 로그 (logs/app.log). 비우면 쓰지 않는다 (단위 테스트)
+        /** 개발용: 소개 페이지 캡처의 장면 (--showcase=jam|rooms|friends). 비어 있으면 보통 가짜 데이터 (world.json) */
+        juce::String showcaseScene;
     };
 
     explicit MeonCore (Options);
@@ -107,6 +109,7 @@ private:
     void updateConnection();
     RttReporter::Target defaultRttTarget() const;
     void createFake();
+    static juce::var showcaseWorld (const juce::String& scene);
 
     JUCE_DECLARE_NON_COPYABLE (MeonCore)
 };

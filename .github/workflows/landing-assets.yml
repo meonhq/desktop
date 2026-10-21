@@ -1,0 +1,81 @@
+# 소개 페이지 이미지·영상 만들기. 배포·자동 업데이트와 관계없다.
+# macOS 러너에서 빌드 0 앱(개발용 실행 옵션)을 빌드하고, --showcase 장면(가상 인물)을 2배로 직접 렌더링해
+# docs/marketing/landing/ 의 파일을 만든 뒤 실행한 브랜치에 커밋한다 (Actions 산출물로도 올린다).
+#   장면: Source/meon/ui/dev/Showcase.*   렌더링: scripts/landing/capture.sh   파일: scripts/landing/postprocess.py
+name: Landing assets
+
+# 수동 실행 외에, 캡처용 브랜치에서 장면·스크립트를 바꿔 push 하면 자동으로 다시 만든다 (main 에서는 돌지 않는다).
+# 결과 커밋은 GITHUB_TOKEN 으로 올리므로 다른 워크플로를 다시 깨우지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      what:
+        description: '만들 것 (all = 이미지와 영상, still = 이미지만)'
+        default: 'all'
+  push:
+    branches: ['claude/marketing-landing', 'marketing/**']
+    paths:
+      - 'scripts/landing/**'
+      - 'Source/meon/ui/dev/Showcase*'
+      - 'Source/meon/core/api/fake/fixtures/showcase.json'
+      - '.github/workflows/landing-assets.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: landing-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 도구 설치 (ffmpeg, Pillow)
+        run: |
+          brew install ffmpeg
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pillow
+
+      - name: CMake 구성 (빌드 0, 한 아키텍처)
+        run: cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUniversalBinary=OFF -DMEON_BUILD_ID=0 -B build
+
+      - name: 빌드
+        run: cmake --build build --config RelWithDebInfo --parallel 4 --target MEON_Standalone
+
+      - name: 렌더링
+        run: |
+          APP=build/MEON_artefacts/RelWithDebInfo/Standalone/Meon.app/Contents/MacOS/Meon
+          WHAT='${{ github.event.inputs.what }}'
+          [ "$WHAT" = still ] || WHAT=all
+          bash scripts/landing/capture.sh "$APP" "$RUNNER_TEMP/landing" "$WHAT"
+
+      - name: 파일 만들기
+        run: |
+          rm -rf docs/marketing/landing
+          "$RUNNER_TEMP/venv/bin/python" -I scripts/landing/postprocess.py "$RUNNER_TEMP/landing/raw" docs/marketing/landing
+          rm -f docs/marketing/landing/_sizes.json
+          ls -la docs/marketing/landing
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landing-assets-${{ github.run_number }}
+          path: docs/marketing/landing
+          if-no-files-found: error
+
+      - name: 브랜치에 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/marketing/landing
+          if git diff --cached --quiet; then echo "바뀐 파일 없음"; exit 0; fi
+          git commit -m "소개 페이지 이미지·영상 (macOS 렌더링, Landing assets #${{ github.run_number }})"
+          for i in 1 2 3; do
+            git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && exit 0
+            sleep 5
+          done
+          echo "::error::브랜치에 올리지 못함"
+          exit 1
