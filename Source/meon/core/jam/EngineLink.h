@@ -60,6 +60,7 @@ public:
     int sendChannelCount() const override;
     juce::String audioDescription() const override;
     DeviceInfo deviceInfo() const override;
+    std::uint64_t peerMixSkippedBlocks() const override { return processor.getPeerMixSkippedBlocks(); }
 
     bool sendChat (const EngineChat&) override;
 

@@ -227,6 +227,9 @@ private:
     // 상대 소리가 모두 끊겼을 때 합주 서버에 닿는지 확인 (연결 끊김 표시)
     bool peersSilent = false, serverUnreachable = false, reachChecking = false;
     int reachTask = 0;
+    // E10: 엔진이 건너뛴 블록 수가 늘었으면 10초에 한 번 로그에 남긴다
+    std::uint64_t loggedSkippedBlocks = 0;
+    juce::int64 skipLoggedAtMs = 0;
     bool lastServerDown = false;
     void updatePeersSilent (bool);
     void checkReach();

@@ -580,6 +580,13 @@ void JamSession::tick()
 {
     const auto now = scheduler.nowMs();
     const auto enginePeers = engine.peers();
+
+    if (const auto skipped = engine.peerMixSkippedBlocks(); skipped != loggedSkippedBlocks && now - skipLoggedAtMs >= 10000)
+    {
+        AppLog::write ("audio", LOGTXT ("엔진이 상대 소리 섞기를 건너뛴 블록 (누적, E10): ") + String ((juce::int64) skipped));
+        loggedSkippedBlocks = skipped;
+        skipLoggedAtMs = now;
+    }
     bool membersChangedNow = false;
     bool needProfile = false;
 
