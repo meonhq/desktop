@@ -7,6 +7,7 @@
 """
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 
@@ -31,6 +32,32 @@ def last_probe(text):
     return best
 
 
+_names = {}
+
+
+def frame_name(line):
+    """'libc.so.6(__sched_yield+0xb)' → __sched_yield, '/경로/meon(+0x57c1a7)' → addr2line 함수 이름 (실행 파일이 있으면)"""
+    m = re.search(r"^\s*(\S+?)\(([^+)]*)\+(0x[0-9a-f]+)\)", line)
+    if not m:
+        return line.strip()
+    path, sym, off = m.groups()
+    if sym:
+        return sym
+    key = (path, off)
+    if key not in _names:
+        name = os.path.basename(path) + "+" + off
+        if os.path.exists(path):
+            try:
+                out = subprocess.run(["addr2line", "-C", "-f", "-e", path, hex(int(off, 16) - 1)],
+                                     capture_output=True, text=True, timeout=20).stdout.split("\n")[0].strip()
+                if out and out != "??":
+                    name = re.sub(r"\(.*\)( const)?$", "", out)   # 인자 목록은 뺀다
+            except (OSError, subprocess.SubprocessError):
+                pass
+        _names[key] = name
+    return _names[key]
+
+
 def stall_sites(text, top=4):
     """멈춤 기록마다 오디오 스레드 스택 위쪽 몇 줄 (함수 이름만)"""
     sites = Counter()
@@ -40,8 +67,9 @@ def stall_sites(text, top=4):
             continue
         frames = []
         for line in m.group(1).splitlines():
-            fm = re.search(r"\(([^+)]+)\+", line)
-            name = fm.group(1) if fm else line.strip().split("(")[0]
+            if "stallprobe" in line:
+                continue
+            name = frame_name(line)
             if name:
                 frames.append(name)
             if len(frames) >= top:
