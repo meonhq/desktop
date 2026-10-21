@@ -4,6 +4,7 @@
 #include "../screens/HomeScreen.h"
 #include "../widgets/Meter.h"
 #include "../../core/log/AppLog.h"
+#include "../../shell/ShellHooks.h"
 
 #if ! JUCE_MSVC
  #include <cxxabi.h>
@@ -18,7 +19,7 @@ namespace
 {
     // 첫 화면 영상에서 새로 올라오는 메시지 (4초: 상대, 8초: 나)
     const char* const videoLine4 = "베이스 잘 들려요? 조금 올릴까요?";
-    const char* const videoLine8 = "지금 딱 좋아요. 브릿지만 한 번 더 가요";
+    const char* const videoLine8 = "좋아요. 브릿지만 한 번 더 가요";
 }
 
 const std::vector<Showcase::CastMember>& Showcase::cast()
@@ -72,6 +73,8 @@ void Showcase::fail (const String& why)
 
 void Showcase::start()
 {
+    // 홈 '내 오디오' 의 장치 이름을 비운다 (CI 러너의 가상 장치 이름이 화면에 나오지 않게. 장치가 없을 때와 같은 표시)
+    meon::deviceManagerProvider() = [] { return (juce::AudioDeviceManager*) nullptr; };
     outDir.createDirectory();
     std::cerr << "SHOWCASE start scene=" << scene.toStdString() << " mode=" << mode.toStdString() << " out=" << outDir.getFullPathName().toStdString() << std::endl;
     if (scene == "jam") buildJam();
@@ -166,7 +169,7 @@ void Showcase::buildJam()
     add (500, "chat 4", [say] { say ("u_s_doyun", "드럼 소리 크면 바로 말해 주세요"); });
     join (c[5]);
     add (600, "chat 5", [say] { say ("u_s_yuna", "늦어서 죄송해요! 바로 준비할게요"); });
-    add (400, "chat 6", [mine] { mine ("괜찮아요. 첫 곡 템포 120으로 갈게요"); });
+    add (400, "chat 6", [mine] { mine ("괜찮아요. 첫 곡은 템포 120으로\n갈게요"); });
     add (400, "chat 7", [say] { say ("u_s_seoyeon", "키 하나 올려서 가도 될까요?"); });
     add (400, "chat 8", [mine] { mine ("좋아요, 그렇게 가요"); });
 
