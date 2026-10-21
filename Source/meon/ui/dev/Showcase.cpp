@@ -210,8 +210,8 @@ void Showcase::addCapture()
         detachFromDesktop();
         if (size.x > 0 && size.y > 0) target.setSize (size.x, size.y);
         collectMeters (target);
-        baseMs = juce::Time::getMillisecondCounterHiRes() + 100000.0;
-        preroll (mode == "video" ? 0.0 : stillAtMs);
+        baseMs = juce::Time::getMillisecondCounterHiRes() + 100000.0;   // 화면에서 떼기 전 미터가 본 시각보다 뒤
+        preroll (mode == "video" ? 0 : stillFrame());
     });
     if (mode == "video")
     {
@@ -225,7 +225,7 @@ void Showcase::addCapture()
     }
     add (juce::jmax (waitMs, 450), "still", [this]
     {
-        stepMeters (stillAtMs);
+        stepMeters (stillFrame());
         const auto file = outDir.getChildFile (baseName() + ".png");
         const bool ok = render (file);
         writeLayout();
@@ -259,18 +259,31 @@ void Showcase::collectMeters (juce::Component& c)
     for (auto* child : c.getChildren()) collectMeters (*child);
 }
 
-void Showcase::stepMeters (double t)
+int Showcase::stillFrame() const
 {
-    ShowcaseEngine::clockMs() = t;
-    for (auto& m : meters)
-        if (auto* meter = dynamic_cast<Meter*> (m.getComponent())) meter->step (baseMs + t);
+    return juce::roundToInt (stillAtMs * fps / 1000.0);
 }
 
-void Showcase::preroll (double untilMs)
+void Showcase::setClock (int frameIndex)
+{
+    // 엔진 시계는 반복 주기 안의 위치 (프레임 번호를 정수로 접어서 k 와 k+360 이 정확히 같은 값). 음수는 '실제 시간' 표시라 쓰지 않는다
+    const int k = ((frameIndex % loopFrames) + loopFrames) % loopFrames;
+    ShowcaseEngine::clockMs() = (double) k * 1000.0 / fps;
+}
+
+void Showcase::stepMeters (int frameIndex)
+{
+    setClock (frameIndex);
+    const double now = baseMs + (double) frameIndex * 1000.0 / fps;   // 미터의 시간은 계속 늘어난다
+    for (auto& m : meters)
+        if (auto* meter = dynamic_cast<Meter*> (m.getComponent())) meter->step (now);
+}
+
+void Showcase::preroll (int untilFrame)
 {
     // 한 주기(12초) 동안 미리 돌려 미터의 감쇠·피크 유지 상태를 반복 주기에 맞춘다 (첫 프레임 = 마지막 다음 프레임)
-    for (int j = 360; j >= 1; --j)
-        stepMeters (untilMs - (double) j * 1000.0 / 30.0);
+    for (int k = untilFrame - loopFrames; k < untilFrame; ++k)
+        stepMeters (k);
 }
 
 bool Showcase::render (const juce::File& file)
@@ -362,14 +375,14 @@ void Showcase::videoFrame()
         return;
     }
     if (frame == 0) writeLayout();   // 첫 프레임의 배치 (채팅 칸 위치는 끝까지 같다)
-    const double t = (double) frame * 1000.0 / 30.0;
-    ShowcaseEngine::clockMs() = t;   // 핑: 0.4초마다 오는 갱신이 이 시각의 값을 읽는다
+    const double t = (double) frame * 1000.0 / fps;
+    setClock (frame);   // 핑: 0.4초마다 오는 갱신이 이 시각의 값을 읽는다
     videoEvents (t);
     std::weak_ptr<bool> weak = alive;
-    juce::Timer::callAfterDelay (waitMs, [this, weak, t]
+    juce::Timer::callAfterDelay (waitMs, [this, weak]
     {
         if (weak.expired()) return;
-        stepMeters (t);
+        stepMeters (frame);
         const auto file = outDir.getChildFile ("frames").getChildFile (String (frame).paddedLeft ('0', 4) + ".png");
         if (! render (file)) { fail ("render " + file.getFullPathName()); return; }
         if (frame % 30 == 0) std::cerr << "SHOWCASE frame " << frame << std::endl;

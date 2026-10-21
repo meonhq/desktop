@@ -65,8 +65,12 @@ private:
     std::vector<juce::Component::SafePointer<juce::Component>> meters;
     void detachFromDesktop();
     void collectMeters (juce::Component&);
-    void stepMeters (double t);
-    void preroll (double untilMs);
+    static constexpr double fps = 30.0;
+    static constexpr int loopFrames = 360;   // 12초 (ShowcaseEngine::loopMs)
+    int stillFrame() const;
+    void setClock (int frameIndex);
+    void stepMeters (int frameIndex);
+    void preroll (int untilFrame);
     bool render (const juce::File&);
     void writeLayout();
     void videoFrame();
