@@ -110,7 +110,12 @@ inline Wrapped wrap (const juce::String& text, const Measure& measure, float max
         }
         else                                        // 한 줄보다 길다: 지금 줄을 채우고 넘치는 글자 앞에서 끊는다 (이모지 묶음은 쪼개지 않는다)
         {
-            flushSpace();
+            // 공백 뒤에 첫 글자도 들어갈 자리가 없으면 그 공백 자리에서 줄을 바꾼다 (줄 끝에 공백이 남아 넘치지 않게)
+            const int firstEnd = juce::jmax (i + 1, juce::jmin (j, emojiClusterEnd (text, i)));
+            if (lineHasText && x + spaceW + measure (text.substring (i, firstEnd)) > limit)
+                newLine();
+            else
+                flushSpace();
             for (int k = i; k < j;)
             {
                 const int e = juce::jmax (k + 1, juce::jmin (j, emojiClusterEnd (text, k)));

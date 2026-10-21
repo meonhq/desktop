@@ -25,7 +25,7 @@ public:
     void expectWrap (const juce::String& in, const juce::String& expected, float w = 11.0f, const std::vector<int>& cuts = {})
     {
         const auto got = wrapped (in, w, cuts);
-        expect (got == expected, "\"" + in + "\" -> \"" + got.replace ("\n", "⏎") + "\", expected \"" + expected.replace ("\n", "⏎") + "\"");
+        expect (got == expected, "\"" + in + "\" -> \"" + got.replace ("\n", "|") + "\", expected \"" + expected.replace ("\n", "|") + "\"");
     }
 
     void runTest() override
@@ -35,7 +35,7 @@ public:
         expectWrap ("short", "short");
         expectWrap ("aaaa bbbb cccc dddd", "aaaa bbbb\ncccc dddd");
 
-        beginTest ("Korean: breaks between words (어절), not between syllables");
+        beginTest ("Korean: breaks between words (eojeol), not between syllables");
         expectWrap (u8 ("괜찮아요 첫 곡은 템포 120으로 갈게요"), u8 ("괜찮아요 첫 곡은\n템포 120으로\n갈게요"));
         expectWrap (u8 ("키 하나 올려도 될까요?"), u8 ("키 하나 올려도\n될까요?"));
 
