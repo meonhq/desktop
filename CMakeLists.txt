@@ -773,6 +773,7 @@ if (MEON_TESTS)
         Source/meon/tests/SocialTests.cpp
         Source/meon/tests/AooSocketTests.cpp
         Source/meon/tests/RtGateTests.cpp
+        Source/meon/tests/NetBufAutoTests.cpp
         deps/aoo/lib/src/net_utils.cpp   # AOO 소켓 시험 (E8·E9)
         Source/meon/MeonEarGuard.cpp
         ${MEON_CORE_SOURCES})
