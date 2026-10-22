@@ -1,6 +1,6 @@
 #!/bin/bash
 # 소개 페이지 이미지·영상의 원본 렌더링 (빌드 0 앱의 --showcase, Source/meon/ui/dev/Showcase.*).
-# 사용: scripts/landing/capture.sh <앱 실행 파일> <출력 폴더> [still|video|all]
+# 사용: scripts/landing/capture.sh <앱 실행 파일> <출력 폴더> [still|video|all|daw]   (daw = 플러그인 창 jam-plugin.png 만)
 #   출력 폴더/raw/  jam.png · rooms.png · friends.png · jam-plugin.png · *.layout.json · frames/0000.png…
 # macOS 는 그대로 실행하고, Linux 는 가상 화면(xvfb-run)에서 실행한다. 창은 렌더링 직전에 화면에서 떼므로 화면 크기와 상관없다.
 set -u
@@ -47,6 +47,8 @@ if [ "$WHAT" = still ] || [ "$WHAT" = all ]; then
   run jam     240 --showcase=jam     --window=0,0,1512,982 --capture-size=1512x982 || status=1
   run rooms   240 --showcase=rooms   --window=0,0,1512,982 --capture-size=1512x982 || status=1
   run friends 240 --showcase=friends --window=0,0,1512,982 --capture-size=1512x982 || status=1
+fi
+if [ "$WHAT" = still ] || [ "$WHAT" = all ] || [ "$WHAT" = daw ]; then
   run daw     240 --showcase=jam --as-plugin --window=0,0,900,600 --capture-size=900x600 || status=1
 fi
 if [ "$WHAT" = video ] || [ "$WHAT" = all ]; then

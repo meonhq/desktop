@@ -1,6 +1,7 @@
 """소개 페이지 파일 만들기: capture.sh 의 원본 렌더링(raw/)에서 PNG·WebP·크롭·영상을 만든다.
 
-사용: python3 -I scripts/landing/postprocess.py <raw 폴더> <출력 폴더>
+사용: python3 -I scripts/landing/postprocess.py <raw 폴더> <출력 폴더> [daw]
+  daw  tab-daw 만 만든다 (raw/ 에 jam-plugin.png 만 있어도 된다). 다른 파일은 건드리지 않는다
   raw/  jam.png · rooms.png · friends.png · jam-plugin.png · *.layout.json · frames/0000.png…
   출력  hero.mp4 (1512×982) · hero.webm (1512×982) · hero@2x.mp4 (3024×1964 원본) · hero-poster.png
         tab-jam · tab-rooms · tab-friends · tab-daw · feat-mix · feat-connection · feat-chat · feat-rooms · feat-friends
@@ -16,6 +17,7 @@ import sys
 from PIL import Image, ImageDraw
 
 RAW, OUT = sys.argv[1], sys.argv[2]
+ONLY = sys.argv[3] if len(sys.argv) > 3 else ""
 MARGIN = 24          # 크롭 여백 (논리 픽셀)
 FPS = 30
 FADE_FRAMES = 15     # 마지막 0.5초: 채팅 칸만 첫 장면으로 페이드
@@ -85,7 +87,7 @@ def crop_box(lay, box, margin=MARGIN):
 
 CANVAS = (3024, 1964)        # 전체 화면 이미지와 같은 크기 (2배)
 CANVAS_BG = (0xFC, 0xFC, 0xFC)
-WINDOW_RADIUS = 24           # 창 모서리 (2배 픽셀, 논리 12)
+WINDOW_RADIUS = 20           # 창 모서리 (2배 픽셀) = 앱의 radiusWindow 10 (MeonTheme.h) × 2
 WINDOW_BORDER = 2            # 창 테두리 두께 (2배 픽셀, 논리 1). 창 바깥에 두른다 (창 내용을 가리지 않게)
 WINDOW_BORDER_COLOR = (0xE0, 0xE0, 0xE0)
 
@@ -125,6 +127,15 @@ def save(img, name):
     saved.append((name, img.size))
     print(f"{name}: {img.width}x{img.height}")
 
+
+def save_daw():
+    save(framed(Image.open(os.path.join(RAW, "jam-plugin.png"))), "tab-daw")   # 창만 그린다 (DAW 화면 없음)
+
+
+if ONLY == "daw":
+    save_daw()
+    print("끝 (tab-daw 만)")
+    sys.exit(0)
 
 # ── 영상 ─────────────────────────────────────────────────────────────
 frames_dir = os.path.join(RAW, "frames")
@@ -178,7 +189,7 @@ rooms_img, rooms_lay = Image.open(os.path.join(RAW, "rooms.png")), layout("rooms
 friends_img, friends_lay = Image.open(os.path.join(RAW, "friends.png")), layout("friends")
 save(rooms_img, "tab-rooms")
 save(friends_img, "tab-friends")
-save(framed(Image.open(os.path.join(RAW, "jam-plugin.png"))), "tab-daw")   # 창만 그린다 (DAW 화면 없음)
+save_daw()
 
 # ── 기능 섹션 크롭 ───────────────────────────────────────────────────
 rows = sorted(nodes(jam_lay, "JamScreen::MemberRow"), key=lambda n: n["y"])
