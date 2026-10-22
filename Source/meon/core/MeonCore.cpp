@@ -298,7 +298,7 @@ juce::var MeonCore::showcaseWorld (const juce::String& scene)
     // 합주 장면에서는 합주 멤버(고정 인물)를 다른 방에서 뺀다 (그 사람들은 내 방에 들어온다)
     auto world = juce::JSON::parse (juce::String::fromUTF8 (MeonFixtures::showcase_json, MeonFixtures::showcase_jsonSize));
     auto* o = world.getDynamicObject();
-    if (o == nullptr || scene != "jam") return world;
+    if (o == nullptr || (scene != "jam" && scene != "chat")) return world;   // chat: 채팅 줄바꿈 확인 (합주 장면과 같은 세계)
     o->setProperty ("friends", world.getProperty ("jam_friends", juce::var()));
     const juce::StringArray cast { "u_s_minjun", "u_s_seoyeon", "u_s_doyun", "u_s_haeun", "u_s_jiho", "u_s_yuna" };
     if (auto* rooms = world.getProperty ("rooms", juce::var()).getArray())
