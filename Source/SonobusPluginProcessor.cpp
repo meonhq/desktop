@@ -1449,12 +1449,14 @@ void SonobusAudioProcessor::setDefaultAutoresizeBufferMode(AutoNetBufferMode fla
 
 void SonobusAudioProcessor::setRemotePeerAudioCodecFormat(int index, int formatIndex)
 {
-    if (formatIndex >= mAudioFormats.size() || index >= mRemotePeers.size()) return;
-    
+    if (formatIndex >= mAudioFormats.size()) return;
+
     const AudioCodecFormatInfo & info = mAudioFormats.getReference(formatIndex);
 
-    const ScopedReadLock sl (mCoreLock);        
- 
+    const ScopedReadLock sl (mCoreLock);
+    // MEON E11: 사람 번호 범위는 잠금 안에서 본다 (잠금 밖에서 보면 그 사이 사람이 지워져 배열 밖을 읽을 수 있었다)
+    if (index < 0 || index >= mRemotePeers.size()) return;
+
     auto remote = mRemotePeers.getUnchecked(index);
     remote->formatIndex = formatIndex;
     
