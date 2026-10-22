@@ -697,9 +697,10 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
   |---|---|---|---|---|---|
   | E10 (E11 전, 같은 시험) | 118번 | 3번 (A 1, C 2) | 2건 (`getRemotePeerRecvMeterSource`) | 16건 · 2건 | A 죽음 |
   | E11 (a37dd43 전, `setRemotePeerAudioCodecFormat` 제외) | 106번 (정상 54, 강제 52) | 0번 | 0건 | 0건 · 0건 | 둘 다 살아 있음 |
-  | E11 최종 (a37dd43) | (확인 재시험 결과) | | | | |
+  | E11 최종 (a37dd43) | 105번 (정상 53, 강제 52) | 0번 | 0건 | 0건 · 0건 | 둘 다 살아 있음 |
 
   - 크래시는 모두 `EngineLink::peerLevel` ← 화면 미터에서 났다 (E10). E11 에서는 `getRemotePeerRecvLevel`·`setRemotePeerRecvMeterHoldMs` 가 들어간 경고가 0건이다.
+  - 최종 시험에서 `setRemotePeerAudioCodecFormat` 이 부르는 AOO `source::setup` 과 오디오 스레드의 `source::process` 경합이 2건 보였다. AOO 안에서 `process` 가 `update_mutex_` 를 잡기 전에 읽는 값을 `setup` 이 잠금을 쥔 채 쓰는 것이다 (AOO 내부). main 에서도 같은 줄로 나왔고(1건), E11 이 바꾼 범위 확인과는 관계없다. 고치지 않았다.
   - 남은 미터 경고는 피크 유지 시간 값 하나(`holdMSecs`, 64비트 정수)를 화면 쪽이 쓰고(`applyDefaults` 의 내 미터 4개, `setRemotePeerRecvMeterHoldMs` 의 사람 미터) 오디오 스레드의 `measureBlock` 이 읽는 것이다. 메모리를 지우거나 크기를 바꾸지 않아 크래시와 무관하고, E10 전부터 있었다. 오디오 스레드는 잠금을 잡을 수 없고 고치려면 `ff_meters` 를 바꿔야 해서 이번 범위에 넣지 않았다.
 
 새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E4 는 고친 뒤 승인받았다 (2026-10-14).
