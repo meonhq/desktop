@@ -264,6 +264,7 @@ void Showcase::addCapture()
     add (0, "detach", [this]
     {
         detachFromDesktop();
+        hideResizeCorner();
         if (size.x > 0 && size.y > 0) target.setSize (size.x, size.y);
         collectMeters (target);
         baseMs = juce::Time::getMillisecondCounterHiRes() + 100000.0;   // 화면에서 떼기 전 미터가 본 시각보다 뒤
@@ -307,6 +308,15 @@ void Showcase::detachFromDesktop()
     // 화면에서 떼면 미터가 화면 주사율(VBlank)로 실제 시간을 따라 움직이지 않는다. 그 뒤로는 캡처 시계로만 움직인다
     if (auto* top = target.getTopLevelComponent())
         if (top->isOnDesktop()) top->removeFromDesktop();
+}
+
+void Showcase::hideResizeCorner()
+{
+    // 플러그인 창 오른쪽 아래 크기 조절 손잡이 (AudioProcessorEditor::setResizable 이 붙인다).
+    // 소개 이미지에서는 둥근 창 모서리에 걸려 잘리므로 캡처할 때만 숨긴다. 앱 동작은 그대로다
+    for (auto* child : target.getChildren())
+        if (dynamic_cast<juce::ResizableCornerComponent*> (child) != nullptr)
+            child->setVisible (false);
 }
 
 void Showcase::collectMeters (juce::Component& c)

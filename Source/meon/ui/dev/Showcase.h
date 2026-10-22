@@ -66,6 +66,7 @@ private:
     bool chat4 = false, chat8 = false;
     std::vector<juce::Component::SafePointer<juce::Component>> meters;
     void detachFromDesktop();
+    void hideResizeCorner();   // 플러그인 창 크기 조절 손잡이를 캡처에서만 숨긴다
     void collectMeters (juce::Component&);
     static constexpr double fps = 30.0;
     static constexpr int loopFrames = 360;   // 12초 (ShowcaseEngine::loopMs)
