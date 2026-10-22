@@ -65,7 +65,7 @@ public:
         virtual void jamMembersChanged() {}     // 목록·상태
         virtual void jamStatsChanged() {}       // 핑 등 (0.4초마다)
         virtual void jamFileChanged() {}        // 파일 열기·닫기·재생·정지
-        virtual void jamServerLinkChanged() {}  // 합주 서버(AOO) 연결이 끊기거나 다시 붙음 (isJamServerDown)
+        virtual void jamServerLinkChanged() {}  // 합주 서버(AOO) 연결이 끊기거나 다시 붙음, 또는 그 이유가 바뀜 (isJamServerDown, serverProblem)
     };
 
     struct Options
@@ -103,6 +103,18 @@ public:
         방에 들어와 처음 붙기에 실패한 동안도 끊김이다 (E9: 3초마다 다시 시도, 붙으면 내린다) */
     bool isJamServerDown() const { return serverLost || serverUnreachable || connectFailing; }
     static constexpr int reachCheckEveryMs = 5000;
+
+    /** 합주 서버(AOO) 문제의 종류. 화면이 이유에 맞는 안내를 고른다. isJamServerDown() 이 false 면 none */
+    enum class ServerProblem
+    {
+        none,
+        lost,        // 끊김·닿지 않음·처음 붙기 실패(이름을 못 찾음, 거부, TCP 시간 초과): 인터넷 연결 확인
+        udpBlocked,  // 가장 최근 시도에서 TCP 로는 붙었는데 UDP 확인 답을 5초 안에 못 받음: 네트워크·방화벽이 UDP 를 막는다
+        noAnswer     // 들어온 지 connectDeadlineMs 가 지나도 방에 들어가지 못했고 다른 이유는 모름
+    };
+    ServerProblem serverProblem() const;
+    /** 방에 들어온 뒤 이 안에 합주 서버 접속·그룹 입장을 마치지 못하면 실패로 보이고 다시 시도한다 (그 뒤로도 이 간격마다) */
+    static constexpr int connectDeadlineMs = 15000;
     juce::String roomId() const { return currentRoomId; }
 
     // 멤버 (나 포함, 서버 목록 순)
@@ -222,7 +234,14 @@ private:
     juce::int64 lostAt = 0;
     int reconnectAttempts = 0;
     bool serverLost = false;
-    bool connectFailing = false;   // 입장 뒤 처음 붙기에 실패하는 중 (붙으면 false)
+    bool connectFailing = false;   // 입장 뒤 처음 붙기에 실패하는 중 (방에 들어가면 false)
+    ServerProblem attemptProblem = ServerProblem::none;   // 가장 최근에 실패한 붙기의 이유 (붙으면 none)
+    ServerProblem lastProblem = ServerProblem::none;
+    int deadlineTask = 0;
+    void connectAttemptFailed (ServerProblem why, const juce::String& message);
+    void scheduleConnectDeadline();
+    void connectDeadlinePassed();
+    static ServerProblem problemOfDisconnect (const juce::String& message);
     // AOO 서버 재접속 (R11 PR3): 엔진의 자동 재접속(최근 접속 목록)은 끄고 같은 Connection 으로 직접 다시 붙는다.
     // 서버가 끊겨도 엔진은 그룹 이름을 지우지 않으므로, 다시 붙으면 그룹에도 꼭 다시 들어간다 (needRejoin)
     int reconnectTask = 0, reconnectDelayMs = 0;
@@ -269,7 +288,7 @@ private:
     void stateChanged (StateKey) override;
     // Engine::Listener
     void engineConnected (bool ok, const juce::String& message) override;
-    void engineDisconnected (const juce::String& message) override;
+    void engineDisconnected (bool requested, const juce::String& message) override;
     void engineGroupJoined (bool ok, const juce::String& group, const juce::String& message) override;
     void engineGroupLeft (const juce::String& group) override;
     void enginePeerJoined (const juce::String& user) override;

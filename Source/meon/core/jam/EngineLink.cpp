@@ -624,7 +624,7 @@ void EngineLink::handleAsyncUpdate()
         switch (e.type)
         {
             case Event::connected:      listeners.call ([&] (Listener& l) { l.engineConnected (e.ok, e.message); }); break;
-            case Event::disconnected:   listeners.call ([&] (Listener& l) { l.engineDisconnected (e.message); }); break;
+            case Event::disconnected:   listeners.call ([&] (Listener& l) { l.engineDisconnected (e.ok, e.message); }); break;
             case Event::groupJoined:    listeners.call ([&] (Listener& l) { l.engineGroupJoined (e.ok, e.group, e.message); }); break;
             case Event::groupLeft:      listeners.call ([&] (Listener& l) { l.engineGroupLeft (e.group); }); break;
             case Event::peerJoined:     listeners.call ([&] (Listener& l) { l.enginePeerJoined (e.user); }); break;

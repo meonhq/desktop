@@ -252,11 +252,13 @@ void AppRoot::connectionToastChanged (core::ConnectionWatch::Toast state)
         connectionToast = t;
         addAndMakeVisible (t);
     }
-    // 끊긴 동안은 경고 토스트, 다시 붙으면 같은 자리에서 일반 토스트 한 줄로 바뀐다 (높이가 달라서 다시 쌓는다)
-    // 설명은 문장마다 줄을 나눈다 (글자 단위로 줄바꿈하는 플랫폼에서 "중이/에요" 처럼 끊기지 않게)
+    // 끊긴 동안은 경고 토스트, 다시 붙으면 같은 자리에서 일반 토스트 한 줄로 바뀐다 (높이가 달라서 다시 쌓는다).
+    // 끊긴 이유가 바뀌면(합주 서버 UDP 막힘 등) lost 가 다시 와서 문구만 바꾼다
     if (state == T::lost)
-        connectionToast->setContent (Toast::Kind::warning, TXT ("연결이 끊겼어요"),
-                                     TXT ("인터넷 연결을 확인해 주세요.") + "\n" + TXT ("다시 연결하는 중이에요"));
+    {
+        const auto text = msg::connectionLost (core.jamServerProblem());
+        connectionToast->setContent (Toast::Kind::warning, text.title, text.body);
+    }
     else
         connectionToast->setContent (Toast::Kind::normal, TXT ("다시 연결됐어요"), {});
     layoutToasts();

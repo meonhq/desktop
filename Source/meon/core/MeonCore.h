@@ -71,6 +71,8 @@ public:
     /** 프로세서가 엔진을 붙인다 (합주). 붙인 뒤에야 jam() 이 생긴다 */
     void attachEngine (std::unique_ptr<Engine>, JamSession::Options);
     JamSession* jam()                   { return jamSession.get(); }
+    /** 연결 끊김 토스트의 문구를 고를 합주 서버 문제 (서버 실시간 연결도 끊겼거나 방 밖이면 none: 일반 문구) */
+    JamSession::ServerProblem jamServerProblem() const;
     Engine* engine()                    { return engineImpl.get(); }
 
 private:

@@ -8,6 +8,7 @@
 #include "../core/api/ApiError.h"
 #include "../core/model/Validation.h"
 #include "../core/home/HomeController.h"
+#include "../core/jam/JamSession.h"
 
 namespace meon::ui::msg
 {
@@ -65,6 +66,32 @@ inline juce::String username (core::validation::Problem p)
     using P = core::validation::Problem;
     if (p == P::none || p == P::empty) return {};
     return TXT ("영문 소문자, 숫자, 밑줄(_)로 4–16자를 입력해 주세요");
+}
+
+/** 연결 끊김 토스트 (경고): 제목 + 설명. 설명은 문장마다 줄을 나눈다 (글자 단위로 줄바꿈하는 플랫폼에서 "중이/에요" 처럼 끊기지 않게).
+    합주 서버 문제의 이유를 알면 그 안내 (UDP 막힘·무응답), 아니면 인터넷 확인 */
+struct ConnectionLostText { juce::String title, body; };
+
+inline ConnectionLostText connectionLost (core::JamSession::ServerProblem p)
+{
+    using P = core::JamSession::ServerProblem;
+    const auto retrying = TXT ("다시 연결하는 중이에요");
+    switch (p)
+    {
+        case P::udpBlocked:
+            // 토스트 폭(280)에 한 줄 24자 안팎이라, 긴 문장은 띄어쓰기 자리에서 직접 줄을 나눈다 ("방/화벽" 처럼 끊기지 않게)
+            return { TXT ("합주 서버에 연결하지 못했어요"),
+                     TXT ("합주 서버와 UDP로 주고받지 못했어요.") + "\n"
+                         + TXT ("회사·학교 와이파이나 방화벽이") + "\n" + TXT ("UDP를 막는 경우가 많아요.") + "\n"
+                         + TXT ("다른 네트워크(휴대폰 핫스팟 등)로 바꾸거나") + "\n" + TXT ("방화벽에서 Meon을 허용해 주세요.") + "\n"
+                         + retrying };
+        case P::noAnswer:
+            return { TXT ("합주 서버에 연결하지 못했어요"), TXT ("합주 서버가 답하지 않아요.") + "\n" + retrying };
+        case P::none:
+        case P::lost:
+            break;
+    }
+    return { TXT ("연결이 끊겼어요"), TXT ("인터넷 연결을 확인해 주세요.") + "\n" + retrying };
 }
 
 // 입장 실패 모달 (디자인 H_FAIL + 5.5 표, 방장 부재 Q15, 추방은 잠정)
