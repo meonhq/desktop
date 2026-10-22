@@ -152,3 +152,5 @@ SEGV (읽기) foleys::LevelMeterSource::getNumChannels
 - 엔진에 "잠금을 쥔 채 그 사람의 미터 값을 읽어 돌려주는" 함수를 하나 둔다. 예: `getRemotePeerRecvLevel(index, channel)`. 범위 확인도 잠금 안에서 한다.
 - `EngineLink::peerLevel` 은 주소 대신 그 값을 쓴다.
 - E10 뒤로 오디오 스레드는 이 잠금을 잡지 않는다. 그래서 화면이 읽기 잠금을 조금 더 오래 쥐어도 소리에는 영향이 없다.
+
+→ E11 에서 고쳤다 (`docs/REMAKE_PLAN.md` 8.2 E11). 같은 시험에서 크래시 0번, 이 heap-use-after-free 0건.

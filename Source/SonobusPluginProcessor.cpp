@@ -1449,12 +1449,14 @@ void SonobusAudioProcessor::setDefaultAutoresizeBufferMode(AutoNetBufferMode fla
 
 void SonobusAudioProcessor::setRemotePeerAudioCodecFormat(int index, int formatIndex)
 {
-    if (formatIndex >= mAudioFormats.size() || index >= mRemotePeers.size()) return;
-    
+    if (formatIndex >= mAudioFormats.size()) return;
+
     const AudioCodecFormatInfo & info = mAudioFormats.getReference(formatIndex);
 
-    const ScopedReadLock sl (mCoreLock);        
- 
+    const ScopedReadLock sl (mCoreLock);
+    // MEON E11: 사람 번호 범위는 잠금 안에서 본다 (잠금 밖에서 보면 그 사이 사람이 지워져 배열 밖을 읽을 수 있었다)
+    if (index < 0 || index >= mRemotePeers.size()) return;
+
     auto remote = mRemotePeers.getUnchecked(index);
     remote->formatIndex = formatIndex;
     
@@ -2235,9 +2237,33 @@ foleys::LevelMeterSource * SonobusAudioProcessor::getRemotePeerRecvMeterSource(i
 foleys::LevelMeterSource * SonobusAudioProcessor::getRemotePeerSendMeterSource(int index)
 {
     if (index >= mRemotePeers.size()) return nullptr;
-    const ScopedReadLock sl (mCoreLock);        
+    const ScopedReadLock sl (mCoreLock);
     auto remote = mRemotePeers.getUnchecked(index);
     return &(remote->sendMeterSource);
+}
+
+// MEON E11: 위 함수는 미터 주소를 돌려줘서, 잠금이 풀린 뒤 그 사람이 지워지면 화면이 지워진 메모리를 읽었다 (범위 확인도 잠금 밖).
+// 여기서는 잠금 안에서 범위를 보고 값만 읽어 돌려준다. 오디오 스레드는 E10 뒤로 이 잠금을 잡지 않는다 (ensureBuffers 의 드문 경로 제외)
+float SonobusAudioProcessor::getRemotePeerRecvLevel(int index, int channel) const
+{
+    const ScopedReadLock sl (mCoreLock);
+    if (index < 0 || index >= mRemotePeers.size()) return 0.0f;
+    const SpinLock::ScopedLockType ml (mPeerMeterLock);   // 형식 이벤트가 미터 크기를 바꾸는 중이 아닐 때 읽는다
+    const auto & src = mRemotePeers.getUnchecked(index)->recvMeterSource;
+    const int numch = src.getNumChannels();
+    if (channel >= numch) return 0.0f;
+    if (channel >= 0) return src.getMaxLevel(channel);
+    float maxlev = 0.0f;
+    for (int ch = 0; ch < numch; ++ch) maxlev = jmax(maxlev, src.getMaxLevel(ch));
+    return maxlev;
+}
+
+void SonobusAudioProcessor::setRemotePeerRecvMeterHoldMs(int index, int ms)
+{
+    const ScopedReadLock sl (mCoreLock);
+    if (index < 0 || index >= mRemotePeers.size()) return;
+    const SpinLock::ScopedLockType ml (mPeerMeterLock);
+    mRemotePeers.getUnchecked(index)->recvMeterSource.setMaxHoldMS(ms);
 }
 
 
@@ -3815,7 +3841,10 @@ int32_t SonobusAudioProcessor::handleSinkEvents(const aoo_event ** events, int32
                 aoo_format_storage f;
                 if (peer->oursink->get_source_format(e->endpoint, e->id, f) > 0) {
                     DBG("Got source format event from " << es->ipaddr << ":" << es->port << "  " <<  e->id  << "  channels: " << f.header.nchannels);
-                    peer->recvMeterSource.resize(f.header.nchannels, meterRmsWindow);
+                    {
+                        const SpinLock::ScopedLockType ml (mPeerMeterLock); // MEON E11: 화면이 미터를 읽는 중이 아닐 때 크기를 바꾼다
+                        peer->recvMeterSource.resize(f.header.nchannels, meterRmsWindow);
+                    }
 
                     // check for layout
                     bool gotuserformat = false;
@@ -3849,7 +3878,10 @@ int32_t SonobusAudioProcessor::handleSinkEvents(const aoo_event ** events, int32
 
                             peer->oursink->setup(getSampleRate(), currSamplesPerBlock, sinkchan);
                         }
-                        peer->recvMeterSource.resize (peer->recvChannels, meterRmsWindow);
+                        {
+                            const SpinLock::ScopedLockType ml (mPeerMeterLock); // MEON E11
+                            peer->recvMeterSource.resize (peer->recvChannels, meterRmsWindow);
+                        }
 
                         // for now if > 2, all on own changroup (by default)
 
@@ -7224,7 +7256,10 @@ void SonobusAudioProcessor::setupSourceFormatsForAll()
             //s->latencyMeasurer.reset(new LatencyMeasurer());
         }
 
-        s->recvMeterSource.resize (s->recvChannels, meterRmsWindow);
+        {
+            const SpinLock::ScopedLockType ml (mPeerMeterLock); // MEON E11: 화면이 미터를 읽는 중이 아닐 때 크기를 바꾼다
+            s->recvMeterSource.resize (s->recvChannels, meterRmsWindow);
+        }
         //s->sendMeterSource.resize (s->sendChannels, meterRmsWindow);
 
         // XXX
