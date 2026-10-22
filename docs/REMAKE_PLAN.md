@@ -519,6 +519,7 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
 | **E8** (승인 2026-10-20) | **SIGPIPE 를 TCP 소켓 단위로 막는다**: AOO 라이브러리의 TCP 소켓(클라이언트가 AOO 서버로 붙는 소켓, 서버의 듣기·받은 소켓)에 macOS 는 만든 직후 `SO_NOSIGPIPE`, Linux 는 `send()` 마다 `MSG_NOSIGNAL`. 프로세스 전체 `signal(SIGPIPE, SIG_IGN)` 은 쓰지 않고, 자가 테스트에 있던 무시 처리도 뺐다 | 닫힌 TCP 연결에 쓰면 macOS·Linux 는 기본으로 SIGPIPE 로 프로세스를 끝낸다. 플러그인이면 DAW 전체가 꺼진다. 소켓 단위로 막으면 `send()` 가 EPIPE 를 돌려주고, AOO 는 그것을 지금처럼 연결 오류(`do_disconnect(error)`)로 처리한다 | 4개 파일, 40줄 추가·2줄 바꿈 (주석 포함). Windows 는 컴파일되는 동작이 같다 (아래 근거) |
 | **E9** (승인 2026-10-20) | **AOO 가 붙기 실패를 성공으로 알리지 않게**: `client::try_connect` 는 서버 이름 조회 실패를 실패 코드로 돌려주고, `socket_connect` 는 `select` 뒤에 `SO_ERROR` 를 확인해 거부·실패한 연결을 실패로 본다. 실패를 받는 쪽(MEON `JamSession`)은 처음 붙기 실패를 끊김(`isJamServerDown`)으로 보여 "연결이 끊겼어요" 를 띄우고, 3초마다 다시 시도하다 붙으면 내린다 | 이름을 못 찾으면(와이파이 꺼짐·DNS 실패) `try_connect` 가 0(성공)을 돌려주고, 거부된 연결은 Linux·macOS 에서 쓰기 가능으로만 보여 성공으로 읽혔다. 그러면 앱은 오류 표시도 다시 시도도 없이 연결 안 된 방에 머물렀다 (E8 전에는 이어진 쓰기에서 SIGPIPE) | AOO 2개 파일, 14줄 추가·4줄 바꿈 (주석 포함). MEON `JamSession` (아래 근거) |
 | **E10** (승인 2026-10-21) | **오디오 스레드가 엔진 잠금을 기다리지 않게 (관문)**: `processBlock` 의 상대 소리 섞기·보내기 구간이 `mCoreLock`·`sinkLock` 읽기 잠금 대신 `meon::RtGate`(`Source/meon/MeonRtGate.h`) 를 본다. 쓰는 쪽이 일하는 중이면 그 블록만 건너뛴다 (기다리지 않음). 쓰는 쪽(`mCoreLock` 쓰기 잠금 9곳, 형식 바꾸기 `setupSourceFormatsForAll`·`AOO_SOURCE_FORMAT_EVENT`)은 오디오 스레드가 지금 블록을 끝내고 나갈 때까지 기다린 뒤에 바꾼다 | 합주 중 엔진 처리가 70~960 ms 멈췄다. 오디오 스레드가 `juce::ReadWriteLock` 안의 스핀락에서 돌며 기다렸고, 그 스핀락을 쥔 일반 우선순위 스레드(메인·이벤트·보내기·받기)가 CPU 를 못 받아 우선순위가 뒤집혔다 (조사 기록: 아래 근거). 플러그인이면 DAW 전체 소리가 그동안 끊긴다 | 엔진 2개 파일, 29줄 추가·14줄 삭제 (바꾼 줄·주석 포함). 새 파일 `Source/meon/MeonRtGate.h`(관문, 110줄, 주석 포함) (아래 근거) |
+| **E11** (승인 2026-10-22) | **화면이 사람 미터를 엔진 잠금 안에서 값으로만 읽게**: `getRemotePeerRecvLevel(index, channel)`(미터 값), `setRemotePeerRecvMeterHoldMs(index, ms)`(피크 유지 시간) 추가. 둘 다 `mCoreLock` 읽기 잠금 안에서 범위를 보고 값만 주고받는다 (미터 주소를 밖으로 내보내지 않는다). 미터 크기 바꾸기와 화면 읽기를 서로 막는 미터 전용 잠금 `mPeerMeterLock`(SpinLock) 추가: 새 두 함수와 미터 크기를 바꾸는 3곳(형식 이벤트 2곳, `setupSourceFormatsForAll`)만 잡는다. `EngineLink` 의 `peerLevel`·`applyPeerDefaults` 는 새 함수를, `peers` 는 원래 있던 `getRemotePeerRecvChannelCount` 를 쓴다 | `getRemotePeerRecvMeterSource` 는 잠금을 잡고 미터 **주소**만 돌려줬다. 화면은 잠금이 풀린 뒤 그 주소로 읽어서, 그 사이 그 사람이 지워지면 지워진 메모리를 읽고 죽었다 (TSan 들어오고 나가기, main·E10 모두). 범위 확인도 잠금 밖이었다. 형식 이벤트는 미터 크기를 읽기 잠금만 잡고 바꿔서, 읽기 잠금인 화면과 겹칠 수 있었다 | 엔진 2개 파일, 37줄 추가·4줄 바꿈 (주석 포함). MEON `EngineLink` 3곳 (아래 근거) |
 
 **E4 가 보내는 소리에 영향이 없는 근거** (줄 번호는 `remake` 의 eb7c371 기준)
 
@@ -661,7 +662,35 @@ ENG 12 의 #4·#5(코드 = 공개 서버 그룹 이름, 4초 판정)는 서버�
       - AOO 내부
       - JUCE JACK 장치 열기
     - 목록은 `docs/pr/e10-rt-gate/tsan.md` 에 있다.
-  - TSan 들어오고 나가기 시험에서 화면 미터가 지워진 사람의 미터를 읽다 죽었다 (main·E10 모두, `EngineLink::peerLevel` ← `getRemotePeerRecvMeterSource`). E10 과 무관하다. 고칠 방안은 위 문서에 있다 (엔진 수정이라 따로 승인).
+  - TSan 들어오고 나가기 시험에서 화면 미터가 지워진 사람의 미터를 읽다 죽었다 (main·E10 모두, `EngineLink::peerLevel` ← `getRemotePeerRecvMeterSource`). E10 과 무관하다. 고칠 방안은 위 문서에 있다 (엔진 수정이라 따로 승인). → E11 에서 고침.
+
+**E11 근거** (줄 번호는 `claude/e11-meter-level` 브랜치 기준)
+
+- 원인 (E10 TSan 들어오고 나가기, `docs/pr/e10-rt-gate/tsan.md` 의 B 묶음)
+  - `getRemotePeerRecvMeterSource(i)` 는 읽기 잠금을 잡고 사람 i 의 미터 **주소**를 돌려준 뒤 잠금을 푼다. 화면(`EngineLink::peerLevel`, 화면 프레임마다)은 그 주소로 미터를 읽는다. 그 사이 이벤트·받기 스레드가 그 사람을 지우면 지워진 메모리를 읽는다 → SEGV.
+  - 같은 함수가 `index >= mRemotePeers.size()` 를 잠금 밖에서 본다. 그 사이 배열이 줄면 범위 밖을 읽는다 (heap-use-after-free 2건).
+  - 형식 이벤트(`AOO_SOURCE_FORMAT_EVENT`)와 `setupSourceFormatsForAll` 은 미터 크기(`recvMeterSource.resize`)를 `mCoreLock` **읽기** 잠금만 잡고 바꾼다. 화면도 읽기 잠금이라 둘이 겹칠 수 있다. 채널 수가 바뀌는 순간 화면이 바뀌는 중인 미터를 읽는다 (data race `handleSinkEvents ↔ peerLevel`).
+- 바꾼 곳
+  - `SonobusPluginProcessor.h/.cpp`
+    - `getRemotePeerRecvLevel(index, channel)` 2245: 읽기 잠금 → 범위 확인 → 미터 잠금 → 값 읽기. `channel < 0` 이면 모든 채널 중 가장 큰 값, 없는 채널이면 0 (전 `EngineLink::peerLevel` 과 같은 규칙).
+    - `setRemotePeerRecvMeterHoldMs(index, ms)` 2259: 같은 방식으로 `setMaxHoldMS`.
+    - `mPeerMeterLock` (`mutable SpinLock`, 헤더 1194): 미터 크기 바꾸기 3곳(형식 이벤트 3843·3880, `setupSourceFormatsForAll` 7258)과 위 두 함수만 잡는다.
+    - 사람을 만들 때의 크기 설정(`doAddRemotePeerIfNecessary`)은 배열에 넣기 전이라 화면이 볼 수 없어 그대로 둔다.
+    - `getRemotePeerRecvMeterSource`·`getRemotePeerSendMeterSource` 는 남겨 둔다. MEON 코드에서는 더 쓰지 않는다 (옛 SonoBus 화면은 R6 에서 지웠다).
+  - `EngineLink.cpp` (MEON)
+    - `peerLevel` 424: 미터 주소 대신 `getRemotePeerRecvLevel`.
+    - `applyPeerDefaults` 434: 미터 주소 대신 `setRemotePeerRecvMeterHoldMs`.
+    - `peers` 367: 받는 채널 수를 미터 주소의 `getNumChannels()` 대신 원래 있던 `getRemotePeerRecvChannelCount` (잠금 안에서 범위 확인) 로. 첫 형식을 받기 전에는 0 이다 (전에는 내 출력 채널 수로 만든 미터의 채널 수). 화면은 `max(1, 이 값)` 을 쓰므로 들어온 직후 0.4초 안팎 1채널 미터로 보였다가 형식을 받으면 실제 채널 수로 바뀐다.
+- 잠금 순서와 교착이 없는 근거
+  - 순서는 늘 `mCoreLock`(읽기) → (형식 바꾸기는 E10 관문) → `mPeerMeterLock`. 미터 잠금을 쥔 채 다른 잠금을 잡거나 기다리는 곳은 없다 (안에서 하는 일은 미터 크기 바꾸기·값 읽기·유지 시간 쓰기뿐).
+  - 오디오 스레드는 `mPeerMeterLock` 을 잡지 않는다. 오디오가 하는 미터 일(`measureBlock`·`setReductionLevel`)은 크기를 바꾸지 않고 (`FF_AUDIO_ALLOW_ALLOCATIONS_IN_MEASURE_BLOCK=0`), 크기 바꾸기는 E10 관문으로 이미 오디오와 갈려 있다.
+- 오디오 스레드가 `mCoreLock` 을 잡지 않는 것 (E10 뒤, 다시 확인)
+  - `processBlock` 에서 닿는 엔진·채널 그룹 함수를 소스에서 따라가 잠금을 찾았다 (19개 함수).
+  - `mCoreLock` 은 `ensureBuffers` 의 `needpeersendupdate` 분기(7425, 그 안에서 부르는 `updateRemotePeerUserFormat` 6543) 에서만 잡는다. 블록 크기·채널 수가 커진 첫 블록에서만 타는 경로다 (E10 "남는 것" 과 같음).
+  - 그 밖에 오디오 스레드가 잡는 잠금은 기다리지 않는 `ScopedTryLock` (녹음 `writerLock`, 모니터 지연 `_monitorDelayLock`) 과, 모니터 지연을 켤 때만 타는 `ChannelGroup::setMonitoringDelayEnabled` 의 `_monitorDelayLock` (MEON 은 모니터 지연을 쓰지 않는다) 이다.
+  - 그래서 화면이 미터마다 읽기 잠금을 잡아도 (전과 같은 횟수) 소리에는 영향이 없다.
+- 소리에 미치는 영향: 없다. 바뀐 것은 화면이 미터를 읽는 길, 그리고 미터 크기 바꾸기를 화면과 서로 막는 것뿐이다. 오디오 스레드 경로·보내는 소리는 그대로다.
+- 확인: (시험 결과를 여기에 적는다)
 
 새 엔진 수정은 고치기 전에 이 표에 적고 승인을 받는다. E4 는 고친 뒤 승인받았다 (2026-10-14).
 E 번호는 다시 쓰지 않는다. 하지 않기로 한 수정도 번호를 그대로 두고 "안 함" 으로 표시하며, 새 수정은 다음 번호를 받는다.
