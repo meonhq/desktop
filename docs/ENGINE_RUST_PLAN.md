@@ -2,7 +2,7 @@
 
 상태: **설계 초안, 승인 전.** 구현은 승인 뒤에 한다. 작성 2026-10-22.
 실험 코드: meonhq/ensemble-rust `claude/inspiring-noether-0iebak` 브랜치의 `experiments/aoo-port-share/`, `ffi/`.
-관련: 플러그인 브리지 실험 #73, 엔진 수정 기록 `docs/REMAKE_PLAN.md` 8.2 (E1–E10).
+관련: 플러그인 브리지 실험 #73, 엔진 수정 기록 `docs/REMAKE_PLAN.md` 8.2 (E1–E11).
 
 크기 표기: **작다** 1–2일, **중간** 3–7일, **크다** 1–3주 (집중 작업일. 사람이 실기에서 확인하는 시간은 빼고).
 
@@ -199,7 +199,7 @@ ensemble-rust 워크플로 `AOO port-share probe (experiment)` 1번 실행. 리�
 | `setPeerReceive` (멤버 음소거) | AOO 초대 끊기 → 상대가 보내기를 멈춤 | `EJC1` "보내지 말아요" + 내 쪽 음소거 | 새로 | 작다 |
 | `setPeerGainDb` | 채널 그룹 gain | `PeerControls.gain` (0..2, −60~+6 dB 범위 맞음). 런타임 원자 값 + 램프로 | 있음 (고침) | 작다 |
 | `setPeerPan` | 모노는 위치, 스테레오는 L/R 함께 밈 | `PeerControls.pan` 은 밸런스(한쪽 줄이기) → Meon 방식으로 | 고침 | 작다 |
-| `peerLevel` | foleys 미터 (사람이 빠지면 메모리가 사라짐 → E10 TSan 크래시) | 고정 칸 원자 피크 (25 ms 유지). 빠진 사람을 읽어도 안전 | 새로 | 작다 |
+| `peerLevel` | foleys 미터. 사람이 빠질 때 지워진 미터를 읽어 죽던 것을 E11 이 엔진 잠금 안에서 값으로 읽게 고침 | 고정 칸 원자 피크 (25 ms 유지). 칸이 지워지지 않아 잠금 없이 읽어도 안전 | 새로 | 작다 |
 | `applyPeerDefaults` | 상대별 PCM16 + 버퍼 모드 + 미터 유지 | 상대별 버퍼 모드 | 새로 (4.2 자동 지터) | — |
 | `isSendMuted` `setSendMuted` | `sendmute` 파라미터 → 소스 정지 | 소리 패킷을 안 만듦. 제어·핑은 계속(NAT 유지). 상대에게 "송출 정지" 알림 → 상대 `recvActive` false (끊김으로 안 봄) | 새로 | 작다 |
 | `setSendGainDb` | 입력 그룹 gain (송신·입력 미터·셀프 모니터가 그 뒤에서 갈림) | 입력 gain. `InputFx` 의 `gain_db` 는 시작 때만 → 런타임 값 | 고침 | 작다 |
@@ -312,7 +312,7 @@ E10 의 원인은 상대 목록을 여러 스레드가 `mCoreLock` 으로 같이
 | 독립 앱 껍데기: 창, 장치 관리자·설정 파일, 메뉴, 마이크 권한, 닫기 확인, 크래시 처리 연결, `ShellHooks` | 씀 | **Meon 껍데기 (새로, 중간~크다)**. 장치 설정 파일 위치·키는 그대로 읽어 사용자가 고른 장치·채널을 잃지 않게 |
 | `SonobusAudioProcessor` 의 MeonCore 소유(E2), 에디터 만들기, 창 크기 기억 | 씀 | `MeonProcessor` (새로, 작다) |
 | 플러그인 래퍼 (AU·VST3 안의 엔진) | 씀 | 브리지(#73) 플러그인으로 (7.3) |
-| E1·E4·E5·E10 엔진 수정 | 씀 | 필요 없어짐 (새 구조의 기본 동작). E8·E9 (AOO 클라이언트)는 그대로 씀 |
+| E1·E4·E5·E10·E11 엔진 수정 | 씀 | 필요 없어짐 (새 구조의 기본 동작). E8·E9 (AOO 클라이언트)는 그대로 씀 |
 
 ### 6.2 Meon 이 쓰는데 새로 만들어야 하는 것 (요약)
 
