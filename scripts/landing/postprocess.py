@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 RAW, OUT = sys.argv[1], sys.argv[2]
 MARGIN = 24          # 크롭 여백 (논리 픽셀)
@@ -83,6 +83,34 @@ def crop_box(lay, box, margin=MARGIN):
     return (int(x0 * s), int(y0 * s), int(x1 * s), int(y1 * s))
 
 
+CANVAS = (3024, 1964)        # 전체 화면 이미지와 같은 크기 (2배)
+CANVAS_BG = (0xFC, 0xFC, 0xFC)
+WINDOW_RADIUS = 24           # 창 모서리 (2배 픽셀, 논리 12)
+WINDOW_BORDER = 2            # 창 테두리 두께 (2배 픽셀, 논리 1). 창 바깥에 두른다 (창 내용을 가리지 않게)
+WINDOW_BORDER_COLOR = (0xE0, 0xE0, 0xE0)
+
+
+def framed(win):
+    """플러그인 창을 CANVAS 가운데에 놓는다. 모서리는 둥글게, 바깥에 얇은 테두리, 나머지는 CANVAS_BG.
+    둥근 모서리는 4배로 그려 줄여서 계단이 없게 한다. 위치는 짝수라 1배로 줄여도 반 픽셀이 생기지 않는다."""
+    win = win.convert("RGB")
+    b, r, ss = WINDOW_BORDER, WINDOW_RADIUS, 4
+    ow, oh = win.width + 2 * b, win.height + 2 * b
+    ox, oy = (CANVAS[0] - ow) // 2 // 2 * 2, (CANVAS[1] - oh) // 2 // 2 * 2
+
+    def mask(size, inset, radius):
+        m = Image.new("L", (size[0] * ss, size[1] * ss), 0)
+        ImageDraw.Draw(m).rounded_rectangle((inset * ss, inset * ss, (size[0] - inset) * ss - 1, (size[1] - inset) * ss - 1),
+                                            radius * ss, fill=255)
+        return m.resize(size, Image.BOX)
+
+    out = Image.new("RGB", CANVAS, CANVAS_BG)
+    out.paste(Image.new("RGB", (ow, oh), WINDOW_BORDER_COLOR), (ox, oy), mask((ow, oh), 0, r + b))
+    inner = mask((ow, oh), b, r).crop((b, b, b + win.width, b + win.height))
+    out.paste(win, (ox + b, oy + b), inner)
+    return out
+
+
 saved = []
 
 
@@ -150,7 +178,7 @@ rooms_img, rooms_lay = Image.open(os.path.join(RAW, "rooms.png")), layout("rooms
 friends_img, friends_lay = Image.open(os.path.join(RAW, "friends.png")), layout("friends")
 save(rooms_img, "tab-rooms")
 save(friends_img, "tab-friends")
-save(Image.open(os.path.join(RAW, "jam-plugin.png")), "tab-daw")
+save(framed(Image.open(os.path.join(RAW, "jam-plugin.png"))), "tab-daw")   # 창만 그린다 (DAW 화면 없음)
 
 # ── 기능 섹션 크롭 ───────────────────────────────────────────────────
 rows = sorted(nodes(jam_lay, "JamScreen::MemberRow"), key=lambda n: n["y"])
