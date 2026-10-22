@@ -83,7 +83,7 @@ inline ConnectionLostText connectionLost (core::JamSession::ServerProblem p)
             return { TXT ("합주 서버에 연결하지 못했어요"),
                      TXT ("합주 서버와 UDP로 주고받지 못했어요.") + "\n"
                          + TXT ("회사·학교 와이파이나 방화벽이") + "\n" + TXT ("UDP를 막는 경우가 많아요.") + "\n"
-                         + TXT ("다른 네트워크(휴대폰 핫스팟 등)로 바꾸거나") + "\n" + TXT ("방화벽에서 Meon을 허용해 주세요.") + "\n"
+                         + TXT ("다른 네트워크로 바꾸거나") + "\n" + TXT ("방화벽에서 Meon을 허용해 주세요.") + "\n"
                          + retrying };
         case P::noAnswer:
             return { TXT ("합주 서버에 연결하지 못했어요"), TXT ("합주 서버가 답하지 않아요.") + "\n" + retrying };
