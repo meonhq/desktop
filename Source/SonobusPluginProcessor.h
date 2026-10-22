@@ -668,7 +668,13 @@ public:
     // danger
     foleys::LevelMeterSource * getRemotePeerRecvMeterSource(int index);
     foleys::LevelMeterSource * getRemotePeerSendMeterSource(int index);
-    
+
+    /** MEON E11: 사람 index 의 받는 소리 미터 값 (화면용). 엔진 잠금(읽기) 안에서 범위를 보고 값만 돌려준다.
+        channel < 0 이면 모든 채널 중 가장 큰 값. 사람이 없거나 그 채널이 없으면 0. */
+    float getRemotePeerRecvLevel(int index, int channel) const;
+    /** MEON E11: 사람 index 의 받는 소리 미터 피크 유지 시간. 같은 방식 (잠금 안에서 범위를 보고 바꾼다, 주소를 내보내지 않는다) */
+    void setRemotePeerRecvMeterHoldMs(int index, int ms);
+
     void setRemotePeerConnected(int index, bool active);
     bool getRemotePeerConnected(int index) const;
     
@@ -1181,6 +1187,11 @@ private:
     // MEON E10: 오디오 스레드는 mCoreLock 대신 이 관문만 본다 (meon/MeonRtGate.h).
     // mCoreLock 쓰기 잠금은 모두 meon::ScopedGatedWrite 로 잡는다 (쓰기 잠금 → 오디오 스레드가 나갈 때까지 기다림)
     meon::RtGate     mRtGate;
+    // MEON E11: 사람의 받는 미터(recvMeterSource) 크기 바꾸기와 화면의 미터 값 읽기를 서로 막는다.
+    // 크기를 바꾸는 곳(형식 이벤트·setupSourceFormatsForAll)은 mCoreLock 읽기만 잡아서, 같은 읽기 잠금인 화면과 겹쳤다.
+    // 순서: mCoreLock → (관문) → 이 잠금. 이 잠금을 쥔 채 다른 잠금을 잡지 않는다. 오디오 스레드는 잡지 않는다
+    // (오디오의 measureBlock 은 크기를 바꾸지 않고, 크기 바꾸기는 E10 관문으로 오디오와 이미 갈려 있다)
+    mutable SpinLock mPeerMeterLock;
     CriticalSection  mClientLock;
     CriticalSection  mSourceFormatLock;
 
