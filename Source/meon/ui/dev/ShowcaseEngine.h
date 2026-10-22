@@ -1,5 +1,5 @@
 // MEON dev - 소개 페이지 캡처 전용 합주 엔진 (--showcase, 빌드 0 전용). 실제 소리·네트워크 없이
-// 정해 둔 멤버가 붙어 있는 것처럼 보이게 한다: 모두 연결됨, 핑은 거의 고정, 레벨은 120 BPM 연주처럼 오르내린다.
+// 정해 둔 멤버가 붙어 있는 것처럼 보이게 한다: 모두 연결됨, 핑은 거의 고정(2~4 ms), 레벨은 120 BPM 연주처럼 오르내린다.
 // 레벨·핑은 시계(clockMs)의 함수이고 12초마다 똑같이 반복한다 (첫 화면 영상이 끊김 없이 이어지도록).
 // 캡처 장치(Showcase)가 시계를 프레임 단위로 넘긴다. 시계를 넘기지 않으면 실제 시간으로 움직인다.
 #pragma once
@@ -67,6 +67,16 @@ public:
     int sendChannelCount() const override { return 2; }
     juce::String audioDescription() const override { return "showcase"; }
 
+    // 파일 플레이어: 이름만 기억하는 가짜 파일 (소리 없음). 위치 1:24 / 길이 3:52 고정
+    bool loadFile (const juce::File& f) override  { file = f.getFileName(); playing = false; return true; }
+    void closeFile() override                     { file = {}; playing = false; }
+    bool hasFile() const override                 { return file.isNotEmpty(); }
+    juce::String fileName() const override        { return file; }
+    bool isFilePlaying() const override           { return playing; }
+    void setFilePlaying (bool b) override         { playing = b; }
+    double filePosition() const override          { return 84.0; }
+    double fileLength() const override            { return 232.0; }
+
     /** 내 메시지에는 멤버마다 바로 "ack:<id>" 를 돌려준다 (전달 확인) */
     bool sendChat (const core::EngineChat&) override;
 
@@ -80,6 +90,8 @@ private:
     bool connected = false;
     juce::String me, group;
     juce::StringArray allowed;
+    juce::String file;
+    bool playing = false;
     void later (std::function<void()>);
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
 
