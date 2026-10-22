@@ -7,6 +7,7 @@
 #include "meon/MeonEditor.h"
 #include "meon/MeonSettings.h"
 #include "meon/core/MeonCore.h"
+#include "meon/MeonNetBufAuto.h"
 
 #include "RunCumulantor.h"
 
@@ -320,7 +321,10 @@ struct SonobusAudioProcessor::RemotePeer {
     double resetDroptime = 0;
     int64_t lastDropCount = 0;
     double lastNetBufDecrTime = 0;
+    float netBufBeforeShrink = 0.0f; // MEON E12: 지연 우선이 줄이기 시작하기 전 버퍼 (줄인 뒤 첫 끊김에 되돌릴 값, 0: 줄이는 중 아님)
     float netBufAutoBaseline = 0.0f;
+    // MEON E12: 자동 버퍼의 늘리기·줄이기 판단 (Source/meon/MeonNetBufAuto.h, 이 값들을 참조로 고친다)
+    meon::NetBufAuto netBufAuto() { return { buffertimeMs, netBufAutoBaseline, lastDroptime, lastNetBufDecrTime, netBufBeforeShrink }; }
     bool autoNetbufInitCompleted = false;
     bool latencyMatched = false;
     bool resetSafetyMuted = true;
@@ -3992,60 +3996,40 @@ int32_t SonobusAudioProcessor::handleSinkEvents(const aoo_event ** events, int32
                     // see if our drop rate exceeds threshold, and increase buffersize if so
                     double nowtime = Time::getMillisecondCounterHiRes();
                     const float dropratethresh = peer->autosizeBufferMode == AutoNetBufferModeInitAuto ? 1.0f : mAutoresizeDropRateThresh;
-                    const float adjustlimit = 0.5f; // don't adjust more often than once every 0.5 seconds
 
                     bool autoinitdone = peer->autosizeBufferMode == AutoNetBufferModeInitAuto && peer->autoNetbufInitCompleted;
-                    
-                    if (peer->lastDroptime > 0 && !autoinitdone) {
-                        double deltatime = (nowtime - peer->lastDroptime) * 1e-3;  
-                        if (deltatime > adjustlimit) {
-                            //float droprate =  (peer->dataPacketsDropped - peer->lastDropCount) / deltatime;
-                            float droprate =  1.0f / deltatime; // treat any drops as one instance
-                            if (droprate > dropratethresh) {
-                                float adjms = 1000.0f * currSamplesPerBlock / getSampleRate();
-                                peer->buffertimeMs += adjms;
-                                peer->totalEstLatency = peer->smoothPingTime.xbar + 2*peer->buffertimeMs + (1e3*currSamplesPerBlock/getSampleRate());
-                                peer->oursink->set_buffersize(peer->buffertimeMs);
-                                peer->echosink->set_buffersize(peer->buffertimeMs);
-                                peer->latencysink->set_buffersize(peer->buffertimeMs);
-                                peer->latencyDirty = true;
-                                peer->fillRatioSlow.reset();
-                                peer->fillRatio.reset();
 
-                                DBG("AUTO-Increasing buffer time by " << adjms << " ms to " << (int)peer->buffertimeMs << " droprate: " << droprate);
+                    // MEON E12: 늘릴지·되돌릴지는 meon::NetBufAuto 가 정한다 (늘리기는 같은 규칙. 바닥에서 늘어도 바닥은 그대로,
+                    // 지연 우선이 줄인 뒤 첫 끊김에서 줄이기 전 값으로 되돌리고 바닥으로)
+                    const double prevdroptime = peer->lastDroptime;
+                    const float adjms = 1000.0f * currSamplesPerBlock / getSampleRate();
+                    const auto dropres = peer->netBufAuto().drop(nowtime, adjms, dropratethresh,
+                                                                 peer->autosizeBufferMode == AutoNetBufferModeAutoFull, autoinitdone);
 
-                                if (peer->hasRealLatency) {
-                                    peer->totalEstLatency = peer->totalLatency + (peer->buffertimeMs - peer->bufferTimeAtRealLatency);
-                                }
+                    if (dropres == meon::NetBufAuto::Drop::grew || dropres == meon::NetBufAuto::Drop::reverted) {
+                        peer->totalEstLatency = peer->smoothPingTime.xbar + 2*peer->buffertimeMs + (1e3*currSamplesPerBlock/getSampleRate());
+                        peer->oursink->set_buffersize(peer->buffertimeMs);
+                        peer->echosink->set_buffersize(peer->buffertimeMs);
+                        peer->latencysink->set_buffersize(peer->buffertimeMs);
+                        peer->latencyDirty = true;
+                        peer->fillRatioSlow.reset();
+                        peer->fillRatio.reset();
 
-                                if (peer->autosizeBufferMode == AutoNetBufferModeAutoFull) {
+                        DBG("AUTO-Increasing buffer time by " << adjms << " ms to " << (int)peer->buffertimeMs << " floor: " << peer->netBufAutoBaseline);
 
-                                    const float timesincedecrthresh = 2.0;
-                                    if (peer->lastNetBufDecrTime > 0 && (nowtime - peer->lastNetBufDecrTime)*1e-3 < timesincedecrthresh ) {
-                                        peer->netBufAutoBaseline = peer->buffertimeMs;
-                                        DBG("Got drop within short time thresh, setting minimum baseline for future decr to " << peer->netBufAutoBaseline);
-                                    }
-                                }
-
-                                sendRemotePeerInfoUpdate(-1, peer); // send to this peer
-
-                            }
-
-                            float realdroprate =  (peer->dataPacketsDropped - peer->lastDropCount) / deltatime;
-                            peer->fastDropRate.push(realdroprate);
-
-                            peer->lastDroptime = nowtime;
-                            peer->lastDropCount = peer->dataPacketsDropped;
+                        if (peer->hasRealLatency) {
+                            peer->totalEstLatency = peer->totalLatency + (peer->buffertimeMs - peer->bufferTimeAtRealLatency);
                         }
+
+                        sendRemotePeerInfoUpdate(-1, peer); // send to this peer
                     }
-                    else {
-                        if (peer->lastDroptime > 0) {
-                            double deltatime = (nowtime - peer->lastDroptime) * 1e-3;
+
+                    if (dropres != meon::NetBufAuto::Drop::same) {
+                        if (prevdroptime > 0) {
+                            double deltatime = (nowtime - prevdroptime) * 1e-3;
                             float droprate =  (peer->dataPacketsDropped - peer->lastDropCount) / deltatime;
                             peer->fastDropRate.push(droprate);
                         }
-
-                        peer->lastDroptime = nowtime;
                         peer->lastDropCount = peer->dataPacketsDropped;
                     }
                     
@@ -4138,50 +4122,28 @@ int32_t SonobusAudioProcessor::handleSinkEvents(const aoo_event ** events, int32
 
                 if (peer->autosizeBufferMode == AutoNetBufferModeAutoFull) {
                     // possibly adjust net buffer down, if it has been longer than threshold since last drop
+                    // MEON E12: 줄일지는 meon::NetBufAuto 가 정한다 (같은 규칙: 10초 동안 끊김이 없고 10초에 한 번까지. 줄이기 전 값을 적어 둔다)
                     double nowtime = Time::getMillisecondCounterHiRes();
-                    const float nodropsthresh = 10.0; // no drops in 10 seconds
-                    const float adjustlimit = 10; // don't adjust more often than once every 10 seconds
+                    const float adjms = 1000.0f * currSamplesPerBlock / getSampleRate();
 
-                    if (peer->lastNetBufDecrTime > 0 && peer->buffertimeMs > peer->netBufAutoBaseline && !peer->latencyMatched) {
-                        double deltatime = (nowtime - peer->lastNetBufDecrTime) * 1e-3;
-                        double deltadroptime = (nowtime - peer->lastDroptime) * 1e-3;
-                        if (deltatime > adjustlimit) {
-                            //float droprate =  (peer->dataPacketsDropped - peer->lastDropCount) / deltatime;
-                            //if (droprate < dropratethresh) {
-                            if (deltadroptime > nodropsthresh) {
-                                float adjms = 1000.0f * currSamplesPerBlock / getSampleRate();
-                                peer->buffertimeMs -= adjms;
+                    if (peer->netBufAuto().ping(nowtime, adjms, peer->latencyMatched)) {
+                        peer->totalEstLatency = peer->smoothPingTime.xbar + 2*peer->buffertimeMs + (1e3*currSamplesPerBlock/getSampleRate());
+                        peer->oursink->set_buffersize(peer->buffertimeMs);
+                        peer->echosink->set_buffersize(peer->buffertimeMs);
+                        peer->latencysink->set_buffersize(peer->buffertimeMs);
+                        peer->latencyDirty = true;
 
-                                peer->buffertimeMs = std::max(peer->buffertimeMs, peer->netBufAutoBaseline);
+                        peer->fillRatioSlow.reset();
+                        peer->fillRatio.reset();
 
-                                peer->totalEstLatency = peer->smoothPingTime.xbar + 2*peer->buffertimeMs + (1e3*currSamplesPerBlock/getSampleRate());
-                                peer->oursink->set_buffersize(peer->buffertimeMs);
-                                peer->echosink->set_buffersize(peer->buffertimeMs);
-                                peer->latencysink->set_buffersize(peer->buffertimeMs);
-                                peer->latencyDirty = true;
-
-                                peer->fillRatioSlow.reset();
-                                peer->fillRatio.reset();
-
-                                if (peer->hasRealLatency) {
-                                    peer->totalEstLatency = peer->totalLatency + (peer->buffertimeMs - peer->bufferTimeAtRealLatency);
-                                }
-
-                                DBG("AUTO-Decreasing buffer time by " << adjms << " ms to " << (int) peer->buffertimeMs);
-
-                                peer->lastNetBufDecrTime = nowtime;
-
-                                sendRemotePeerInfoUpdate(-1, peer); // send to this peer
-
-                            }
-
-                            //peer->lastNetBufDropCount = peer->dataPacketsDropped;
+                        if (peer->hasRealLatency) {
+                            peer->totalEstLatency = peer->totalLatency + (peer->buffertimeMs - peer->bufferTimeAtRealLatency);
                         }
-                    }
-                    else {
-                        peer->lastNetBufDecrTime = nowtime;
-                    }
 
+                        DBG("AUTO-Decreasing buffer time by " << adjms << " ms to " << (int) peer->buffertimeMs);
+
+                        sendRemotePeerInfoUpdate(-1, peer); // send to this peer
+                    }
                 }
             }
 
@@ -5388,6 +5350,7 @@ void SonobusAudioProcessor::setRemotePeerBufferTime(int index, float bufferMs)
         remote->fillRatioSlow.reset();
         remote->fillRatio.reset();
         remote->netBufAutoBaseline = (1e3*currSamplesPerBlock/getSampleRate()); // at least a process block
+        remote->netBufBeforeShrink = 0; // MEON E12
         remote->latencyDirty = true;
         remote->autoNetbufInitCompleted = false;
         remote->lastDroptime = Time::getMillisecondCounterHiRes();
@@ -5431,6 +5394,7 @@ void SonobusAudioProcessor::setRemotePeerAutoresizeBufferMode(int index, Sonobus
     if (index < mRemotePeers.size()) {
         RemotePeer * remote = mRemotePeers.getUnchecked(index);
         remote->autosizeBufferMode = flag;
+        remote->netBufBeforeShrink = 0; // MEON E12
         
         if (flag == AutoNetBufferModeAutoFull) {
             remote->netBufAutoBaseline = (1e3*currSamplesPerBlock/getSampleRate()); // at least a process block
