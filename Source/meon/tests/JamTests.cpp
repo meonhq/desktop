@@ -54,7 +54,11 @@ namespace
         void finishConnect() { connected = true; ls.call ([] (Listener& l) { l.engineConnected (true, {}); }); }
         void failConnect()   { connected = false; ls.call ([] (Listener& l) { l.engineConnected (false, "refused"); }); }
         /** 서버만 끊김: 실제 엔진처럼 그룹 이름은 지우지 않는다 (직접 연결된 상대도 남는다) */
-        void serverLost()    { connected = false; ls.call ([] (Listener& l) { l.engineDisconnected ("lost"); }); }
+        void serverLost()    { connected = false; ls.call ([] (Listener& l) { l.engineDisconnected (false, "disconnected from server"); }); }
+        /** AOO 가 TCP 로 붙은 뒤 서버의 UDP 확인 답을 5초 안에 못 받아 포기 (UDP 가 막힌 네트워크). 붙기 이벤트 없이 끊김만 온다 */
+        void udpTimeout()    { connected = false; ls.call ([] (Listener& l) { l.engineDisconnected (false, "timed out"); }); }
+        /** 직접 끊은 연결의 늦게 온 알림 (직전 방) */
+        void staleDisconnect() { ls.call ([] (Listener& l) { l.engineDisconnected (true, {}); }); }
         void disconnect() override { connected = false; group = {}; peerList.clear(); }
         bool isConnected() const override { return connected; }
         juce::String connectedUser() const override { return user; }
@@ -545,7 +549,7 @@ public:
                 // 원래 방에서 직접 끊은 연결의 끊김 알림이 새 방에 붙는 중에 늦게 와도 서버 끊김으로 보지 않는다
                 {
                     const int c0 = engine.connects;
-                    engine.serverLost();
+                    engine.staleDisconnect();
                     clock.advance (5000);
                     expectEquals (engine.connects, c0, "늦게 온 끊김 알림으로 다시 붙지 않는다");
                 }
@@ -936,6 +940,156 @@ public:
             clock.advance (10000);
             expectEquals (engine.connects, c1, "나간 뒤에는 다시 시도하지 않는다");
             jam.removeListener (&log);
+            o.logFolder.deleteRecursively();
+        }
+
+        beginTest ("Connection: UDP blocked while connecting (AOO gives up the UDP check, 'timed out') shows as a failure with that reason, retried every 3 s, cleared on connect");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-udp");
+            struct Ev { juce::String type; juce::var props; };
+            std::vector<Ev> evs;
+            o.reportEvent = [&] (const juce::String& t, const juce::String&, const juce::var& p) { evs.push_back ({ t, p }); };
+            JamSession jam (engine, store, clock, o);
+            struct LinkLog : JamSession::Listener { int changes = 0; void jamServerLinkChanged() override { ++changes; } } log;
+            jam.addListener (&log);
+            using P = JamSession::ServerProblem;
+
+            RoomDetail room;
+            room.id = "r_udp";
+            room.hostId = "u_me";
+            room.connection.aooHost = "aoo.meon.co.kr";
+            room.connection.aooPort = 10999;
+            room.connection.groupName = "g";
+            room.connection.aooUsername = "u_me";
+            room.connection.members = { "u_me", "u_b" };
+            store.setCurrentRoom (room);
+            expect (jam.getPhase() == JamSession::Phase::connecting);
+            const int c0 = engine.connects;
+
+            // 직전 방 연결의 늦게 온 끊김 알림(직접 끊음, 서버가 끊김)은 그대로 무시한다
+            engine.staleDisconnect();
+            engine.serverLost();
+            engine.connected = false;
+            expect (! jam.isJamServerDown() && jam.serverProblem() == P::none);
+            expectEquals (engine.connects, c0);
+
+            // 5초: AOO 가 UDP 확인을 포기 → 실패, 이유는 UDP 막힘 (전에는 무시해서 "연결 중" 에 멈췄다)
+            clock.advance (5000);
+            engine.udpTimeout();
+            expect (jam.isJamServerDown(), "UDP 확인 실패는 실패로 보인다");
+            expect (jam.serverProblem() == P::udpBlocked);
+            expectEquals (log.changes, 1);
+            expect (jam.getPhase() == JamSession::Phase::connecting);
+            clock.advance (3000);
+            expectEquals (engine.connects, c0 + 1, "3초 뒤 다시");
+            engine.udpTimeout();
+            expectEquals (log.changes, 1, "같은 이유가 이어지면 한 번만 알린다");
+
+            // 15초가 지나도 이유를 아는 실패는 그 이유 그대로 (무응답으로 덮지 않는다). 상대 상태는 0.4초마다 보므로 15.4초까지
+            clock.advance (7400);
+            expect (jam.serverProblem() == P::udpBlocked);
+            // 상대는 15초에 연결 실패, 이유 udp_blocked (서버가 끊긴 것과 따로 센다)
+            int udpFails = 0;
+            for (auto& e : evs)
+                if (e.type == "peer_audio_failed" && e.props.getProperty ("reason", "").toString() == "udp_blocked") ++udpFails;
+            expectEquals (udpFails, 1);
+
+            // 다음 시도는 TCP 에서 실패: 이유가 바뀌면 다시 알린다 (화면이 문구를 바꾼다)
+            engine.failConnect();
+            expect (jam.serverProblem() == P::lost);
+            expectEquals (log.changes, 2);
+
+            // 네트워크를 바꿔 붙는다 → 내리고 그룹에 들어간다
+            engine.finishConnect();
+            expect (! jam.isJamServerDown() && jam.serverProblem() == P::none);
+            expectEquals (log.changes, 3);
+            engine.finishJoin();
+            expect (jam.isInRoom());
+            const int c1 = engine.connects;
+            clock.advance (60000);
+            expectEquals (engine.connects, c1, "방에 들어간 뒤에는 더 시도하지 않는다");
+
+            // 방 안에서 서버가 끊기고, 다시 붙다가 UDP 확인에 실패하면 그 이유로 안내한다
+            engine.serverLost();
+            expect (jam.isJamServerDown() && jam.serverProblem() == P::lost);
+            clock.advance (JamSession::reconnectFirstMs);
+            engine.udpTimeout();
+            expect (jam.serverProblem() == P::udpBlocked);
+            engine.finishConnect();
+            expect (! jam.isJamServerDown() && jam.serverProblem() == P::none);
+
+            store.setCurrentRoom (std::nullopt);
+            expect (jam.serverProblem() == P::none);
+            jam.removeListener (&log);
+            o.logFolder.deleteRecursively();
+        }
+
+        beginTest ("Connection: not in the room 15 s after entering with no failure heard (no answer) shows as a failure and retries until in");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-deadline");
+            JamSession jam (engine, store, clock, o);
+            using P = JamSession::ServerProblem;
+
+            RoomDetail room;
+            room.id = "r_dl";
+            room.hostId = "u_me";
+            room.connection.aooHost = "aoo.meon.co.kr";
+            room.connection.aooPort = 10999;
+            room.connection.groupName = "g";
+            room.connection.aooUsername = "u_me";
+            room.connection.members = { "u_me" };
+            store.setCurrentRoom (room);
+            const int c0 = engine.connects;
+
+            // 엔진이 아무 소식이 없다 (붙지도 실패하지도 않음)
+            clock.advance (JamSession::connectDeadlineMs - 1);
+            expect (! jam.isJamServerDown());
+            clock.advance (1);
+            expect (jam.isJamServerDown() && jam.serverProblem() == P::noAnswer, "15초: 실패로 보인다");
+            expectEquals (engine.connects, c0 + 1, "다시 붙어 본다");
+            clock.advance (JamSession::connectDeadlineMs);
+            expectEquals (engine.connects, c0 + 2, "그 뒤로도 15초마다");
+
+            // 붙으면 내린다. 그룹 입장 답이 없으면 15초 뒤 다시 실패로 보이고 그룹에 다시 들어간다
+            engine.finishConnect();
+            expect (! jam.isJamServerDown() && jam.getPhase() == JamSession::Phase::joining);
+            engine.group = {};   // 엔진은 그룹 입장 성공 이벤트를 받아야 그룹 이름을 적는다 (가짜는 요청 때 적어서 지운다)
+            const int j0 = engine.joins;
+            clock.advance (JamSession::connectDeadlineMs);
+            expect (jam.isJamServerDown() && jam.serverProblem() == P::noAnswer);
+            expectEquals (engine.joins, j0 + 1);
+            engine.finishJoin();
+            expect (jam.isInRoom() && ! jam.isJamServerDown() && jam.serverProblem() == P::none, "들어가면 내린다");
+            const int c1 = engine.connects, j1 = engine.joins;
+            clock.advance (60000);
+            expect (engine.connects == c1 && engine.joins == j1, "방 안에서는 15초 확인을 하지 않는다");
+
+            // 빨리 들어가면 아무 일도 없다
+            store.setCurrentRoom (std::nullopt);
+            room.id = "r_dl2";
+            store.setCurrentRoom (room);
+            engine.finishConnect();
+            engine.finishJoin();
+            clock.advance (JamSession::connectDeadlineMs * 2);
+            expect (jam.isInRoom() && ! jam.isJamServerDown());
+
+            // 나가면 멈춘다
+            store.setCurrentRoom (std::nullopt);
+            room.id = "r_dl3";
+            store.setCurrentRoom (room);
+            store.setCurrentRoom (std::nullopt);
+            const int c2 = engine.connects;
+            clock.advance (JamSession::connectDeadlineMs * 2);
+            expectEquals (engine.connects, c2);
+            expect (! jam.isJamServerDown());
             o.logFolder.deleteRecursively();
         }
 

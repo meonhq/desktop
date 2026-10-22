@@ -137,6 +137,7 @@ void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
     audioFailReported.clear();
     mix.clear();
     serverLost = serverUnreachable = peersSilent = connectFailing = false;
+    attemptProblem = ServerProblem::none;
     serverLinkMaybeChanged();
     needRejoin = false;
     reconnectAttempts = 0;
@@ -172,6 +173,7 @@ void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
     }
 
     connectEngine();
+    scheduleConnectDeadline();
     scheduleTick();
 }
 
@@ -208,9 +210,11 @@ void JamSession::exit (const String& reason)
     scheduler.cancel (retryTask);
     scheduler.cancel (reconnectTask);
     scheduler.cancel (reachTask);
-    tickTask = retryTask = reconnectTask = reachTask = 0;
+    scheduler.cancel (deadlineTask);
+    tickTask = retryTask = reconnectTask = reachTask = deadlineTask = 0;
     needRejoin = false;
     serverLost = serverUnreachable = peersSilent = connectFailing = false;
+    attemptProblem = ServerProblem::none;
     serverLinkMaybeChanged();
     if (connection.groupName.isNotEmpty()) engine.leaveGroup (connection.groupName);
     engine.disconnect();
@@ -286,23 +290,14 @@ void JamSession::engineConnected (bool ok, const String& message)
     {
         if (serverLost)
         {
+            attemptProblem = ServerProblem::lost;   // 이번 재접속은 TCP 에서 실패 (UDP 막힘 안내를 남기지 않는다)
+            serverLinkMaybeChanged();
             scheduleReconnect();   // 1·2·4…30초 간격으로 다시
             return;
         }
+        // 처음 붙기 실패 (서버 이름을 못 찾음, 거부, 시간 초과): 끊김으로 보인다 ("연결이 끊겼어요", 붙으면 "다시 연결됐어요")
         if (phase == Phase::connecting)
-        {
-            // 처음 붙기 실패 (서버 이름을 못 찾음, 거부, 시간 초과): 끊김으로 보인다 ("연결이 끊겼어요", 붙으면 "다시 연결됐어요")
-            if (! connectFailing)
-            {
-                connectFailing = true;
-                AppLog::write ("jam", LOGTXT ("합주 서버에 붙지 못함: ") + message + " (" + connection.aooHost + ":" + String (connection.aooPort) + ")");
-                if (sessionLog.isActive()) sessionLog.addEvent ("serverConnectFailed", message);
-                serverLinkMaybeChanged();
-            }
-            std::weak_ptr<bool> weak = alive;
-            scheduler.cancel (retryTask);
-            retryTask = scheduler.post (3000, [this, weak] { if (! weak.expired() && phase == Phase::connecting) connectEngine(); });
-        }
+            connectAttemptFailed (ServerProblem::lost, message);
         return;
     }
     if (serverLost)
@@ -318,6 +313,7 @@ void JamSession::engineConnected (bool ok, const String& message)
         if (sessionLog.isActive()) sessionLog.addEvent ("serverConnected", {});
     }
     serverLost = connectFailing = false;
+    attemptProblem = ServerProblem::none;
     serverLinkMaybeChanged();
     scheduler.cancel (reconnectTask);
     reconnectTask = 0;
@@ -332,11 +328,24 @@ void JamSession::engineConnected (bool ok, const String& message)
     }
 }
 
-void JamSession::engineDisconnected (const String& message)
+void JamSession::engineDisconnected (bool requested, const String& message)
 {
-    // 처음 붙는 중(connecting)에 오는 끊김은 직전 방에서 직접 끊은 연결의 늦게 온 알림이다 (엔진 이벤트는 나중에 전달된다).
-    // 붙기 실패는 engineConnected(false) 로 온다
-    if (phase == Phase::idle || phase == Phase::connecting) return;
+    if (phase == Phase::idle) return;
+    if (phase == Phase::connecting)
+    {
+        // TCP 로는 붙었는데 AOO 가 UDP 확인 답을 5초 안에 못 받아 포기하면("timed out") 붙기 이벤트 없이 이것만 온다.
+        // 전에는 붙는 중의 끊김을 모두 무시해서 UDP 가 막힌 곳에서 "연결 중" 에 멈췄다. 이 시간 초과는 붙는 중에만 나므로
+        // 이번 시도의 실패다. 그 밖의 끊김(직접 끊음, 서버가 닫음)은 직전 방 연결의 늦게 온 알림일 수 있어 무시한다
+        // (엔진 이벤트는 나중에 전달된다). 이번 시도가 그렇게 끝났으면 15초 확인(connectDeadlineMs)이 실패로 보이고 다시 붙는다
+        if (! requested && problemOfDisconnect (message) == ServerProblem::udpBlocked)
+            connectAttemptFailed (ServerProblem::udpBlocked, message);
+        return;
+    }
+    if (! requested && attemptProblem != problemOfDisconnect (message))
+    {
+        attemptProblem = problemOfDisconnect (message);   // 방 안에서 재접속하다 UDP 확인에 실패해도 그 이유로 안내한다
+        serverLinkMaybeChanged();
+    }
     if (! serverLost)
     {
         serverLost = true;
@@ -399,9 +408,89 @@ void JamSession::checkReach()
 void JamSession::serverLinkMaybeChanged()
 {
     const bool down = isJamServerDown();
-    if (down == lastServerDown) return;
+    const auto problem = serverProblem();
+    if (down == lastServerDown && problem == lastProblem) return;
     lastServerDown = down;
+    lastProblem = problem;
     listeners.call ([] (Listener& l) { l.jamServerLinkChanged(); });
+}
+
+JamSession::ServerProblem JamSession::serverProblem() const
+{
+    if (! isJamServerDown()) return ServerProblem::none;
+    return attemptProblem != ServerProblem::none ? attemptProblem : ServerProblem::lost;
+}
+
+JamSession::ServerProblem JamSession::problemOfDisconnect (const String& message)
+{
+    // AOO 는 UDP 확인 시간 초과만 "timed out" 으로 알린다 (deps/aoo/lib/src/client.cpp, client::do_disconnect).
+    // 그 밖은 서버가 닫았거나("disconnected from server") 소켓 오류다
+    return message == "timed out" ? ServerProblem::udpBlocked : ServerProblem::lost;
+}
+
+void JamSession::connectAttemptFailed (ServerProblem why, const String& message)
+{
+    const bool changed = ! connectFailing || attemptProblem != why;
+    connectFailing = true;
+    attemptProblem = why;
+    if (changed)
+    {
+        AppLog::write ("jam", (why == ServerProblem::udpBlocked
+                                   ? LOGTXT ("합주 서버와 UDP 를 주고받지 못함 (TCP 는 붙음, 5초 동안 UDP 확인 답 없음 → 네트워크·방화벽이 UDP 를 막았을 수 있음): ")
+                                   : LOGTXT ("합주 서버에 붙지 못함: "))
+                                  + message + " (" + connection.aooHost + ":" + String (connection.aooPort) + ")");
+        if (sessionLog.isActive()) sessionLog.addEvent (why == ServerProblem::udpBlocked ? "serverUdpBlocked" : "serverConnectFailed", message);
+        serverLinkMaybeChanged();
+    }
+    std::weak_ptr<bool> weak = alive;
+    scheduler.cancel (retryTask);
+    retryTask = scheduler.post (3000, [this, weak]
+    {
+        if (weak.expired()) return;
+        retryTask = 0;
+        if (phase == Phase::connecting) connectEngine();
+    });
+}
+
+void JamSession::scheduleConnectDeadline()
+{
+    std::weak_ptr<bool> weak = alive;
+    scheduler.cancel (deadlineTask);
+    deadlineTask = scheduler.post (connectDeadlineMs, [this, weak]
+    {
+        if (weak.expired()) return;
+        deadlineTask = 0;
+        connectDeadlinePassed();
+    });
+}
+
+void JamSession::connectDeadlinePassed()
+{
+    if (phase != Phase::connecting && phase != Phase::joining) return;
+    if (! connectFailing)
+    {
+        // 실패 소식도 없이 방에 못 들어갔다 (서버가 답하지 않음 등): 실패로 보인다. 이유를 알면(UDP·TCP) 그 안내가 이미 떠 있다
+        connectFailing = true;
+        attemptProblem = ServerProblem::noAnswer;
+        AppLog::write ("jam", LOGTXT ("방에 들어온 지 ") + String (connectDeadlineMs / 1000)
+                                  + (phase == Phase::connecting ? LOGTXT ("초가 지나도 합주 서버에 붙지 못함")
+                                                                : LOGTXT ("초가 지나도 합주 그룹에 들어가지 못함"))
+                                  + " (" + connection.aooHost + ":" + String (connection.aooPort) + ")");
+        serverLinkMaybeChanged();
+    }
+    // 다시 시도한다. 이유를 아는 실패는 이미 3초마다 다시 하고 있다 (그 사이면 건너뛴다).
+    // AOO 가 아직 붙는 중이면 다시 붙기는 아무것도 하지 않는다
+    if (phase == Phase::joining)
+    {
+        scheduler.cancel (retryTask);
+        retryTask = 0;
+        joinGroup();
+    }
+    else if (retryTask == 0)
+    {
+        connectEngine();
+    }
+    if (phase == Phase::connecting || phase == Phase::joining) scheduleConnectDeadline();
 }
 
 void JamSession::scheduleReconnect()
@@ -447,6 +536,17 @@ void JamSession::engineGroupJoined (bool ok, const String& group, const String& 
         return;
     }
     if (phase == Phase::inRoom) return;   // 서버 재접속 뒤 다시 들어온 경우
+
+    scheduler.cancel (deadlineTask);
+    deadlineTask = 0;
+    if (connectFailing)
+    {
+        // 그룹 입장이 늦어 실패로 보였다가 들어갔다
+        AppLog::write ("jam", LOGTXT ("합주 그룹에 들어감 (늦게)"));
+        connectFailing = false;
+        attemptProblem = ServerProblem::none;
+        serverLinkMaybeChanged();
+    }
 
     SessionLog::AudioInfo audio;
     audio.host = connection.aooHost + ":" + String (connection.aooPort);
@@ -649,7 +749,13 @@ void JamSession::tick()
                 membersChangedNow = true;
                 if (sessionLog.isActive()) sessionLog.addEvent ("peerJoinTimeout", user);
                 // AOO 실패를 이미 보냈으면 다시 보내지 않는다. 합주 서버와 끊긴 동안이면 상대 문제가 아니다
-                reportPeerAudioFailed (user, isJamServerDown() ? "aoo_server_lost" : "timeout");
+                // (UDP 가 막혀 합주 서버에 못 붙었으면 udp_blocked 로 따로 센다. 서버가 끊긴 것과 원인이 다르다)
+                {
+                    const auto why = serverProblem();
+                    reportPeerAudioFailed (user, why == ServerProblem::udpBlocked ? "udp_blocked"
+                                                 : why != ServerProblem::none     ? "aoo_server_lost"
+                                                                                  : "timeout");
+                }
                 break;
             case PeerState::Change::none:
                 break;

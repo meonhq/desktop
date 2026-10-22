@@ -214,6 +214,14 @@ void MeonCore::updateConnection()
 void MeonCore::jamServerLinkChanged()
 {
     updateConnection();
+    connWatch.detailChanged();   // 끊긴 채 이유만 바뀌었으면 토스트 문구를 다시 고른다
+}
+
+JamSession::ServerProblem MeonCore::jamServerProblem() const
+{
+    // 서버 실시간 연결(WebSocket)도 끊겼으면 내 인터넷 문제일 가능성이 커서 일반 끊김 문구로 둔다
+    if (jamSession == nullptr || appStore.state().link == Realtime::Link::reconnecting) return JamSession::ServerProblem::none;
+    return jamSession->serverProblem();
 }
 
 void MeonCore::notice (const Notice& n)

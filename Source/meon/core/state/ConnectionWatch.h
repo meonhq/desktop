@@ -4,6 +4,7 @@
 //     끊긴 동안은 계속 lost (저절로 닫히지 않는다)
 //   - 다시 붙으면 같은 자리의 토스트가 restored (일반 토스트 "다시 연결됐어요")로 바뀌고 restoredShowMs 뒤 none
 //   - 4000(다른 곳에서 접속)·4001(세션 폐기)·로그아웃처럼 일부러 끊은 경우는 띄우지 않는다 (떠 있으면 바로 none)
+//   - 끊긴 동안 이유(JamSession::serverProblem)가 바뀌면 lost 를 한 번 더 알린다 (detailChanged): 화면이 문구를 다시 고른다
 //   - 끊긴 사이 서버가 방에서 내보냈으면(다시 붙었을 때 hello 의 current_room 이 null) restored 없이 바로 none.
 //     그쪽은 AppStore 의 Notice::roomLostWhileDisconnected 로 AppRoot 가 경고 토스트 "방에서 나왔어요" 를 띄운다 (roomLost)
 #pragma once
@@ -100,6 +101,13 @@ public:
 
     /** 다시 연결했더니 방이 없다 (끊긴 사이 서버가 내보냄): "다시 연결됐어요" 를 띄우지 않는다 */
     void roomLost() { roomWasLost = true; }
+
+    /** 끊긴 동안 그 이유가 바뀌었다 (합주 서버 UDP 막힘 등): 떠 있는 끊김 토스트가 문구를 다시 고르게 같은 상태를 한 번 더 알린다 */
+    void detailChanged()
+    {
+        if (state == Toast::lost)
+            listeners.call ([] (Listener& l) { l.connectionToastChanged (Toast::lost); });
+    }
 
 private:
     Scheduler& scheduler;

@@ -36,7 +36,10 @@ public:
     {
         virtual ~Listener() = default;
         virtual void engineConnected (bool ok, const juce::String& message) { juce::ignoreUnused (ok, message); }
-        virtual void engineDisconnected (const juce::String& message) { juce::ignoreUnused (message); }
+        /** 합주 서버(AOO)와 끊김. requested = 이 앱이 끊었다 (disconnect). false 면 오류·시간 초과:
+            "timed out" 은 TCP 로 붙은 뒤 서버의 UDP 확인 답을 5초 안에 받지 못해 AOO 가 포기한 것이다
+            (deps/aoo/lib/src/client.cpp, client::send 의 handshake). 붙기 전에도 올 수 있다 */
+        virtual void engineDisconnected (bool requested, const juce::String& message) { juce::ignoreUnused (requested, message); }
         virtual void engineGroupJoined (bool ok, const juce::String& group, const juce::String& message) { juce::ignoreUnused (ok, group, message); }
         virtual void engineGroupLeft (const juce::String& group) { juce::ignoreUnused (group); }
         /** 그룹에 피어가 들어옴 (허용 목록 밖이면 엔진은 아직 연결하지 않았다) */
