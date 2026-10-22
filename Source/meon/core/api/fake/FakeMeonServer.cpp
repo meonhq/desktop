@@ -827,7 +827,7 @@ FakeMeonServer::Out FakeMeonServer::route (const HttpRequest& req)
 
     const auto path = seg.joinIntoString ("/");
     const bool alwaysAllowed = (m == "POST" && (path == "auth/verify-email" || path == "auth/resend-verification" || path == "auth/logout"
-                                                || path == "me/email"))
+                                                || path == "me/email" || path == "events"))
                                || (m == "GET" && path == "me") || (m == "DELETE" && path == "me");
     if (! me->verified && ! alwaysAllowed) return fail (ErrorCode::emailNotVerified);
     if (me->verified && (! me->nickname || ! me->part) && ! alwaysAllowed && ! (m == "PATCH" && path == "me"))
@@ -1071,6 +1071,19 @@ FakeMeonServer::Out FakeMeonServer::authorised (const HttpRequest& req, const St
         if (changed)
             for (auto& [rid, r] : rooms)
                 if (r.hostId == actor) emitRooms ("rooms.updated", r);
+        return noContent();
+    }
+
+    if (m == "POST" && path == "events")
+    {
+        // EVENTS.md 2장: 인증 전에도 받는다. 50개를 넘으면 400 (하나도 남기지 않음), 그 밖의 틀린 줄은 조용히 버리고 언제나 204
+        const auto* list = body.getProperty ("events", var()).getArray();
+        if (list == nullptr) return fail (ErrorCode::invalidRequest, {}, "events");
+        if (list->size() > 50) return fail (ErrorCode::invalidRequest, {}, "events");
+        for (auto& e : *list)
+            if (e.getProperty ("type", "").toString().isNotEmpty())
+                clientEvents.push_back (e);
+        while (clientEvents.size() > 500) clientEvents.erase (clientEvents.begin());
         return noContent();
     }
 

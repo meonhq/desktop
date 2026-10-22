@@ -187,6 +187,7 @@ set(MEON_CORE_SOURCES
     Source/meon/core/log/ChatLog.cpp
     Source/meon/core/log/AppLog.h
     Source/meon/core/log/AppLog.cpp
+    Source/meon/core/log/EventReporter.h
     Source/meon/core/jam/RttReporter.h
     Source/meon/core/jam/LatencyProbe.h
     Source/meon/core/jam/HomeMonitorGate.h

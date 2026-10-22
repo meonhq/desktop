@@ -88,6 +88,10 @@ public:
     bool leaveRoomBlocking (const juce::String& roomId, int timeoutMs);
     void reportRtt (int aooRttMs, Callback<Done>);
     void sendLatencyTelemetry (const juce::String& roomId, int estimatedMs, int myRttMs, int hostRttMs, int actualP2pRttMs, Callback<Done>);
+    /** 앱 행동 기록 (POST /events, 서버 EVENTS.md 2장). 50개 이하. 서버는 언제나 204, 실패해도 다시 보내지 않는다 */
+    void sendEvents (const juce::Array<juce::var>& events, Callback<Done>);
+    /** 종료할 때: 바로 보내고 응답을 기다린다 (최대 timeoutMs). 토큰을 갱신하지 않는다. 서버가 받았으면 true */
+    bool sendEventsBlocking (const juce::Array<juce::var>& events, int timeoutMs);
 
     // 5.7 승인 요청 (방장)
     void listJoinRequests (const juce::String& roomId, Callback<std::vector<JoinRequest>>);

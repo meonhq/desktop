@@ -76,6 +76,8 @@ public:
 
     State get() const { return state; }
     int dropCount() const { return drops; }
+    /** 서버 멤버 목록에서 처음 본 때 (입장, 또는 그 멤버가 들어온 때) */
+    juce::int64 firstSeenMs() const { return since; }
 
 private:
     State state = State::connecting;
