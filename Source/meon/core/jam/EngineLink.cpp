@@ -363,7 +363,8 @@ std::vector<EnginePeer> EngineLink::peers() const
             p.roundtripMs = li.totalRoundtripMs;
         }
         p.bufferMs = processor.getRemotePeerBufferTime (i);
-        if (auto* src = processor.getRemotePeerRecvMeterSource (i)) p.recvChannels = src->getNumChannels();
+        // 받는 채널 수: 엔진이 잠금 안에서 읽는 값 (E11: 전에는 미터 주소를 받아 잠금 밖에서 읽었다). 첫 형식을 받기 전에는 0
+        p.recvChannels = processor.getRemotePeerRecvChannelCount (i);
         out.push_back (p);
     }
     return out;
@@ -415,17 +416,12 @@ float EngineLink::meter (foleys::LevelMeterSource& src, int channel)
 
 float EngineLink::peerLevel (const String& user, int channel) const
 {
-    // 화면 그릴 때마다 불리므로 표에서만 찾는다 (엔진 잠금은 아래 미터 원본을 얻을 때 한 번).
+    // 화면 그릴 때마다 불리므로 표에서만 찾는다 (엔진 잠금은 미터 값을 읽을 때 한 번).
     // 번호가 밀렸는데 사람 수가 같은 드문 경우 다음 스냅숏(0.4초 안)까지 다른 사람 미터가 보일 수 있다. 엔진에는 아무것도 바꾸지 않는다.
-    // 미터 원본은 들고 있지 않는다 (사람이 빠지면 그 메모리가 사라진다)
+    // 미터 주소는 받지 않는다 (E11: 잠금이 풀린 뒤 그 사람이 지워지면 지워진 메모리를 읽었다). 엔진이 잠금 안에서 값만 읽어 준다
     const int i = lookup (user);
     if (i < 0) return 0.0f;
-    if (auto* src = processor.getRemotePeerRecvMeterSource (i))
-    {
-        if (channel >= src->getNumChannels()) return 0.0f;
-        return meter (*src, channel);
-    }
-    return 0.0f;
+    return processor.getRemotePeerRecvLevel (i, channel);
 }
 
 void EngineLink::applyPeerDefaults (const String& user, BufferMode mode)
@@ -435,7 +431,7 @@ void EngineLink::applyPeerDefaults (const String& user, BufferMode mode)
     if (pcmFormatIndex >= 0) processor.setRemotePeerAudioCodecFormat (i, pcmFormatIndex);
     processor.setRemotePeerAutoresizeBufferMode (i, mode == BufferMode::latency ? SonobusAudioProcessor::AutoNetBufferModeAutoFull
                                                                                 : SonobusAudioProcessor::AutoNetBufferModeAutoIncreaseOnly);
-    if (auto* src = processor.getRemotePeerRecvMeterSource (i)) src->setMaxHoldMS (meterHoldMs);
+    processor.setRemotePeerRecvMeterHoldMs (i, meterHoldMs);   // E11: 미터 주소를 받지 않는다 (엔진이 잠금 안에서 바꾼다)
 }
 
 //==============================================================================

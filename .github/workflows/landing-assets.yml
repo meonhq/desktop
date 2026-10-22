@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: '만들 것 (all = 이미지와 영상, still = 이미지만)'
+        description: '만들 것 (all = 이미지와 영상, still = 이미지만, daw = tab-daw 만)'
         default: 'all'
   push:
     branches: ['claude/marketing-landing', 'marketing/**']
@@ -50,13 +50,18 @@ jobs:
         run: |
           APP=build/MEON_artefacts/RelWithDebInfo/Standalone/Meon.app/Contents/MacOS/Meon
           WHAT='${{ github.event.inputs.what }}'
-          [ "$WHAT" = still ] || WHAT=all
+          case "$WHAT" in still|daw) ;; *) WHAT=all ;; esac
           bash scripts/landing/capture.sh "$APP" "$RUNNER_TEMP/landing" "$WHAT"
 
       - name: 파일 만들기
         run: |
-          rm -rf docs/marketing/landing
-          "$RUNNER_TEMP/venv/bin/python" -I scripts/landing/postprocess.py "$RUNNER_TEMP/landing/raw" docs/marketing/landing
+          if [ '${{ github.event.inputs.what }}' = daw ]; then
+            # tab-daw 만 바꾼다 (다른 파일은 그대로 둔다)
+            "$RUNNER_TEMP/venv/bin/python" -I scripts/landing/postprocess.py "$RUNNER_TEMP/landing/raw" docs/marketing/landing daw
+          else
+            rm -rf docs/marketing/landing
+            "$RUNNER_TEMP/venv/bin/python" -I scripts/landing/postprocess.py "$RUNNER_TEMP/landing/raw" docs/marketing/landing
+          fi
           rm -f docs/marketing/landing/_sizes.json
           ls -la docs/marketing/landing
 
