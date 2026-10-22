@@ -15,6 +15,7 @@ public:
     PingBadge();
     void setPing (std::optional<int> ms);   // 없으면 "—"
     void setText (const juce::String& t) { text = t; repaint(); }
+    const juce::String& getText() const { return text; }   // 보이는 글자 (소개 페이지 캡처의 핑 검사용)
     void paint (juce::Graphics&) override;
 private:
     juce::String text { "—" };

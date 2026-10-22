@@ -1,4 +1,5 @@
-// MEON dev - 소개 페이지 이미지·영상 캡처 (--showcase=jam|rooms|friends, 빌드 0 전용). 앱 동작은 바꾸지 않는다.
+// MEON dev - 소개 페이지 이미지·영상 캡처 (빌드 0 전용). 앱 동작은 바꾸지 않는다.
+//   --showcase=jam|rooms|rooms-before|friends|request|joined|file-empty|file|earguard|chat
 // 가짜 서버(showcase.json, 가상 인물)와 ShowcaseEngine 으로 장면을 꾸민 뒤, 창을 화면에서 떼고
 // 화면 전체를 배율(기본 2배)로 직접 그려 PNG 로 저장한다 (늘리기 아님). 영상은 프레임마다 시계를 1/30초씩 넘긴다.
 //   --capture=still|video  (기본 still)   --capture-out=폴더   --capture-at=ms (still 의 시각, 기본 0)
@@ -54,8 +55,13 @@ private:
     void timerCallback() override;
     void fail (const juce::String& why);
 
-    void buildJam();
-    void buildHome (bool friendsScene);
+    void buildJam (const juce::String& skip = {});   // skip: 빼고 들어오는 멤버 (request · joined 는 하은)
+    void buildHome (bool friendsScene, bool sendRequest = true);
+    void buildRequest (bool accept);   // request: 입장 요청 목록 열기, joined: 수락해서 지우가 들어옴 (하은 없는 6명 → 7/7)
+    void buildFile (bool load);        // 파일 플레이어: 오른쪽 패널을 넓히고, load 면 파일 열고 재생 중
+    void buildEarGuard();              // 설정 › 합주 › 귀 테러 방지
+    static juce::Button* findButton (juce::Component&, const juce::String& tooltip);
+    static juce::Component* findType (juce::Component&, const juce::String& typeSuffix);
     void buildChat();          // 채팅 줄바꿈 확인 (--showcase=chat --chat-case=ko|en|link|nospace)
     juce::String chatCase;
     void addCapture();
@@ -68,6 +74,8 @@ private:
     void detachFromDesktop();
     void hideResizeCorner();   // 플러그인 창 크기 조절 손잡이를 캡처에서만 숨긴다
     void collectMeters (juce::Component&);
+    static void collectPings (juce::Component&, juce::Array<juce::var>&);
+    juce::Array<juce::var> framePings;   // 영상: 프레임마다 보이는 핑 글자
     static constexpr double fps = 30.0;
     static constexpr int loopFrames = 360;   // 12초 (ShowcaseEngine::loopMs)
     int stillFrame() const;

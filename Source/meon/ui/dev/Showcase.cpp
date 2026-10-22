@@ -2,6 +2,10 @@
 #include "ShowcaseEngine.h"
 #include "../AppRoot.h"
 #include "../screens/HomeScreen.h"
+#include "../screens/JamScreen.h"
+#include "../widgets/Button.h"
+#include "../widgets/Display.h"
+#include "../overlays/SettingsModal.h"
 #include "../widgets/Meter.h"
 #include "../../core/log/AppLog.h"
 #include "../../shell/ShellHooks.h"
@@ -20,18 +24,25 @@ namespace
     // 첫 화면 영상에서 새로 올라오는 메시지 (4초: 상대, 8초: 나)
     const char* const videoLine4 = "베이스 잘 들려요? 조금 올릴까요?";
     const char* const videoLine8 = "좋아요. 브릿지만 한 번 더 가요";
+
+    // 입장 요청을 보내는 사람 (request · joined 장면). showcase.json 의 join_requesters
+    const Showcase::CastMember joiner { "u_s_jiwoo", "지우", "bass", -2.0f, 20, 3, 0.0, 0.0, 3 };
+
+    // 파일 플레이어 (file 장면): 위치는 고정 (재생 중 모양만)
+    const char* const fileName = "반주 - 재즈 스윙 120.wav";
 }
 
 const std::vector<Showcase::CastMember>& Showcase::cast()
 {
-    // 핑은 거의 고정, 12초 주기 안에서 한 번씩만 1 ms 바뀐다 (18 ms 미만). 볼륨·패닝은 사람마다 조금씩 다르게
+    // 핑은 거의 고정, 12초 주기 안에서 한 번씩만 1 ms 바뀐다. 모든 값이 2~4 ms (5 ms 이상은 어디에도 나오지 않게).
+    // 볼륨·패닝은 사람마다 조금씩 다르게
     static const std::vector<CastMember> c {
-        { "u_s_minjun",  "민준", "guitar", -2.0f, -35,  7, 3400.0,  6100.0,  8 },
-        { "u_s_seoyeon", "서연", "vocal",   1.0f,  10,  9, 9900.0, 10900.0, 10 },
-        { "u_s_doyun",   "도윤", "drums",  -4.0f,   0,  6, 7000.0,  9100.0,  5 },
-        { "u_s_haeun",   "하은", "bass",   -1.0f, -15,  8,    0.0,     0.0,  8 },
-        { "u_s_jiho",    "지호", "guitar", -3.0f,  40, 11, 1200.0,  2900.0, 12 },
-        { "u_s_yuna",    "유나", "vocal",   0.0f, -10, 10, 5200.0,  6400.0, 11 },
+        { "u_s_minjun",  "민준", "guitar", -2.0f, -35, 3, 3400.0,  6100.0, 4 },
+        { "u_s_seoyeon", "서연", "vocal",   1.0f,  10, 2, 9900.0, 10900.0, 3 },
+        { "u_s_doyun",   "도윤", "drums",  -4.0f,   0, 3, 7000.0,  9100.0, 2 },
+        { "u_s_haeun",   "하은", "bass",   -1.0f, -15, 4,    0.0,     0.0, 4 },
+        { "u_s_jiho",    "지호", "guitar", -3.0f,  40, 4, 1200.0,  2900.0, 3 },
+        { "u_s_yuna",    "유나", "vocal",   0.0f, -10, 2, 5200.0,  6400.0, 3 },
     };
     return c;
 }
@@ -79,8 +90,12 @@ void Showcase::start()
     outDir.createDirectory();
     std::cerr << "SHOWCASE start scene=" << scene.toStdString() << " mode=" << mode.toStdString() << " out=" << outDir.getFullPathName().toStdString() << std::endl;
     if (scene == "jam") buildJam();
+    else if (scene == "request" || scene == "joined") { buildJam ("u_s_haeun"); buildRequest (scene == "joined"); }
+    else if (scene == "file" || scene == "file-empty") { buildJam(); buildFile (scene == "file"); }
     else if (scene == "rooms") buildHome (false);
+    else if (scene == "rooms-before") buildHome (false, false);
     else if (scene == "friends") buildHome (true);
+    else if (scene == "earguard") { buildHome (false, false); buildEarGuard(); }
     else if (scene == "chat") buildChat();
     else { fail ("unknown scene " + scene); return; }
     addCapture();
@@ -112,7 +127,7 @@ void Showcase::timerCallback()
 //==============================================================================
 // 장면
 
-void Showcase::buildJam()
+void Showcase::buildJam (const String& skip)
 {
     auto* jam = core.jam();
     if (jam == nullptr) { fail ("no jam session"); return; }
@@ -159,8 +174,9 @@ void Showcase::buildJam()
 
     // 들어오는 순서와 대화: 입장 안내 줄은 앞쪽에 몰려 위로 밀려 올라가고, 화면에는 마지막 입장(유나)부터 보인다
     const auto& c = cast();
-    auto join = [this, joinMember, connected] (const CastMember& m)
+    auto join = [this, joinMember, connected, skip] (const CastMember& m)
     {
+        if (skip == m.id) return;
         add (500, String ("join ") + m.id, [joinMember, &m] { joinMember (m); }, [connected, id = m.id] { return connected (id); });
     };
     join (c[0]); join (c[1]); join (c[2]);
@@ -175,24 +191,33 @@ void Showcase::buildJam()
     add (400, "chat 7", [say] { say ("u_s_seoyeon", "키 하나 올려도 될까요?"); });
     add (400, "chat 8", [mine] { mine ("좋아요, 그렇게 가요"); });
 
-    add (300, "mix", [jam]
+    add (300, "mix", [jam, skip]
     {
         for (auto& m : cast())
         {
+            if (skip == m.id) continue;
             jam->setMemberGainDb (m.id, m.gainDb);
             jam->setMemberPan (m.id, m.pan);
         }
     });
 }
 
-void Showcase::buildHome (bool friendsScene)
+void Showcase::buildHome (bool friendsScene, bool sendRequest)
 {
     add (300, "logged in", {}, [this]
     {
         const auto& s = core.store().state();
         return s.me.has_value() && root.getHome() != nullptr && ! s.publicRooms.empty() && ! s.friends.empty();
     });
-    add (200, "my rtt", [this] { core.store().setMyRtt (8); });
+    // 내 RTT 2 ms: 방장 RTT(1·2·4 ms, showcase.json)와 계수 0.7 로 예상 지연이 2~4 ms
+    add (200, "my rtt", [this] { core.store().setMyRtt (2); });
+    if (! sendRequest)
+    {
+        if (friendsScene)
+            add (300, "invite", [this] { if (auto* fake = core.fakeServer()) fake->devInviteMe(); },
+                 [this] { return ! core.store().state().invites.empty(); });
+        return;
+    }
     add (300, "request", [this]
     {
         core.home().joinRoom ("r_s_rock", [] (core::Result<core::JoinResult>) {});
@@ -205,6 +230,92 @@ void Showcase::buildHome (bool friendsScene)
     if (friendsScene)
         add (300, "invite", [this] { if (auto* fake = core.fakeServer()) fake->devInviteMe(); },
              [this] { return ! core.store().state().invites.empty(); });
+}
+
+void Showcase::buildRequest (bool accept)
+{
+    // 방장 시점: 지우(베이스)가 입장 요청을 보낸다. 정원은 7명까지라 하은을 뺀 6명 방에서 받는다 (수락할 수 있게).
+    // request = 입장 요청 목록을 연 채로, joined = 수락해서 지우가 멤버 목록 맨 아래에 들어온 뒤
+    auto* jam = core.jam();
+    if (jam == nullptr) return;
+    add (300, "join request", [this]
+    {
+        ShowcaseEngine::setPart (joiner.id, joiner.part);
+        ShowcaseEngine::setPing (joiner.id, joiner.pingMs, joiner.bumpFrom, joiner.bumpTo, joiner.bumpMs);
+        if (auto* fake = core.fakeServer()) fake->devJoinRequest();
+    }, [this] { return core.store().state().joinRequests.size() == 1; });
+    if (! accept)
+    {
+        add (300, "open requests", [this]
+        {
+            if (auto* b = findButton (target, String::fromUTF8 ("입장 요청"))) b->triggerClick();
+            else fail ("no request button");
+        }, [this] { return findType (target, "Popover") != nullptr; });
+        return;
+    }
+    add (300, "accept", [this]
+    {
+        core.room().acceptJoinRequest (core.store().state().joinRequests.front().id);
+    }, [jam]
+    {
+        for (auto& m : jam->members())
+            if (m.userId == joiner.id) return m.state == core::PeerState::State::connected;
+        return false;
+    });
+    add (300, "mix", [jam] { jam->setMemberGainDb (joiner.id, joiner.gainDb); jam->setMemberPan (joiner.id, joiner.pan); });
+}
+
+void Showcase::buildFile (bool load)
+{
+    // 오른쪽 패널을 파일 이름이 다 보이는 폭으로 넓힌다 (사용자가 경계를 끌어 넓히는 것과 같다. 저장하지 않음).
+    // file-empty 와 file 이 같은 폭이 되게 "파일 변경" 버튼 폭으로 잰다 (FilePlayer::paint 의 배치와 같은 계산)
+    auto* jam = core.jam();
+    if (jam == nullptr) return;
+    add (300, "side width", [this]
+    {
+        auto* js = root.getJamScreen();
+        if (js == nullptr) { fail ("no jam screen"); return; }
+        Button change { Button::Kind::small, String::fromUTF8 ("파일 변경") };
+        const int nameW = (int) std::ceil (textWidth (font (600, 14.0f), String::fromUTF8 (fileName)));
+        const int timeW = (int) std::ceil (textWidth (font (400, 12.0f), "00:00 / 00:00"));
+        const int need = 18 + nameW + 9 + timeW + 9 + change.getIdealWidth() + 18 + 4;
+        const int w = (need + 9) / 10 * 10;
+        js->setSideWidth (juce::jmax (js->sidePanelWidth(), w), false);
+        std::cerr << "SHOWCASE side width " << js->sidePanelWidth() << " (need " << need << ")" << std::endl;
+    });
+    if (! load) return;
+    add (300, "file", [jam]
+    {
+        jam->loadFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (String::fromUTF8 (fileName)));
+        jam->setFilePlaying (true);
+    }, [jam] { return jam->hasFile() && jam->isFilePlaying(); });
+}
+
+void Showcase::buildEarGuard()
+{
+    // 설정 › 합주 탭의 "귀 테러 방지" (보통 = 켜짐)
+    add (300, "ear guard", [this]
+    {
+        if (auto* jam = core.jam()) jam->setEarGuardLevel (1);
+        if (root.onOpenSettings) root.onOpenSettings ((int) SettingsModal::Tab::jam);
+    }, [this] { return findType (target, "SettingsModal") != nullptr; });
+}
+
+juce::Button* Showcase::findButton (juce::Component& c, const String& tooltip)
+{
+    if (auto* b = dynamic_cast<juce::Button*> (&c))
+        if (c.isShowing() && b->getTooltip() == tooltip) return b;
+    for (auto* child : c.getChildren())
+        if (auto* b = findButton (*child, tooltip)) return b;
+    return nullptr;
+}
+
+juce::Component* Showcase::findType (juce::Component& c, const String& typeSuffix)
+{
+    if (c.isVisible() && String (typeid (c).name()).contains (typeSuffix)) return &c;
+    for (auto* child : c.getChildren())
+        if (auto* f = findType (*child, typeSuffix)) return f;
+    return nullptr;
 }
 
 void Showcase::buildChat()
@@ -319,6 +430,13 @@ void Showcase::hideResizeCorner()
             child->setVisible (false);
 }
 
+void Showcase::collectPings (juce::Component& c, juce::Array<juce::var>& out)
+{
+    if (! c.isVisible()) return;
+    if (auto* p = dynamic_cast<PingBadge*> (&c)) out.add (p->getText());
+    for (auto* child : c.getChildren()) collectPings (*child, out);
+}
+
 void Showcase::collectMeters (juce::Component& c)
 {
     if (auto* m = dynamic_cast<Meter*> (&c)) meters.emplace_back (m);
@@ -392,6 +510,9 @@ namespace
         o->setProperty ("h", r.getHeight());
         o->setProperty ("visible", c.isVisible());
         if (auto* b = dynamic_cast<const juce::Button*> (&c)) o->setProperty ("text", b->getButtonText());
+        if (auto* p = dynamic_cast<const PingBadge*> (&c)) o->setProperty ("text", p->getText());
+        if (auto* t = dynamic_cast<const juce::SettableTooltipClient*> (&c))
+            if (auto tip = const_cast<juce::SettableTooltipClient*> (t)->getTooltip(); tip.isNotEmpty()) o->setProperty ("tooltip", tip);
         const int me = out.size();
         out.add (juce::var (o));
         if (! c.isVisible()) return;
@@ -436,6 +557,8 @@ void Showcase::videoFrame()
     if (frame >= frames)
     {
         writeLayout();
+        // 프레임마다 화면의 핑 글자 (후처리에서 2~4 ms 인지 검사)
+        outDir.getChildFile ("frames").getChildFile ("pings.json").replaceWithText (juce::JSON::toString (juce::var (framePings)));
         std::cerr << "SHOWCASE video done " << frames << " frames" << std::endl;
         if (onDone) onDone (0);
         return;
@@ -451,6 +574,9 @@ void Showcase::videoFrame()
         stepMeters (frame);
         const auto file = outDir.getChildFile ("frames").getChildFile (String (frame).paddedLeft ('0', 4) + ".png");
         if (! render (file)) { fail ("render " + file.getFullPathName()); return; }
+        juce::Array<juce::var> texts;
+        collectPings (target, texts);
+        framePings.add (texts);
         if (frame % 30 == 0) std::cerr << "SHOWCASE frame " << frame << std::endl;
         ++frame;
         juce::MessageManager::callAsync ([this, weak] { if (! weak.expired()) videoFrame(); });

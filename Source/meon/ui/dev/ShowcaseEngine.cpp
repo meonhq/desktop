@@ -159,7 +159,7 @@ std::vector<core::EnginePeer> ShowcaseEngine::peers() const
         core::EnginePeer p;
         p.user = u;
         p.connected = p.recvActive = p.sendActive = true;
-        int ping = 8;
+        int ping = 3;   // 정해 두지 않은 멤버도 2~4 ms 안
         if (auto it = pings().find (u); it != pings().end())
             ping = (t >= it->second.fromMs && t < it->second.toMs) ? it->second.bumpMs : it->second.baseMs;
         p.pingMs = (float) ping;
