@@ -797,6 +797,24 @@ public:
             expectEquals (errField (x.call ("POST", "/me/rtt", json::obj ({ { "aoo_rtt_ms", 10001 } }), a.access)), juce::String ("aoo_rtt_ms"));
             expectEquals (x.call ("POST", "/me/rtt", json::obj ({ { "aoo_rtt_ms", 10000 } }), a.access).status, 204);
 
+            // 행동 기록 (서버 EVENTS.md 2장): 언제나 204, 50개를 넘으면 400 events (하나도 남기지 않음), 인증 전 계정도 받는다
+            {
+                juce::Array<juce::var> evs;
+                evs.add (json::obj ({ { "type", "peer_audio_failed" }, { "room_id", room }, { "props", json::obj ({ { "reason", "aoo_joinfail" } }) } }));
+                evs.add (json::obj ({ { "type", "peer_audio_connected" }, { "props", json::obj ({ { "ms_to_connect", 2400 } }) } }));
+                expectEquals (x.call ("POST", "/events", json::obj ({ { "events", juce::var (evs) } }), a.access).status, 204);
+                expectEquals ((int) x.server.receivedEvents().size(), 2);
+                juce::Array<juce::var> many;
+                for (int i = 0; i < 51; ++i) many.add (json::obj ({ { "type", "app_opened" } }));
+                expectEquals (errField (x.call ("POST", "/events", json::obj ({ { "events", juce::var (many) } }), a.access)), juce::String ("events"));
+                expectEquals ((int) x.server.receivedEvents().size(), 2);
+                expectEquals (x.call ("POST", "/events", json::obj ({ { "events", juce::var (evs) } })).status, 401, "인증 필요");
+                auto s = x.call ("POST", "/auth/signup", json::obj ({ { "email", "unverified@example.com" }, { "username", "unverified1" },
+                                                                    { "password", "abcd123!" }, { "agreed_terms", true } }));
+                expectEquals (x.call ("POST", "/events", json::obj ({ { "events", juce::var (evs) } }), s.body["access_token"].toString()).status, 204,
+                              "이메일 인증 전에도 받는다");
+            }
+
             // 4.2 PATCH /me
             expectEquals (errField (x.call ("PATCH", "/me", json::obj ({ { "username", "x" } }), a.access)), juce::String ("username"));
             expectEquals (errField (x.call ("PATCH", "/me", json::obj ({ { "nickname", juce::var() } }), a.access)), juce::String ("nickname"));

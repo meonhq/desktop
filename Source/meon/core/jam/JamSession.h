@@ -16,6 +16,7 @@
 #include "../log/ChatLog.h"
 #include "../api/fake/FakeMeonServer.h"
 #include <map>
+#include <set>
 
 namespace meon::core
 {
@@ -84,6 +85,8 @@ public:
         std::function<void()> peersAllInterrupted;
         /** 채팅 기록(로그 폴더/chat/*.txt)에 찍는 벽시계. 비어 있으면 지금 시각 (테스트가 넣는다) */
         ChatLog::Clock wallClock;
+        /** 행동 기록을 서버로 보낸다 (POST /v1/events, 서버 EVENTS.md 2장). 상대와 소리가 이어졌는지·못 이었는지 (중계 필요 측정) */
+        std::function<void (const juce::String& type, const juce::String& roomId, const juce::var& props)> reportEvent;
     };
 
     JamSession (Engine&, AppStore&, Scheduler&, Options);
@@ -199,6 +202,8 @@ private:
 
     struct Mix { bool muted = false; float gainDb = 0.0f; int pan = 0; bool defaultsApplied = false; };
     std::map<juce::String, PeerState> peerStates;
+    std::set<juce::String> audioFailReported;   // 이번 멤버 구간에 peer_audio_failed 를 보낸 상대 (peerStates 와 같이 지운다)
+    void reportPeerAudioFailed (const juce::String& user, const char* reason);
     std::map<juce::String, Mix> mix;
     std::map<juce::String, int> previewPings;
     SilenceDetector silence;

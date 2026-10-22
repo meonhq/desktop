@@ -107,6 +107,8 @@ public:
     std::function<int (const HttpRequest&)> slowForTest;
     bool isMember (const juce::String& roomId, const juce::String& userId) const;
     int pendingInviteCountFor (const juce::String& userId) const;
+    /** 앱이 보낸 행동 기록 (POST /events, EVENTS.md 2장). 최근 500개 */
+    const std::vector<juce::var>& receivedEvents() const { return clientEvents; }
 
     // 규칙 상수 (API.md)
     static constexpr int inviteDelayMs = 3000;
@@ -212,6 +214,8 @@ private:
     int seq = 0;
     juce::int64 dropUntil = 0;
     int connectionGen = 0;
+
+    std::vector<juce::var> clientEvents;   // POST /events 로 받은 기록 (receivedEvents)
 
     // 각본 (FakeWorld.cpp)
     juce::var worldData;

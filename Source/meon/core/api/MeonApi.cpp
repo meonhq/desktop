@@ -375,6 +375,23 @@ void MeonApi::sendLatencyTelemetry (const String& roomId, int est, int mine, int
               true, cb);
 }
 
+void MeonApi::sendEvents (const juce::Array<var>& events, Callback<Done> cb)
+{
+    callDone ("POST", "/events", json::obj ({ { "events", var (events) } }), true, cb);
+}
+
+bool MeonApi::sendEventsBlocking (const juce::Array<var>& events, int timeoutMs)
+{
+    HttpRequest req;
+    req.method = "POST";
+    req.path = "/events";
+    req.body = json::obj ({ { "events", var (events) } });
+    req.build = build;
+    req.accessToken = tokens.accessToken;
+    const auto r = transport.sendBlocking (req, timeoutMs);
+    return isSuccess (r.status);
+}
+
 void MeonApi::listJoinRequests (const String& roomId, Callback<std::vector<JoinRequest>> cb)
 {
     request ("GET", "/rooms/" + enc (roomId) + "/join-requests", {}, true, [cb] (const HttpResponse& r)

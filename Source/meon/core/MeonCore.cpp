@@ -55,6 +55,15 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
     }
 
     meonApi = std::make_unique<MeonApi> (*rest, options.build);
+    // 행동 기록: 모았다가 몇 초 뒤 한 번에 보내고 잊는다 (실패해도 다시 보내지 않는다, EVENTS.md 2장)
+    events = std::make_unique<EventReporter> (sched, [this] (const juce::Array<juce::var>& batch)
+    {
+        const int n = batch.size();
+        meonApi->sendEvents (batch, [n] (Result<Done> r)
+        {
+            if (! r.ok()) AppLog::write ("api", LOGTXT ("행동 기록 보내기 실패 (") + juce::String (n) + LOGTXT ("개, 다시 보내지 않음): ") + errorKey (r.code()));
+        });
+    });
     rt = std::make_unique<Realtime> (*realtimeLink, sched, options.build);
     rt->addListener (&appStore);
     // 로그인 토큰은 서버마다 다른 항목에 둔다 (가짜·로컬·운영 토큰이 섞이지 않게)
@@ -113,6 +122,15 @@ void MeonCore::leaveOnQuit()
     AppLog::write ("room", LOGTXT ("종료: 방 나가기가 서버에 닿지 않음 → 다음 실행 때 이 방에 돌아가지 않게 표시") + (ok ? juce::String() : juce::String (LOGTXT (" (표시 저장 실패)"))));
 }
 
+void MeonCore::sendEventsOnQuit()
+{
+    // 몇 초 안에 보내려던 기록이 남았으면 (예: 소리 연결 실패를 보고 바로 앱을 닫음) 기다리지 않고 지금 보낸다
+    if (events == nullptr || events->pendingCount() == 0 || ! meonApi->hasSession()) return;
+    const auto batch = events->takeBatch();
+    const bool ok = meonApi->sendEventsBlocking (batch, quitEventsTimeoutMs);
+    AppLog::write ("api", LOGTXT ("종료: 남은 행동 기록 ") + juce::String (batch.size()) + LOGTXT ("개 보냄") + (ok ? juce::String() : juce::String (LOGTXT (" (닿지 않음)"))));
+}
+
 void MeonCore::createFake()
 {
     fake = std::make_unique<FakeMeonServer> (sched, options.fake);
@@ -169,6 +187,10 @@ void MeonCore::attachEngine (std::unique_ptr<Engine> e, JamSession::Options o)
     // 상대 소리가 모두 끊기면 내 인터넷을 의심한다: 서버 실시간 연결을 바로 확인하고(Realtime::checkNow),
     // 합주 서버에 TCP 로 닿는지 본다 (와이파이가 조용히 끊기면 엔진은 한참 동안 끊김을 모른다)
     o.peersAllInterrupted = [this] { rt->checkNow(); };
+    o.reportEvent = [this] (const juce::String& type, const juce::String& roomId, const juce::var& props)
+    {
+        if (events != nullptr) events->add (type, roomId, props);
+    };
     o.checkReachable = [] (const juce::String& host, int port, std::function<void (bool)> done)
     {
         juce::Thread::launch ([host, port, done]
@@ -235,6 +257,7 @@ void MeonCore::stateChanged (StateKey k)
 MeonCore::~MeonCore()
 {
     AppLog::write ("app", LOGTXT ("종료 중"));
+    sendEventsOnQuit();
     leaveOnQuit();
     appStore.onRoomLeftOnQuit = nullptr;
     rtt.reset();

@@ -12,6 +12,7 @@
 #include "auth/TokenStore.h"
 #include "auth/RefreshLock.h"
 #include "util/Scheduler.h"
+#include "log/EventReporter.h"
 #include "jam/JamSession.h"
 #include "jam/RttReporter.h"
 #include "jam/HomeMonitorGate.h"
@@ -95,9 +96,12 @@ private:
     std::unique_ptr<JamSession> jamSession;
     std::unique_ptr<HomeMonitorGate> homeMonitorGate;   // 홈 모니터링은 로그인을 마친 홈 화면에서만
     std::unique_ptr<RttReporter> rtt;
+    std::unique_ptr<EventReporter> events;   // 행동 기록 (POST /v1/events). 지금은 상대와 소리 연결 성공·실패만
+    void sendEventsOnQuit();
     juce::File leftOnQuitFile;   // 정상 종료 때 나가기가 서버에 닿지 않은 방 (다음 실행이 그 방에 돌아가지 않게)
 
     static constexpr int quitLeaveTimeoutMs = 2500;           // 종료 때 나가기 응답을 기다리는 최대 시간
+    static constexpr int quitEventsTimeoutMs = 1000;          // 종료 때 남은 행동 기록을 보내고 기다리는 최대 시간
     static constexpr juce::int64 leftOnQuitValidMs = 40000;   // 서버의 끊김 유예 30초(API 5.6) + 여유. 그 뒤엔 서버가 이미 퇴장시켰다
     void readLeftOnQuit();   // 켤 때: 표시가 있으면 다음 첫 hello 에서 그 방에 들어가지 않는다
     void leaveOnQuit();      // 소멸자 (정상 종료)

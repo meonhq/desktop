@@ -1,5 +1,6 @@
 #include "JamSession.h"
 #include "../log/AppLog.h"
+#include "../api/ApiJson.h"
 #include "../model/RoomFilter.h"
 
 namespace meon::core
@@ -133,6 +134,7 @@ void JamSession::enter (const RoomDetail& room, bool movedFromOtherDevice)
     connection = room.connection;
     myId = connection.aooUsername;
     peerStates.clear();
+    audioFailReported.clear();
     mix.clear();
     serverLost = serverUnreachable = peersSilent = connectFailing = false;
     serverLinkMaybeChanged();
@@ -230,6 +232,7 @@ void JamSession::exit (const String& reason)
     chatChannel.end();
     latencyProbe.reset();
     peerStates.clear();
+    audioFailReported.clear();
     mix.clear();
     currentRoomId = {};
     connection = {};
@@ -269,6 +272,8 @@ void JamSession::applyAllowed()
         if (peerStates.count (u) == 0) peerStates.emplace (u, PeerState (now));
     for (auto it = peerStates.begin(); it != peerStates.end();)
         it = others.contains (it->first) ? std::next (it) : peerStates.erase (it);
+    for (auto it = audioFailReported.begin(); it != audioFailReported.end();)
+        it = peerStates.count (*it) != 0 ? std::next (it) : audioFailReported.erase (it);
 }
 
 //==============================================================================
@@ -487,6 +492,22 @@ void JamSession::enginePeerJoined (const String& user)
 void JamSession::enginePeerJoinFailed (const String& user)
 {
     if (sessionLog.isActive()) sessionLog.addEvent ("peerJoinFailed", user);
+    // AOO 가 그 상대와 길 뚫기(홀 펀칭)에 실패했다: 중계가 필요한 경우를 세려고 바로 보낸다 (15초 판정을 기다리지 않는다)
+    if (phase == Phase::idle) return;
+    if (auto it = peerStates.find (user); it != peerStates.end())
+    {
+        const auto st = it->second.get();
+        if (st == PeerState::State::connecting || st == PeerState::State::failed)
+            reportPeerAudioFailed (user, "aoo_joinfail");
+    }
+}
+
+void JamSession::reportPeerAudioFailed (const String& user, const char* reason)
+{
+    // 한 멤버 구간(입장 또는 그 멤버가 들어온 때부터 나갈 때까지)에 한 번만
+    if (! audioFailReported.insert (user).second) return;
+    if (options.reportEvent)
+        options.reportEvent ("peer_audio_failed", currentRoomId, json::obj ({ { "reason", juce::String (reason) } }));
 }
 
 void JamSession::enginePeerLeft (const String& user)
@@ -610,6 +631,10 @@ void JamSession::tick()
             case PeerState::Change::connected:
                 membersChangedNow = needProfile = true;
                 if (sessionLog.isActive()) sessionLog.addEvent ("peerConnected", user);
+                // 처음 이어졌을 때 한 번 (연결 실패 판정 뒤에 늦게 이어진 것도. 그때 ms_to_connect 는 15초 이상)
+                if (options.reportEvent)
+                    options.reportEvent ("peer_audio_connected", currentRoomId,
+                                         json::obj ({ { "ms_to_connect", std::max<juce::int64> (0, now - ps.firstSeenMs()) } }));
                 if (phase == Phase::inRoom) chatChannel.addSystem (nameOf (user) + juce::String (juce::CharPointer_UTF8 ("님이 입장했어요")), user);
                 break;
             case PeerState::Change::interrupted:
@@ -623,6 +648,8 @@ void JamSession::tick()
             case PeerState::Change::failed:
                 membersChangedNow = true;
                 if (sessionLog.isActive()) sessionLog.addEvent ("peerJoinTimeout", user);
+                // AOO 실패를 이미 보냈으면 다시 보내지 않는다. 합주 서버와 끊긴 동안이면 상대 문제가 아니다
+                reportPeerAudioFailed (user, isJamServerDown() ? "aoo_server_lost" : "timeout");
                 break;
             case PeerState::Change::none:
                 break;

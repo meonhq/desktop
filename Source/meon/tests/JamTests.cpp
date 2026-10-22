@@ -4,6 +4,8 @@
 #include "../core/jam/HomeMonitorGate.h"
 #include "../core/auth/TokenStore.h"
 #include "../core/api/MeonApi.h"
+#include "../core/api/ApiJson.h"
+#include "../core/log/EventReporter.h"
 #include "../core/api/Realtime.h"
 #include "../core/home/HomeController.h"
 #include "../core/model/RoomFilter.h"
@@ -664,6 +666,131 @@ public:
             expectEquals ((int) sent.size(), 2, "방장은 보내지 않는다");
             store.setCurrentRoom (std::nullopt);
             o.logFolder.deleteRecursively();
+        }
+
+        beginTest ("Peer audio events (POST /v1/events): connected + ms_to_connect, failed once per member stay (aoo_joinfail, timeout, aoo_server_lost)");
+        {
+            ManualScheduler clock;
+            AppStore store;
+            FakeEngine engine;
+            JamSession::Options o;
+            o.logFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("meon-test-logs-peer-events");
+            struct Ev { juce::String type, roomId; juce::var props; };
+            std::vector<Ev> evs;
+            o.reportEvent = [&] (const juce::String& t, const juce::String& r, const juce::var& p) { evs.push_back ({ t, r, p }); };
+            JamSession jam (engine, store, clock, o);
+            auto count = [&] (const juce::String& type, const juce::String& reason = {})
+            {
+                int n = 0;
+                for (auto& e : evs)
+                    if (e.type == type && (reason.isEmpty() || e.props.getProperty ("reason", "").toString() == reason)) ++n;
+                return n;
+            };
+            auto joinFail = [&] (const juce::String& u) { engine.ls.call ([u] (Engine::Listener& l) { l.enginePeerJoinFailed (u); }); };
+
+            RoomDetail room;
+            room.id = "r_ev";
+            room.hostId = "u_me";
+            room.connection.aooHost = "127.0.0.1";
+            room.connection.aooPort = 10999;
+            room.connection.groupName = "g";
+            room.connection.aooUsername = "u_me";
+            room.connection.members = { "u_me", "u_ok", "u_nat", "u_gone" };
+            store.setCurrentRoom (room);
+            engine.finishConnect();
+            engine.finishJoin();
+
+            // 2.4초 뒤 이어진 상대: 한 번, 입장부터 이어질 때까지 ms
+            clock.advance (2400);
+            engine.peerArrives ("u_ok");
+            clock.advance (1000);
+            expectEquals (count ("peer_audio_connected"), 1);
+            if (! evs.empty())
+            {
+                expectEquals (evs[0].roomId, juce::String ("r_ev"));
+                const auto ms = (int) evs[0].props.getProperty ("ms_to_connect", -1);
+                expect (ms >= 2400 && ms <= 3400, "ms_to_connect " + juce::String (ms));
+            }
+
+            // AOO 가 길 뚫기에 실패: 15초를 기다리지 않고 바로, 이유 aoo_joinfail. 같은 알림이 또 와도 한 번
+            joinFail ("u_nat");
+            joinFail ("u_nat");
+            expectEquals (count ("peer_audio_failed", "aoo_joinfail"), 1);
+            // 이어진 상대의 실패 알림, 멤버가 아닌 사람의 알림은 보내지 않는다
+            joinFail ("u_ok");
+            joinFail ("u_stranger");
+            expectEquals (count ("peer_audio_failed"), 1);
+
+            // 15초: 아무 소식 없는 상대는 timeout. 이미 보낸 u_nat 는 다시 보내지 않는다
+            clock.advance (PeerState::joinTimeoutMs);
+            expectEquals (count ("peer_audio_failed", "timeout"), 1);
+            expectEquals (count ("peer_audio_failed"), 2);
+
+            // 실패 뒤 늦게 이어지면 connected 를 보낸다 (ms_to_connect 15초 이상이라 늦은 연결과 구별된다)
+            engine.peerArrives ("u_nat");
+            clock.advance (1000);
+            expectEquals (count ("peer_audio_connected"), 2);
+            expect ((int) evs.back().props.getProperty ("ms_to_connect", 0) >= PeerState::joinTimeoutMs);
+
+            // 멤버가 나갔다 다시 들어오면 새 구간. 그동안 합주 서버와 끊겼으면 이유 aoo_server_lost
+            room.connection.members = { "u_me", "u_ok", "u_nat" };
+            store.setCurrentRoom (room);
+            clock.advance (500);
+            engine.serverLost();
+            expect (jam.isJamServerDown());
+            room.connection.members = { "u_me", "u_ok", "u_nat", "u_gone" };
+            store.setCurrentRoom (room);
+            clock.advance (PeerState::joinTimeoutMs + 1000);
+            expectEquals (count ("peer_audio_failed", "aoo_server_lost"), 1);
+            expectEquals (count ("peer_audio_failed"), 3);
+            for (auto& e : evs) expectEquals (e.roomId, juce::String ("r_ev"));
+
+            store.setCurrentRoom (std::nullopt);
+            o.logFolder.deleteRecursively();
+        }
+
+        beginTest ("EventReporter: waits 3 s then sends once, 50 per request, keeps the newest 200, at/room_id/props; takeBatch for quit");
+        {
+            ManualScheduler clock;
+            std::vector<juce::Array<juce::var>> sent;
+            EventReporter rep (clock, [&] (const juce::Array<juce::var>& b) { sent.push_back (b); });
+
+            rep.add ("peer_audio_failed", "r_1", json::obj ({ { "reason", "aoo_joinfail" } }));
+            rep.add ("peer_audio_connected");
+            clock.advance (EventReporter::delayMs - 1);
+            expect (sent.empty(), "모으는 동안은 보내지 않는다");
+            clock.advance (1);
+            expectEquals ((int) sent.size(), 1);
+            if (sent.size() == 1)
+            {
+                expectEquals (sent[0].size(), 2);
+                const auto& e = sent[0].getReference (0);
+                expectEquals (e.getProperty ("type", "").toString(), juce::String ("peer_audio_failed"));
+                expectEquals (e.getProperty ("room_id", "").toString(), juce::String ("r_1"));
+                expectEquals (e.getProperty ("props", juce::var()).getProperty ("reason", "").toString(), juce::String ("aoo_joinfail"));
+                expect (juce::Time::fromISO8601 (e.getProperty ("at", "").toString()).toMilliseconds() == clock.nowMs() - (EventReporter::delayMs),
+                        "at = 기록한 때 (RFC3339)");
+                const auto& e2 = sent[0].getReference (1);
+                expect (! e2.hasProperty ("room_id") && ! e2.hasProperty ("props"), "빈 값은 넣지 않는다");
+            }
+            expectEquals (rep.pendingCount(), 0);
+
+            sent.clear();
+            for (int i = 0; i < 230; ++i) rep.add ("peer_audio_connected", {}, json::obj ({ { "ms_to_connect", i } }));
+            expectEquals (rep.pendingCount(), EventReporter::maxPending);
+            clock.advance (EventReporter::delayMs);
+            expectEquals ((int) sent.size(), 4);   // 200 = 50 × 4
+            for (auto& b : sent) expect (b.size() <= EventReporter::maxBatch);
+            if (! sent.empty())
+                expectEquals ((int) sent[0].getReference (0).getProperty ("props", juce::var()).getProperty ("ms_to_connect", -1), 30);   // 오래된 30개를 버림
+
+            sent.clear();
+            rep.add ("peer_audio_failed", "r_2", json::obj ({ { "reason", "timeout" } }));
+            const auto batch = rep.takeBatch();
+            expectEquals (batch.size(), 1);
+            expectEquals (rep.pendingCount(), 0);
+            clock.advance (EventReporter::delayMs);
+            expect (sent.empty(), "꺼낸 것은 다시 보내지 않는다");
         }
 
         beginTest ("Connection: jam server down = engine says lost, or every partner silent and the AOO server unreachable (checks the realtime link too)");
