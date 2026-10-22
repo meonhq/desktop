@@ -108,6 +108,9 @@ public:
     };
     virtual DeviceInfo deviceInfo() const { return {}; }
 
+    /** E10: 쓰는 쪽(사람 추가·삭제, 형식 바꾸기)과 겹쳐 엔진이 상대 소리 섞기·보내기를 건너뛴 오디오 블록 수 (누적, 로그용) */
+    virtual std::uint64_t peerMixSkippedBlocks() const { return 0; }
+
     virtual bool sendChat (const EngineChat&) = 0;
 
     // 파일 재생 (합주 화면의 파일 플레이어, 내 소리와 섞여 모두에게 간다). 기본은 없음 (테스트 엔진)

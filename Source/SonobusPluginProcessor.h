@@ -22,6 +22,7 @@
 
 #include "SoundboardChannelProcessor.h"
 #include "meon/MeonEarGuard.h"
+#include "meon/MeonRtGate.h"
 
 typedef MVerb<float> MVerbFloat;
 
@@ -686,6 +687,9 @@ public:
     /** MEON 귀 테러 방지 (내 모니터 최종 출력에만 적용) */
     meon::EarGuard & getEarGuard() { return mEarGuard; }
 
+    /** MEON E10: 쓰는 쪽이 일하는 중이라 상대 소리 섞기·보내기를 건너뛴 오디오 블록 수 (진단용) */
+    uint64_t getPeerMixSkippedBlocks() const { return mRtGate.skippedBlocks(); }
+
     foleys::LevelMeterSource & getFilePlaybackMeterSource() { return filePlaybackMeterSource; }
     foleys::LevelMeterSource & getMetronomeMeterSource() { return metMeterSource; }
 
@@ -1174,6 +1178,9 @@ private:
     
     CriticalSection  mEndpointsLock;
     ReadWriteLock    mCoreLock;
+    // MEON E10: 오디오 스레드는 mCoreLock 대신 이 관문만 본다 (meon/MeonRtGate.h).
+    // mCoreLock 쓰기 잠금은 모두 meon::ScopedGatedWrite 로 잡는다 (쓰기 잠금 → 오디오 스레드가 나갈 때까지 기다림)
+    meon::RtGate     mRtGate;
     CriticalSection  mClientLock;
     CriticalSection  mSourceFormatLock;
 

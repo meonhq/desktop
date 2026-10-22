@@ -917,7 +917,7 @@ void SonobusAudioProcessor::initializeAoo(int udpPort)
     aoo_initialize();
     
 
-    const ScopedWriteLock sl (mCoreLock);        
+    const meon::ScopedGatedWrite sl (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
 
     //mAooSink.reset(aoo::isink::create(1));
 
@@ -1072,7 +1072,7 @@ void SonobusAudioProcessor::cleanupAoo()
 
     
     {
-        const ScopedWriteLock sl (mCoreLock);        
+        const meon::ScopedGatedWrite sl (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
 
         mAooClient.reset();
 
@@ -1093,7 +1093,7 @@ void SonobusAudioProcessor::startAooServer()
     stopAooServer();
     
     {
-        const ScopedWriteLock sl (mCoreLock);
+        const meon::ScopedGatedWrite sl (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
         int32_t err;
         mAooServer.reset(aoo::net::iserver::create(10999, &err));
         
@@ -1115,7 +1115,7 @@ void SonobusAudioProcessor::stopAooServer()
         mAooServer->quit();
         mServerThread->stopThread(400);    
 
-        const ScopedWriteLock sl (mCoreLock);
+        const meon::ScopedGatedWrite sl (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
         mAooServer.reset();
     }
 }
@@ -3809,6 +3809,9 @@ int32_t SonobusAudioProcessor::handleSinkEvents(const aoo_event ** events, int32
 
             RemotePeer * peer = findRemotePeer(es, sinkId);
             if (peer) {
+                // MEON E10: 받는 형식(채널 수·미터·채널 그룹·sink 설정)을 바꾸는 동안 오디오 스레드는 이 사람을 읽지 않는다.
+                // 오디오 스레드가 지금 블록을 끝낼 때까지 기다린 뒤에 바꾸고, 리스너를 부르기 전에 연다
+                meon::RtGate::Writer formatWrite (mRtGate);
                 aoo_format_storage f;
                 if (peer->oursink->get_source_format(e->endpoint, e->id, f) > 0) {
                     DBG("Got source format event from " << es->ipaddr << ":" << es->port << "  " <<  e->id  << "  channels: " << f.header.nchannels);
@@ -3906,6 +3909,7 @@ int32_t SonobusAudioProcessor::handleSinkEvents(const aoo_event ** events, int32
                         //peer->recvFormatIndex = findFormatIndex(codec, 0, fmt->bitdepth);
                     }
                     
+                    formatWrite.release(); // MEON E10
                     clientListeners.call(&SonobusAudioProcessor::ClientListener::aooClientPeerChangedState, this, "format");
                 }                
             }
@@ -4707,7 +4711,7 @@ bool SonobusAudioProcessor::removeAllRemotePeers()
 
 
     {
-        const ScopedWriteLock slw (mCoreLock);
+        const meon::ScopedGatedWrite slw (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
         mRemotePeers.clearQuick(false); // not deleting objects here
     }
     
@@ -4749,7 +4753,7 @@ bool SonobusAudioProcessor::removeRemotePeer(int index, bool sendblock)
             std::unique_ptr<RemotePeer> removed(remote);
 
             {
-                const ScopedWriteLock slw (mCoreLock);
+                const meon::ScopedGatedWrite slw (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
                 mRemotePeers.remove(index, false); // not deleting in scoped write lock
             }
 
@@ -6166,7 +6170,7 @@ SonobusAudioProcessor::RemotePeer * SonobusAudioProcessor::doAddRemotePeerIfNece
 
         // now add it, once initialized
         {
-            const ScopedWriteLock slw (mCoreLock);
+            const meon::ScopedGatedWrite slw (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
             mRemotePeers.add(retpeer);
         }
 
@@ -6321,7 +6325,7 @@ bool SonobusAudioProcessor::removeAllRemotePeersWithEndpoint(EndpointState * end
             didremove = true;
 
             {
-                const ScopedWriteLock slw (mCoreLock);
+                const meon::ScopedGatedWrite slw (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
 
                 removed.add(mRemotePeers.removeAndReturn(i));
             }
@@ -6348,7 +6352,7 @@ bool SonobusAudioProcessor::doRemoveRemotePeerIfNecessary(EndpointState * endpoi
             commitCacheForPeer(s);
 
             {
-                const ScopedWriteLock slw (mCoreLock);
+                const meon::ScopedGatedWrite slw (mCoreLock, mRtGate); // MEON E10: 오디오 스레드가 나간 뒤에 바꾼다
                 removed.add(mRemotePeers.removeAndReturn(i));
             }
             break;
@@ -7165,6 +7169,8 @@ void SonobusAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
 void SonobusAudioProcessor::setupSourceFormatsForAll()
 {
     const ScopedReadLock sl (mCoreLock);
+    // MEON E10: 모든 사람의 보내는·받는 형식과 버퍼를 바꾸는 동안 오디오 스레드는 사람들을 읽지 않는다 (지금 블록이 끝난 뒤에 바꾼다)
+    const meon::RtGate::Writer formatWrite (mRtGate);
     //const ScopedLock slformat (mSourceFormatLock);
 
     double sampleRate = getSampleRate();
@@ -7861,9 +7867,12 @@ void SonobusAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
 
 
     // push data for going out
+    // MEON E10: 엔진 잠금(mCoreLock) 대신 관문을 본다. 쓰는 쪽(사람 추가·삭제, 형식 바꾸기)이 일하는 중이면 기다리지 않고
+    // 이 블록만 상대 소리 섞기·보내기를 건너뛴다 (tempBuffer 는 비어 있음). 내 소리(셀프 모니터·메트로놈·파일)는 이 구간 밖이라 그대로 나간다.
+    tempBuffer.clear(0, numSamples);
+
+    if (const meon::RtGate::Reader peersGate (mRtGate); peersGate.entered())
     {
-        const ScopedReadLock sl (mCoreLock);        
-        
         //mAooSource->process( buffer.getArrayOfReadPointers(), numSamples, t);
         
         for (auto & remote : mRemotePeers) 
@@ -7874,7 +7883,6 @@ void SonobusAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
             }
         }
         
-        tempBuffer.clear(0, numSamples);
         
         int rindex = 0;
         
@@ -7907,7 +7915,7 @@ void SonobusAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
             
             {
                 // get audio data coming in from outside into tempbuf
-                const ScopedReadLock sl (remote->sinkLock); // not contended, should be able to get rid of
+                // MEON E10: sinkLock 을 쓰는 곳(받는 형식 바꾸기)은 모두 관문 안이라, 여기서는 잠그지 않는다
 
                 // just in case, should be exceedingly rare this is necessary
                 if (remote->workBuffer.getNumSamples() < currSamplesPerBlock
@@ -8143,7 +8151,7 @@ void SonobusAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
             }
         }
         
-        // end scoped lock
+        // end of gated peer section (MEON E10)
     }
 
 
