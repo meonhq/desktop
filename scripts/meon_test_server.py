@@ -4,11 +4,15 @@
     python3 scripts/meon_test_server.py 18080      # 127.0.0.1:18080
     MEON_TEST_MOCK=http://127.0.0.1:18080 MEON_Tests Transport
 
-경로 (모두 /v1 아래):
+경로 (API 는 /v1 아래):
     ANY  /v1/echo/...          받은 요청을 JSON 으로 돌려준다 {method, path, query, headers, body}
     ANY  /v1/status/<code>     그 상태 코드와 {"error":{"code":"x_<code>","message":"m"}} 본문. 429 면 Retry-After: 7
     GET  /v1/ws                WebSocket. 받은 텍스트를 그대로 돌려준다.
                                {"close": 4000} 을 받으면 그 코드로 닫는다. {"drop": true} 면 닫는 프레임 없이 끊는다
+업데이트 받기 시험 (UpdateFetch: 리디렉션을 따르지 않기, 크기 한도):
+    GET  /dl/bytes/<n>         n 바이트 ('a')
+    GET  /dl/redirect          302 → /dl/bytes/10
+    GET  /dl/status/<code>     그 상태 코드, 빈 본문
 """
 import base64
 import hashlib
@@ -59,6 +63,8 @@ class Handler(BaseHTTPRequestHandler):
                 "body": parsed,
                 "body_length": len(body),
             })
+        if u.path.startswith("/dl/"):
+            return self._dl(u.path)
         if u.path.startswith("/v1/status/"):
             code = int(u.path.rsplit("/", 1)[1])
             extra = {"Retry-After": "7"} if code == 429 else None
@@ -71,6 +77,23 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": {"code": "not_found", "message": "없음"}})
 
     do_GET = do_POST = do_PATCH = do_DELETE = do_PUT = _handle
+
+    def _dl(self, path):
+        def reply(status, data=b"", extra=None):
+            self.send_response(status)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(data)
+        if path.startswith("/dl/bytes/"):
+            return reply(200, b"a" * int(path.rsplit("/", 1)[1]))
+        if path == "/dl/redirect":
+            return reply(302, b"", {"Location": "/dl/bytes/10"})
+        if path.startswith("/dl/status/"):
+            return reply(int(path.rsplit("/", 1)[1]))
+        return reply(404)
 
     # ---- WebSocket (RFC 6455, 텍스트·닫기·핑만) ----
 

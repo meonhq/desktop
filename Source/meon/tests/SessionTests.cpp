@@ -18,8 +18,9 @@ namespace
     {
         Sink* sink = nullptr;
         int opens = 0, closes = 0;
+        std::vector<juce::var> sent;
         void open (Sink* s) override { sink = s; ++opens; }
-        void send (const juce::var&) override {}
+        void send (const juce::var& m) override { sent.push_back (m); }
         void close() override { ++closes; }
     };
 
@@ -104,6 +105,31 @@ public:
         using S = AuthController::Step;
 
         //==========================================================================
+        beginTest ("auth: build, and the optional mode/os (API 10.1) when given");
+        {
+            ManualScheduler clock;
+            StubLink link;
+            Realtime rt (link, clock, 977);
+            rt.setClientInfo ("app", "mac");
+            rt.connect ([] { return juce::String ("t"); });
+            link.sink->transportOpened();
+            expect (! link.sent.empty());
+            const auto a = link.sent.front();
+            expectEquals (a["type"].toString(), juce::String ("auth"));
+            expectEquals (a["access_token"].toString(), juce::String ("t"));
+            expectEquals ((int) a["build"], 977);
+            expectEquals (a["mode"].toString(), juce::String ("app"));
+            expectEquals (a["os"].toString(), juce::String ("mac"));
+
+            StubLink link2;
+            Realtime rt2 (link2, clock, 1);
+            rt2.connect ([] { return juce::String ("t"); });
+            link2.sink->transportOpened();
+            expect (! link2.sent.empty());
+            expect (! link2.sent.front().getDynamicObject()->hasProperty ("mode"), "정하지 않으면 보내지 않는다");
+            expect (! link2.sent.front().getDynamicObject()->hasProperty ("os"));
+        }
+
         beginTest ("4000: no reconnect, link replaced");
         {
             ManualScheduler clock;

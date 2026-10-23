@@ -84,6 +84,7 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     }
 
     updater = std::make_unique<MeonUpdater>();
+    updater->setChannel (settings->getUpdateChannel());
     updater->onDownloaded = [this] { installUpdate(); };
 
    #if MEON_DEV_OPTIONS
@@ -131,12 +132,22 @@ void MeonEditor::timerCallback()
 
 void MeonEditor::stateChanged (core::StateKey k)
 {
-    // 서버가 더 새 빌드를 알려 주면 바로 확인한다 (build.txt 와 같은 번호 체계)
+    // 서버가 더 새 빌드를 알려 주면(latest_build, config.updated) 확인한다 (매니페스트·build.txt 와 같은 번호 체계).
+    // 접속 중인 앱이 한꺼번에 확인하지 않게 0–60초 무작위로 늦춘다 (배포 설계 3.7). 이미 기다리는 확인이 있으면 더 걸지 않는다
     if (k != core::StateKey::config) return;
     const auto& cfg = core.store().state().config;
     if (cfg.latestBuild > MeonUpdater::currentBuild() && MeonUpdater::currentBuild() > 0
-        && updater->getState() != MeonUpdater::State::Available)
-        checkForUpdate();
+        && updater->getState() != MeonUpdater::State::Available && ! updateCheckQueued)
+    {
+        updateCheckQueued = true;
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (juce::Random::getSystemRandom().nextInt (60 * 1000), [safe]
+        {
+            if (safe == nullptr) return;
+            safe->updateCheckQueued = false;
+            safe->checkForUpdate();
+        });
+    }
 }
 
 MeonEditor::~MeonEditor()
@@ -197,6 +208,17 @@ ui::SettingsModal::UpdateHooks MeonEditor::settingsUpdateHooks()
         };
         hooks.progress = [this] { return updater->getProgress(); };
         hooks.latestBuild = [this] { return updater->getLatestBuild(); };
+        hooks.problem = [this]
+        {
+            using P = ui::SettingsModal::UpdateHooks::Problem;
+            switch (updater->getProblem())
+            {
+                case MeonUpdater::Problem::needsMove: return P::needsMove;
+                case MeonUpdater::Problem::osTooOld:  return P::osTooOld;
+                case MeonUpdater::Problem::none:      break;
+            }
+            return P::none;
+        };
         hooks.check = [this] { checkForUpdate(); };
         hooks.start = [this] { startUpdate(); };
     }
@@ -278,7 +300,8 @@ juce::String MeonEditor::getVersionText() const
 void MeonEditor::authStepChanged (core::AuthController::Step s)
 {
     if (devPreview) return;
-    // 강제 업데이트 화면: 새 버전을 바로 확인해 둔다 (버튼을 누르면 곧바로 받기)
+    // 강제 업데이트 화면: 새 버전을 바로 확인해 둔다 (버튼을 누르면 곧바로 받기). 이때는 단계적 배포(rollout)를 무시한다
+    updater->setForced (s == core::AuthController::Step::outdated);
     if (s == core::AuthController::Step::outdated) checkForUpdate();
     updateOnboarding();
 }
@@ -379,6 +402,7 @@ void MeonEditor::showAppRoot()
         };
         hooks.progress = [this] { return updater->getProgress(); };
         hooks.latestBuild = [this] { return updater->getLatestBuild(); };
+        hooks.needsMove = [this] { return updater->getProblem() == MeonUpdater::Problem::needsMove; };
         hooks.start = [this] { startUpdate(); };
     }
     appRoot = std::make_unique<ui::AppRoot> (core, std::move (hooks));

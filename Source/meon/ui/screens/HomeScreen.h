@@ -29,6 +29,7 @@ public:
         std::function<State()> state;
         std::function<float()> progress;      // 0~1, 모르면 음수
         std::function<int()> latestBuild;
+        std::function<bool()> needsMove;      // macOS: 앱 자리에 쓸 수 없어 받지 못함 (응용 프로그램 폴더로 옮겨야 한다)
         std::function<void()> start;
     };
 
@@ -84,7 +85,8 @@ private:
 
     // 배너
     bool updateDismissed = false;
-    Button later { Button::Kind::small, TXT ("나중에") }, updateNow { Button::Kind::smallPrimary, TXT ("업데이트") };
+    Button later { Button::Kind::small, TXT ("나중에") }, updateNow { Button::Kind::smallPrimary, TXT ("업데이트") },
+           directDownload { Button::Kind::small, TXT ("직접 내려받기") };   // 받기 실패: meon.co.kr/download
     UpdateHooks::State updateState() const;
     bool showUpdate() const;
     int bannersHeight() const;

@@ -65,6 +65,13 @@ MeonCore::MeonCore (Options o) : options (std::move (o))
         });
     });
     rt = std::make_unique<Realtime> (*realtimeLink, sched, options.build);
+   #if JUCE_MAC
+    rt->setClientInfo (options.plugin ? "plugin" : "app", "mac");
+   #elif JUCE_WINDOWS
+    rt->setClientInfo (options.plugin ? "plugin" : "app", "windows");
+   #else
+    rt->setClientInfo (options.plugin ? "plugin" : "app", "linux");
+   #endif
     rt->addListener (&appStore);
     // 로그인 토큰은 서버마다 다른 항목에 둔다 (가짜·로컬·운영 토큰이 섞이지 않게)
     // 소개 페이지 캡처는 메모리에만 둔다 (CI 의 빈 HOME 에서 macOS 키체인·Windows 자격 증명을 건드리지 않게)

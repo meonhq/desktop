@@ -36,6 +36,10 @@ public:
     bool isChatOpen() const;
     void setChatOpen (bool open);
 
+    /** 자동 업데이트 채널 "stable" | "beta" (배포 설계 D6). 처음 이 값을 정할 때 설정 파일이 이미 있었으면(브리지 전부터 쓰던 앱,
+        출시 전 테스터) beta, 새로 설치했으면 stable. 바꾸는 화면은 아직 없다 (설정 파일의 updateChannel) */
+    juce::String getUpdateChannel() const;
+
     void save();
 
     /** 리메이크 core 가 쓰는 키 (sendMuted, sendGainDb, bufferMode, selfMonitorApp/Plugin, keepMasterVolume, masterVolumeDb …) */

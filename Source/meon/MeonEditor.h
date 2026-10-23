@@ -100,6 +100,7 @@ private:
     // 업데이트 (버그 #16): 켤 때 + 6시간마다 확인, 서버 config 의 latest_build 가 내 빌드보다 크면 바로 확인.
     // 받기·설치는 "업데이트"를 눌렀을 때만, 합주 중에는 막는다
     juce::int64 lastUpdateCheck = 0;
+    bool updateCheckQueued = false;   // config.updated 로 무작위 지연 확인을 걸어 둠
     void checkForUpdate();
     void timerCallback() override;
     void stateChanged (core::StateKey) override;

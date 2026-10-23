@@ -28,7 +28,21 @@ juce::File MeonSettings::getSettingsFile()
 
 MeonSettings::MeonSettings()
 {
+    const bool existed = getSettingsFile().existsAsFile();
     props = std::make_unique<juce::PropertiesFile> (makeOptions());
+
+    // 업데이트 채널 (D6): 값이 없는 설정 파일은 브리지 전부터 쓰던 앱(출시 전 테스터) → beta. 새로 설치하면 stable.
+    // 한 번 정하면 그대로 둔다 (독립 앱과 플러그인이 같은 파일을 쓰므로 먼저 켠 쪽이 정한다)
+    if (! props->containsKey ("updateChannel"))
+    {
+        props->setValue ("updateChannel", existed ? "beta" : "stable");
+        save();
+    }
+}
+
+juce::String MeonSettings::getUpdateChannel() const
+{
+    return props->getValue ("updateChannel", "stable") == "beta" ? "beta" : "stable";
 }
 
 MeonSettings::~MeonSettings()

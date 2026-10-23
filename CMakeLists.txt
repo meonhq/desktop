@@ -467,6 +467,11 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonAudio.h
         Source/meon/MeonUpdater.cpp
         Source/meon/MeonUpdater.h
+        Source/meon/MeonUpdateCheck.cpp
+        Source/meon/MeonUpdateCheck.h
+        Source/meon/MeonUpdateManifest.cpp
+        Source/meon/MeonUpdateManifest.h
+        Source/meon/MeonUpdateKeys.h
         Source/meon/MeonCrashDump.cpp
         Source/meon/MeonCrashDump.h
         Source/meon/shell/ShellHooks.h
@@ -711,6 +716,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
             
             ff_meters
             meon_ixwebsocket
+            meon_monocypher
 
             ${target_name}_SBData
             MEON_Fixtures
@@ -780,9 +786,11 @@ if (MEON_TESTS)
         Source/meon/tests/RtGateTests.cpp
         Source/meon/tests/NetBufAutoTests.cpp
         Source/meon/tests/UpdateManifestTests.cpp
+        Source/meon/tests/UpdateCheckTests.cpp
         deps/aoo/lib/src/net_utils.cpp   # AOO 소켓 시험 (E8·E9)
         Source/meon/MeonEarGuard.cpp
         Source/meon/MeonUpdateManifest.cpp
+        Source/meon/MeonUpdateCheck.cpp
         ${MEON_CORE_SOURCES})
     target_include_directories(MEON_Tests PRIVATE deps/aoo/lib/src)
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)

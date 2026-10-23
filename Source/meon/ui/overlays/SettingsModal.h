@@ -20,9 +20,12 @@ public:
     struct UpdateHooks
     {
         enum class State { idle, checking, upToDate, available, downloading, installing, failed };
+        /** 다시 시도해도 풀리지 않는 이유: needsMove (macOS: 앱 자리에 쓸 수 없음), osTooOld (새 빌드의 최소 OS 보다 낮음) */
+        enum class Problem { none, needsMove, osTooOld };
         std::function<State()> state;
         std::function<float()> progress;
         std::function<int()> latestBuild;
+        std::function<Problem()> problem;
         std::function<void()> check, start;
     };
 

@@ -1,5 +1,6 @@
 #include "HomeScreen.h"
 #include "../Messages.h"
+#include "../Links.h"
 #include "../theme/Icons.h"
 #include "../../core/api/ApiJson.h"
 #include "../../shell/ShellHooks.h"
@@ -460,8 +461,10 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
 
     addChildComponent (later);
     addChildComponent (updateNow);
+    addChildComponent (directDownload);
     later.onPress = [this] { updateDismissed = true; resized(); repaint(); };
     updateNow.onPress = [this] { if (update.start) update.start(); };
+    directDownload.onPress = [] { links::open (links::download()); };
 
     // 공개 방
     addAndMakeVisible (roomsCard);
@@ -583,9 +586,22 @@ void HomeScreen::refreshHeader()
     const bool upd = showUpdate();
     const auto st = updateState();
     const auto& cfg = core.store().state().config;
-    later.setVisible (upd && st == UpdateHooks::State::available && cfg.minBuild <= core.buildNumber());
-    updateNow.setVisible (upd && (st == UpdateHooks::State::available || st == UpdateHooks::State::failed));
-    updateNow.setButtonText (st == UpdateHooks::State::failed ? TXT ("다시 시도") : TXT ("업데이트"));
+    // 받기 실패: "다시 시도" 와 웹에서 "직접 내려받기". 앱 자리에 쓸 수 없는 실패(macOS)는 다시 시도해도 같아서 직접 받기만
+    const bool failed = st == UpdateHooks::State::failed;
+    const bool needsMove = failed && update.needsMove && update.needsMove();
+    const bool showLater = upd && st == UpdateHooks::State::available && cfg.minBuild <= core.buildNumber();
+    const bool showNow = upd && (st == UpdateHooks::State::available || (failed && ! needsMove));
+    const bool showDirect = upd && failed;
+    const auto nowText = failed ? TXT ("다시 시도") : TXT ("업데이트");
+    // 버튼이 나타나거나 글자가 바뀌면 배너 버튼 자리를 다시 잡는다 (배너 높이는 그대로라 resized 가 저절로 불리지 않는다)
+    const bool relayoutButtons = later.isVisible() != showLater || updateNow.isVisible() != showNow
+                                 || directDownload.isVisible() != showDirect || updateNow.getButtonText() != nowText;
+    later.setVisible (showLater);
+    updateNow.setVisible (showNow);
+    updateNow.setButtonText (nowText);
+    directDownload.setVisible (showDirect);
+    if (relayoutButtons && getWidth() > 0)
+        resized();
 }
 
 void HomeScreen::refreshAudio()
@@ -1058,6 +1074,8 @@ void HomeScreen::paint (juce::Graphics& g)
             note = ver + TXT (" 내려받는 중") + (p >= 0.0f ? TXT (" · ") + juce::String ((int) std::floor (p * 100.0f)) + "%" : juce::String());
         else if (st == UpdateHooks::State::installing)
             note = TXT ("설치를 마쳤어요 · 다시 시작하는 중…");
+        else if (st == UpdateHooks::State::failed && update.needsMove && update.needsMove())
+            note = TXT ("Meon을 응용 프로그램 폴더로 옮긴 뒤 다시 켜 주세요");
         g.setColour (col::inkSub);
         g.setFont (font (400, 12.0f));
         g.drawText (note, metric::padX + w1 + 9, y, getWidth() / 2, 37, juce::Justification::centredLeft, true);
@@ -1100,6 +1118,13 @@ void HomeScreen::resized()
             const int w = later.getIdealWidth();
             x -= w;
             later.setBounds (x, top + 9, w, metric::smallH);
+            x -= metric::gap;
+        }
+        if (directDownload.isVisible())
+        {
+            const int w = directDownload.getIdealWidth();
+            x -= w;
+            directDownload.setBounds (x, top + 9, w, metric::smallH);
         }
     }
     area.removeFromTop (bannersHeight());

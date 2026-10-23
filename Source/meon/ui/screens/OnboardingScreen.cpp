@@ -933,6 +933,7 @@ struct UpdateView : StepView
     Text status { {}, 400, 12.0f, col::inkSub };
     Button go { Button::Kind::large, TXT ("업데이트") };
     Button download { Button::Kind::largeSecondary, TXT ("새 버전 내려받기") };   // 업데이터를 못 쓰는 독립 앱 (빌드 0 등)
+    Button direct { Button::Kind::linkSmall, TXT ("meon.co.kr 에서 직접 내려받기") };   // 업데이터가 있어도 웹으로 (배포 설계 5.1)
     bool canUpdate = false;
 
     UpdateView (OnboardingScreen& o) : StepView (o)
@@ -950,6 +951,8 @@ struct UpdateView : StepView
         {
             addAndMakeVisible (go);
             addAndMakeVisible (status);
+            addAndMakeVisible (direct);
+            direct.onPress = [] { links::open (links::download()); };
             go.onPress = [this]
             {
                 auto& h = owner.update;
@@ -991,6 +994,13 @@ struct UpdateView : StepView
             case S::installing:  label = TXT ("설치하는 중…"); enabled = false; break;
             case S::failed:      text = TXT ("업데이트하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요"); label = TXT ("다시 시도"); break;
         }
+        // 다시 시도해도 풀리지 않는 이유 (MeonUpdater::Problem)
+        using P = SettingsModal::UpdateHooks::Problem;
+        const auto problem = h.problem ? h.problem() : P::none;
+        if (st == S::failed && problem == P::needsMove)
+            text = TXT ("지금 있는 곳에서는 Meon을 바꿀 수 없어요. 응용 프로그램 폴더로 옮긴 뒤 다시 켜 주세요");
+        else if (st == S::upToDate && problem == P::osTooOld)
+            text = TXT ("새 버전은 이 컴퓨터의 운영체제 버전을 지원하지 않아요. 운영체제를 업데이트한 뒤 다시 확인해 주세요");
         go.setButtonText (label);
         go.setDimmed (! enabled);
         go.setEnabled (enabled);
@@ -1006,6 +1016,10 @@ struct UpdateView : StepView
             f.gap (blockGap);
             f.put (go, metric::bigButtonH);
             if (status.getText().isNotEmpty()) { f.gap (9); f.put (status, status.getHeightForWidth (w)); }
+            f.gap (12);
+            const int dw = direct.getIdealWidth();
+            direct.setBounds ((w - dw) / 2, f.y, dw, 17);
+            f.gap (17);
         }
         else if (download.isVisible())
         {
