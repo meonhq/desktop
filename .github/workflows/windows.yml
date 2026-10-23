@@ -3,14 +3,17 @@
 # - 릴리스 빌드는 'windows-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 설치 파일을 받을 수 있다:
 #   https://github.com/meonhq/desktop/releases/download/windows-latest/meon-setup.exe
 # - 같은 파일을 MEON-Installer.exe 로도 올린다. 이미 설치된 앱이 자동 업데이트로 받는 이름이라 바꾸지 않는다.
+# - 릴리스는 이어서 publish-dl 작업이 dl.meon.co.kr 에도 올린다 (서명한 매니페스트, 배포 설계 DISTRIBUTION_PLAN 3.6·3.9).
+#   브리지 이후 앱은 dl 매니페스트를 먼저 보고, 검증된 것이 없을 때만 위의 build.txt 를 본다.
 name: Windows build
 
 # 언제 도는가
 # - main push, PR: 빌드만 한다. 릴리스는 건드리지 않는다. 빌드 번호는 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다)
-# - 릴리스: 'v*' 태그 push, 또는 main 에서 수동 실행(workflow_dispatch). 이때만 빌드 번호(run_number)를 앱에 넣고
-#   windows-latest 를 갱신한다. 다른 브랜치에서 수동 실행하면 빌드만 한다 (덜 된 브랜치가 배포되지 않게).
+# - 릴리스: 'v*' 태그 push, 또는 main 에서 수동 실행(workflow_dispatch). 이때만 빌드 번호를 앱에 넣고
+#   windows-latest 를 갱신한 뒤 dl.meon.co.kr 에 올린다. 다른 브랜치에서 수동 실행하면 빌드만 한다 (덜 된 브랜치가 배포되지 않게).
+# - 빌드 번호 = 그 커밋까지의 커밋 수 (git rev-list --count, 배포 설계 D3). 같은 커밋이면 mac.yml 과 같은 번호다.
+#   이미 낸 번호보다 커야 한다 (아래 '빌드 번호' 단계가 막는다). 이 파일 이름은 바꾸지 않는다 (예전 run_number 와의 약속, CLAUDE.md).
 # - docs/** 만 바뀐 push·PR 은 건너뛴다. (태그 push 에는 경로 필터가 적용되지 않는다)
-# - 이 파일 이름을 바꾸면 run_number 가 1 부터 다시 시작해 자동 업데이트가 깨진다. 바꾸지 않는다.
 on:
   push:
     branches: [main]
@@ -30,15 +33,19 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: write
+    outputs:
+      build_id: ${{ steps.num.outputs.build_id }}
+      version: ${{ steps.ver.outputs.version }}
     env:
       RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
-      # 앱에 넣는 빌드 번호. 릴리스만 run_number, 나머지는 0
-      BUILD_ID: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && github.run_number || 0 }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 릴리스는 빌드 번호(커밋 수)를 세려고 이력을 모두 받는다
+          fetch-depth: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && '0' || '1' }}
 
       - name: ASIO SDK 받기
         run: |
@@ -54,9 +61,29 @@ jobs:
           V=$(sed -n 's/^project(MEON VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
+      - name: 빌드 번호
+        id: num
+        # 릴리스: 커밋 수 (두 플랫폼 같은 번호, D3). 그 밖은 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다).
+        # 감시 (배포 설계 4.1): windows-latest 의 build.txt 보다 커야 하고, mac-latest 보다 작으면 옛 커밋이라 멈춘다.
+        # desktop 은 10000 미만 (그 위는 meon-app). dl 매니페스트 감시는 publish-dl 이 한다
+        run: |
+          if [ "$RELEASE" != "true" ]; then echo "build_id=0" >> "$GITHUB_OUTPUT"; echo "BUILD_ID=0" >> "$GITHUB_ENV"; exit 0; fi
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch --unshallow --quiet origin; fi
+          N=$(git rev-list --count HEAD)
+          read_build() { curl -fsSL --retry 3 "https://github.com/meonhq/desktop/releases/download/$1/build.txt" 2>/dev/null | tr -d '[:space:]'; }
+          OWN=$(read_build windows-latest); OTHER=$(read_build mac-latest)
+          case "$OWN" in ''|*[!0-9]*) echo "::warning::windows-latest 의 build.txt 를 읽지 못함"; OWN=0;; esac
+          case "$OTHER" in ''|*[!0-9]*) echo "::warning::mac-latest 의 build.txt 를 읽지 못함"; OTHER=0;; esac
+          echo "빌드 번호 $N (windows-latest $OWN, mac-latest $OTHER)"
+          if [ "$N" -ge 10000 ]; then echo "::error::빌드 번호 $N 이 10000 이상 (desktop 범위를 넘음)"; exit 1; fi
+          if [ "$N" -le "$OWN" ]; then echo "::error::빌드 번호 $N 이 windows-latest 의 $OWN 보다 크지 않음 (같은 커밋을 다시 릴리스했거나 옛 커밋)"; exit 1; fi
+          if [ "$N" -lt "$OTHER" ]; then echo "::error::빌드 번호 $N 이 mac-latest 의 $OTHER 보다 작음 (옛 커밋)"; exit 1; fi
+          echo "build_id=$N" >> "$GITHUB_OUTPUT"
+          echo "BUILD_ID=$N" >> "$GITHUB_ENV"
+
       - name: CMake 구성
-        # MEON_BUILD_ID: 앱이 자동 업데이트에서 windows-latest 의 build.txt 와 비교하는 빌드 번호
-        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -DMEON_BUILD_ID=${{ env.BUILD_ID }}
+        # MEON_BUILD_ID: 앱이 자동 업데이트에서 매니페스트·build.txt 와 비교하는 빌드 번호
+        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -DMEON_BUILD_ID=${{ steps.num.outputs.build_id }}
 
       - name: 빌드
         run: cmake --build build --config Release --parallel --target MEON_Standalone MEON_VST3
@@ -82,6 +109,7 @@ jobs:
           MEON_TEST_MOCK=http://127.0.0.1:18080 "$T" Transport
           MEON_TEST_TLS=1 "$T" TransportTls
           "$T" Aoo   # AOO 소켓: 끊긴 연결에 써도 SIGPIPE 없음(E8), 거부된 연결은 실패(E9)
+          "$T" Update   # 업데이트 매니페스트 검증(Ed25519·sha256)과 확인 순서를 이 플랫폼 컴파일러로 빌드한 것으로
 
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
@@ -122,10 +150,55 @@ jobs:
         run: |
           cp release/instoutput/meon-*-setup.exe meon-setup.exe
           cp meon-setup.exe MEON-Installer.exe
-          NOTES="${{ github.ref_name }} $(git rev-parse --short HEAD) 빌드 (v${{ steps.ver.outputs.version }}, build ${{ env.BUILD_ID }})"
+          NOTES="${{ github.ref_name }} $(git rev-parse --short HEAD) 빌드 (v${{ steps.ver.outputs.version }}, build ${{ steps.num.outputs.build_id }})"
           gh release delete windows-latest --yes --cleanup-tag || true
           gh release create windows-latest meon-setup.exe MEON-Installer.exe --prerelease --target "$GITHUB_SHA" \
             --title "Meon Windows (최신 릴리스)" --notes "$NOTES"
           # 앱의 업데이트 확인용 빌드 번호. 설치 파일이 다 올라간 뒤에 올려야 앱이 반쯤 올라간 파일을 받지 않는다.
-          echo "${{ env.BUILD_ID }}" > build.txt
+          echo "${{ steps.num.outputs.build_id }}" > build.txt
           gh release upload windows-latest build.txt
+
+  publish-dl:
+    # dl.meon.co.kr 에 올린다 (배포 설계 3.6·3.9, scripts/dl_publish.sh): 빌드 파일 → CDN 으로 sha256 확인 → release.json → 채널 매니페스트 마지막.
+    # 릴리스일 때만, 빌드 작업(GitHub 릴리스, build.txt 마지막)이 끝난 뒤. 비밀값은 이 작업만 받는다 (Environment dl-release: main·v* 태그만).
+    # 서명한 매니페스트는 올리기 전에 앱과 같은 코드·같은 키 헤더(MEON_ManifestTool)로 검증한다.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    environment: dl-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 패키지 설치
+        # 검증 도구는 JUCE(juce_core) 로 빌드한다. 프로젝트 구성에 linux.yml 과 같은 패키지가 필요하다
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev libopus-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev \
+            libgl1-mesa-dev libcurl4-openssl-dev
+
+      - name: 검증 도구 빌드 (앱과 같은 확인 코드·키 헤더)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMEON_BUILD_ID=0 -DMEON_TESTS=OFF
+          cmake --build build --target MEON_ManifestTool
+          echo "TOOL=$PWD/build/MEON_ManifestTool_artefacts/Release/MEON_ManifestTool" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MEON-${{ needs.build.outputs.version }}-windows-${{ github.run_number }}
+          path: artifacts
+
+      - name: dl.meon.co.kr 에 올리기
+        env:
+          BUILD_ID: ${{ needs.build.outputs.build_id }}
+          VERSION: ${{ needs.build.outputs.version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          SIGNING_KEY: ${{ secrets.DL_SIGNING_KEY_GPL1 }}
+        run: bash scripts/dl_publish.sh windows artifacts

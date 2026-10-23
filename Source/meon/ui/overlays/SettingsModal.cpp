@@ -1128,7 +1128,14 @@ namespace
         AboutPage (SettingsModal& o, core::MeonCore& c, SettingsModal::UpdateHooks& u) : Page (o), core (c), update (u)
         {
             add (verRow);
-            if (! core.isPlugin() && update.state) verRow.setControl (&updateBtn, 0);
+            if (! core.isPlugin() && update.state)
+            {
+                verRow.setControl (&updateBtn, 0);
+                verRow.setBelow (&directBox, [] (int) { return 17; });   // 받지 못했을 때만 보인다 (tick)
+                directBox.link = &directLink;
+                directBox.addAndMakeVisible (directLink);
+                directLink.onPress = [] { links::open (links::download()); };
+            }
             add (logRow).setControl (&openLogs, openLogs.getIdealWidth());
             add (licRow).setControl (&licToggle, licToggle.getIdealWidth());
             licRow.setBelow (&licBox, [this] (int w) { return licTop (w) + licViewH + 12; });
@@ -1263,9 +1270,23 @@ namespace
                     case S::failed:      desc = ver + TXT (" · 새 버전을 받지 못했어요"); label = TXT ("다시 시도"); break;
                     case S::idle:        label = TXT ("업데이트 확인"); break;
                 }
+                // 다시 시도해도 풀리지 않는 이유 (MeonUpdater::Problem)
+                using P = SettingsModal::UpdateHooks::Problem;
+                const auto problem = update.problem ? update.problem() : P::none;
+                if (st == S::failed && problem == P::needsMove)
+                    desc = ver + TXT (" · 지금 있는 곳에서는 업데이트할 수 없어요. Meon을 응용 프로그램 폴더로 옮긴 뒤 다시 켜 주세요");
+                else if (st == S::upToDate && problem == P::osTooOld)
+                    desc = ver + TXT (" · 새 버전은 이 컴퓨터의 운영체제 버전을 지원하지 않아요");
                 updateBtn.setButtonText (label);
                 updateBtn.setDimmed (st == S::available && inRoom);
                 verRow.controlW = updateBtn.getIdealWidth();
+                // 받지 못했으면 웹에서 직접 받는 길 (배포 설계 5.1·6.1)
+                const bool showDirect = st == S::failed || problem != P::none;
+                if (directBox.isVisible() != showDirect)
+                {
+                    directBox.setVisible (showDirect);
+                    relayout();
+                }
             }
             if (verRow.desc != desc) { verRow.desc = desc; relayout(); }
             verRow.resized();
@@ -1295,6 +1316,12 @@ namespace
                            logRow { TXT ("로그 폴더"), TXT ("문제가 생겼을 때 문의에 로그 파일을 함께 보내주세요") },
                            licRow { TXT ("오픈소스 라이선스") },
                            askRow { TXT ("문의"), TXT ("디스코드 #문의하기 채널로 연결돼요") };
+        struct DirectBox : juce::Component
+        {
+            Button* link = nullptr;
+            void resized() override { if (link != nullptr) link->setBounds (0, 0, link->getIdealWidth(), getHeight()); }
+        } directBox;
+        Button directLink { Button::Kind::linkSmall, TXT ("meon.co.kr 에서 직접 내려받기") };
         Button updateBtn { Button::Kind::small, TXT ("업데이트 확인") }, openLogs { Button::Kind::small, TXT ("폴더 열기") },
                licToggle { Button::Kind::small, TXT ("보기") }, discord { Button::Kind::small, TXT ("디스코드 열기") };
         Box licBox;

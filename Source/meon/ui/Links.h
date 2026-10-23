@@ -10,15 +10,9 @@ namespace meon::ui::links
     /** 서버 설정(config.discord_url)이 비어 있을 때 쓰는 디스코드 초대 주소 */
     inline const char* discordFallback() { return "https://discord.gg/vtGQpnc2HQ"; }
 
-    /** 사람이 내려받는 설치 파일 (릴리스의 meon.dmg / meon-setup.exe) */
-    inline const char* download()
-    {
-       #if JUCE_WINDOWS
-        return "https://github.com/meonhq/desktop/releases/download/windows-latest/meon-setup.exe";
-       #else
-        return "https://github.com/meonhq/desktop/releases/download/mac-latest/meon.dmg";
-       #endif
-    }
+    /** 사람이 새 버전을 내려받는 웹 페이지 (배포 설계 3.8: OS 를 보고 dl.meon.co.kr 의 설치 파일로 잇는다).
+        강제 업데이트·업데이트 실패 화면의 "직접 내려받기" 와 업데이터가 없는 빌드의 "새 버전 내려받기" */
+    inline const char* download() { return "https://meon.co.kr/download"; }
 
     inline void open (const juce::String& url) { juce::URL (url).launchInDefaultBrowser(); }
 }

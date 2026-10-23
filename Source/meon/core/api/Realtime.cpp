@@ -228,7 +228,10 @@ void Realtime::transportOpened()
     transportOpen = true;
     lastReceivedMs = scheduler.nowMs();
     const auto token = tokenProvider ? tokenProvider() : String();
-    transport.send (json::obj ({ { "type", "auth" }, { "access_token", token }, { "build", build } }));
+    auto auth = json::obj ({ { "type", "auth" }, { "access_token", token }, { "build", build } });
+    if (clientMode.isNotEmpty()) auth.getDynamicObject()->setProperty ("mode", clientMode);
+    if (clientOs.isNotEmpty())   auth.getDynamicObject()->setProperty ("os", clientOs);
+    transport.send (auth);
     scheduleHeartbeat();
 }
 

@@ -70,6 +70,10 @@ public:
     Realtime (RealtimeTransport&, Scheduler&, int buildNumber);
     ~Realtime() override;
 
+    /** auth 메시지의 선택 필드 (API 10.1): mode "app" | "plugin", os "mac" | "windows" | "linux". 비우면 보내지 않는다.
+        서버는 행동 기록에만 쓴다 (플랫폼·빌드별로 남은 옛 앱 보기, 배포 설계 4.2) */
+    void setClientInfo (const juce::String& mode, const juce::String& os) { clientMode = mode; clientOs = os; }
+
     void addListener (Listener* l)      { listeners.add (l); }
     void removeListener (Listener* l)   { listeners.remove (l); }
 
@@ -101,6 +105,7 @@ private:
     RealtimeTransport& transport;
     Scheduler& scheduler;
     const int build;
+    juce::String clientMode, clientOs;
     juce::ListenerList<Listener> listeners;
     std::function<juce::String()> tokenProvider;
     Link link = Link::offline;

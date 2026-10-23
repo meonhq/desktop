@@ -1,0 +1,116 @@
+# 릴리스를 밖에서 확인한다 (배포 설계 DISTRIBUTION_PLAN 5.2 B3). 비밀값을 쓰지 않고 공개 주소만 읽는다.
+# - dl 작업: dl.meon.co.kr 의 매니페스트 4개를 앱과 같은 코드로 검증하고, 파일의 크기·sha256, GitHub build.txt 와 같은 번호,
+#   바꾼 매니페스트·다른 채널/플랫폼 자리 거절을 본다 (scripts/dl_verify.sh).
+# - mac·windows 작업: 릴리스한 앱의 업데이트 확인을 진짜 실행 파일로 본다 ("dl 을 막으면 GitHub").
+# - 지금 GitHub 릴리스(mac-latest·windows-latest)의 앱을 받아 러너에서 켠다. 새로 설치한 앱이라 채널은 stable.
+#   1) hosts 로 dl.meon.co.kr 을 막고 켠다 → update.log 에 "dl 에 검증된 매니페스트 없음 … → GitHub" 와 "출처 github"
+#   2) 막은 것을 풀고 다시 켠다 → "출처 dl: stable build …"
+#   켜고 30초 뒤 끈다 (확인은 켜고 3초 뒤). 로그인하지 않으므로 서버에는 설정(/config) 요청만 간다.
+# - 비밀값을 쓰지 않고, 릴리스·dl 에 아무것도 쓰지 않는다. main 에서 수동 실행만.
+name: update e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dl:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 패키지 설치
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev libopus-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev \
+            libgl1-mesa-dev libcurl4-openssl-dev
+
+      - name: 검증 도구 빌드 (앱과 같은 확인 코드·키 헤더)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMEON_BUILD_ID=0 -DMEON_TESTS=OFF
+          cmake --build build --target MEON_ManifestTool
+          echo "TOOL=$PWD/build/MEON_ManifestTool_artefacts/Release/MEON_ManifestTool" >> "$GITHUB_ENV"
+
+      - name: 매니페스트·파일 확인
+        run: bash scripts/dl_verify.sh
+
+  mac:
+    runs-on: macos-26
+    steps:
+      - name: 릴리스 앱 받기 (mac-latest)
+        run: |
+          curl -fsSL -o MEON-mac.zip https://github.com/meonhq/desktop/releases/download/mac-latest/MEON-mac.zip
+          echo "build.txt: $(curl -fsSL https://github.com/meonhq/desktop/releases/download/mac-latest/build.txt)"
+          ditto -x -k MEON-mac.zip app
+          ls app
+
+      - name: dl 을 막고 켜기 → GitHub 로 대체
+        run: |
+          sudo sh -c 'printf "127.0.0.1 dl.meon.co.kr\n::1 dl.meon.co.kr\n" >> /etc/hosts'
+          sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder || true
+          curl -sS -m 5 -o /dev/null https://dl.meon.co.kr/ && { echo "::error::dl 이 막히지 않음"; exit 1; } || echo "dl 막힘 확인"
+          LOG="$HOME/Library/Logs/MEON/update.log"
+          rm -f "$LOG"
+          app/Meon.app/Contents/MacOS/Meon > run1.log 2>&1 &
+          sleep 30; kill $! || true; sleep 2
+          cat "$LOG"
+          grep -q "→ GitHub" "$LOG" && grep -q "출처 github" "$LOG" || { echo "::error::GitHub 로 대체하지 않음"; exit 1; }
+
+      - name: 풀고 다시 켜기 → dl
+        run: |
+          sudo sed -i '' '/dl\.meon\.co\.kr/d' /etc/hosts
+          sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder || true
+          LOG="$HOME/Library/Logs/MEON/update.log"
+          rm -f "$LOG"
+          app/Meon.app/Contents/MacOS/Meon > run2.log 2>&1 &
+          sleep 30; kill $! || true; sleep 2
+          cat "$LOG"
+          grep -q "출처 dl: stable build" "$LOG" || { echo "::error::dl 매니페스트를 쓰지 않음"; exit 1; }
+
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: 릴리스 앱 받기·설치 (windows-latest)
+        run: |
+          Invoke-WebRequest -Uri https://github.com/meonhq/desktop/releases/download/windows-latest/meon-setup.exe -OutFile meon-setup.exe
+          Write-Host ("build.txt: " + (Invoke-WebRequest -Uri https://github.com/meonhq/desktop/releases/download/windows-latest/build.txt).Content)
+          $p = Start-Process -FilePath .\meon-setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru -Wait
+          Write-Host "설치 종료 코드 $($p.ExitCode)"
+          Test-Path "C:\Program Files\Meon\Meon.exe"
+
+      - name: dl 을 막고 켜기 → GitHub 로 대체
+        run: |
+          Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "`n127.0.0.1 dl.meon.co.kr`n::1 dl.meon.co.kr"
+          ipconfig /flushdns | Out-Null
+          $log = Join-Path $env:APPDATA "MEON\logs\update.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $app = Start-Process -FilePath "C:\Program Files\Meon\Meon.exe" -PassThru
+          Start-Sleep -Seconds 30
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          Get-Content $log -Encoding utf8
+          $t = Get-Content $log -Raw -Encoding utf8
+          if (-not ($t.Contains("→ GitHub") -and $t.Contains("출처 github"))) { Write-Host "::error::GitHub 로 대체하지 않음"; exit 1 }
+
+      - name: 풀고 다시 켜기 → dl
+        run: |
+          (Get-Content C:\Windows\System32\drivers\etc\hosts) | Where-Object { $_ -notmatch 'dl\.meon\.co\.kr' } | Set-Content C:\Windows\System32\drivers\etc\hosts
+          ipconfig /flushdns | Out-Null
+          $log = Join-Path $env:APPDATA "MEON\logs\update.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $app = Start-Process -FilePath "C:\Program Files\Meon\Meon.exe" -PassThru
+          Start-Sleep -Seconds 30
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          Get-Content $log -Encoding utf8
+          $t = Get-Content $log -Raw -Encoding utf8
+          if (-not $t.Contains("출처 dl: stable build")) { Write-Host "::error::dl 매니페스트를 쓰지 않음"; exit 1 }

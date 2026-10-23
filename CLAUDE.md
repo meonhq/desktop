@@ -5,13 +5,28 @@ macOS / Windows 독립 앱 + 플러그인(AU / VST3). UI 문구는 한국어 존
 
 ## 배포 구조: 릴리스는 태그 또는 main 수동 실행 때만
 
+배포 설계는 ensemble-rust `docs/DISTRIBUTION_PLAN.md` (결정 D1–D9 확정, 2026-10-23). 지금은 브리지 단계: GitHub 릴리스와 dl.meon.co.kr 에 같이 올린다.
+
 - `.github/workflows/mac.yml`, `windows.yml` 는 main push 와 PR 에서 **빌드만** 한다. 릴리스는 건드리지 않고, 앱 빌드 번호는 `0`(로컬 빌드와 같음, 자동 업데이트 꺼짐).
-- **릴리스**는 `v*` 태그를 push 하거나 main 에서 `workflow_dispatch` 로 수동 실행할 때만 한다. 이때 앱에 `MEON_BUILD_ID` = 그 워크플로의 `run_number` 를 넣고 프리릴리스를 갱신한다.
-  - macOS: `mac-latest` 에 `meon.dmg`(사용자 다운로드), `MEON-mac.zip`, `build.txt`
-  - Windows: `windows-latest` 에 `meon-setup.exe`(사용자 다운로드), `MEON-Installer.exe`(같은 파일, 자동 업데이트용), `build.txt`
-  - main 이 아닌 브랜치에서 수동 실행하면 빌드만 한다.
-- 독립 앱은 켤 때 `build.txt` 와 내 빌드 번호를 비교해서 자동 업데이트한다 (`Source/meon/MeonUpdater.*`).
-  `run_number` 는 빌드마다 오르므로 릴리스 번호는 건너뛰며 오르지만, 커지기만 하면 업데이트는 맞게 동작한다.
+- **릴리스**는 `v*` 태그를 push 하거나 main 에서 `workflow_dispatch` 로 수동 실행할 때만 한다. main 이 아닌 브랜치에서 수동 실행하면 빌드만 한다.
+  - 빌드 번호 `MEON_BUILD_ID` = 그 커밋까지의 **커밋 수** (`git rev-list --count HEAD`, D3). 같은 커밋이면 mac·windows 가 같은 번호다.
+    이미 낸 번호보다 커야 하고(같은 커밋을 두 번 릴리스할 수 없다), 10000 미만이다 (10000 이상은 meon-app). '빌드 번호' 단계가 막는다.
+    브리지 전에는 워크플로마다 `run_number` 였다 (마지막 mac 200, windows 208).
+  - build 작업이 GitHub 프리릴리스를 갱신한다 (`build.txt` 마지막):
+    - macOS: `mac-latest` 에 `meon.dmg`(사용자 다운로드), `MEON-mac.zip`, `build.txt`
+    - Windows: `windows-latest` 에 `meon-setup.exe`(사용자 다운로드), `MEON-Installer.exe`(같은 파일, 자동 업데이트용), `build.txt`
+  - 이어서 **publish-dl** 작업이 dl.meon.co.kr (Cloudflare R2 버킷 `meon-dl`) 에 올린다 (`scripts/dl_publish.sh`):
+    빌드 파일 `meon/{mac,windows}/<빌드>/…` (덮어쓰지 않음) → CDN 으로 다시 받아 sha256 확인 → `release.json` →
+    **채널 매니페스트 `meon/v1/{beta,stable}/{mac,windows}.json` 마지막**. 출시 전이라 beta·stable 둘 다 올린다 (출시 뒤 stable 은 승격으로만).
+  - 매니페스트는 Ed25519 로 서명한다 (`gpl-1`). 올리기 전에 앱과 같은 코드(`MEON_ManifestTool`)·같은 키 헤더로 검증한다.
+  - R2 토큰·서명 키는 Environment `dl-release` (main·`v*` 태그만) 의 비밀값이다. 빌드 작업과 PR 은 읽지 못한다. 출력하거나 로그에 남기지 않는다.
+  - `dl-test.yml` (main 수동 실행): 시험 경로 `meon/v1/test/`·`meon/test/` 에만 쓰고 R2·CDN·키를 확인한다 (`scripts/dl_test.sh`).
+- 독립 앱 자동 업데이트 (`Source/meon/MeonUpdater.*`, `MeonUpdateCheck.*`, `MeonUpdateManifest.*`): 켤 때·6시간마다·서버 `latest_build` 가 오를 때(0–60초 무작위 지연) 확인한다.
+  - dl 매니페스트(설정 파일의 `updateChannel`. beta 는 stable 도 읽어 큰 번호)를 앱에 넣은 공개 키로 검증하고, 받은 파일은 크기·sha256 이 맞을 때만 설치한다.
+  - 검증된 매니페스트가 하나도 없으면(없음·막힘·서명 틀림) 지금까지처럼 GitHub `build.txt` 로 대체한다.
+  - 기록: 로그 폴더의 `update.log` 와 `app.log` ("확인: 출처 dl …" 또는 "… → GitHub").
+  - 채널: 브리지 전부터 쓰던 앱(테스터)은 beta, 새로 설치한 앱은 stable. 바꾸는 화면은 없다.
+- 서버 `min_build`·`latest_build` 는 한 숫자다. 두 플랫폼 stable 이 모두 그 번호 이상일 때만 올린다 (server `docs/DEPLOY.md` 5.1).
 - `docs/**` 만 바뀐 push·PR 은 빌드하지 않는다.
 - 리메이크(R0–R10)는 `main` 에 합쳤다 (R10, 태그 없음). 이후 PR 은 모두 `main` 으로 올린다. 테스터 빌드는 `main` 에서 `workflow_dispatch` 로 만든다 (이미 설치된 앱도 그 빌드로 자동 업데이트된다).
 - 운영 서버 가동 중(2026-10-17~). main 수동 실행이 테스터 빌드다.
@@ -38,7 +53,10 @@ macOS / Windows 독립 앱 + 플러그인(AU / VST3). UI 문구는 한국어 존
 
 ## 건드리면 자동 업데이트가 깨지는 것 (바꿔야 하면 먼저 사용자에게 묻는다)
 
-- **워크플로 파일 이름 변경·삭제 후 재생성 금지.** `run_number` 가 1 부터 다시 시작해서, 이미 설치된 앱이 새 빌드를 옛 빌드로 보고 영원히 업데이트하지 않는다.
+- **워크플로 파일 이름 변경·삭제 후 재생성 금지.** 빌드 번호는 이제 커밋 수라 이름과 무관하지만, 브리지 전 앱이 기대는 GitHub 릴리스를 만드는 곳이라 그대로 둔다.
+- **main 강제 push·이력 재작성 금지.** 커밋 수가 줄면 빌드 번호가 거꾸로 가서 새 빌드가 옛 빌드로 보인다. 릴리스한 커밋은 공개돼 있어야 한다 (GPL 소스 위치, 매니페스트 `source_url`).
+- **dl 의 약속** (브리지 이후 모든 앱이 기대): 주소 `https://dl.meon.co.kr/meon/v1/{stable,beta}/{mac,windows}.json`, 매니페스트 v1 형식 (`Source/meon/MeonUpdateManifest.h`),
+  믿는 공개 키 (`Source/meon/MeonUpdateKeys.h`: 빼거나 바꾸면 이미 설치된 앱이 그 키로 서명한 매니페스트를 믿지 않는다), 채널 매니페스트를 마지막에 올리는 순서, 올린 빌드 파일은 덮어쓰지 않기.
 - 릴리스 태그(`mac-latest`, `windows-latest`)와 자동 업데이트용 파일 이름(`MEON-mac.zip`, `MEON-Installer.exe`, `build.txt`) — 이미 설치된 앱 코드에 하드코딩돼 있다. (`meon.dmg`, `meon-setup.exe` 는 사람이 받는 파일이라 앱과 무관)
 - 릴리스에 `build.txt` 를 **마지막에** 올리는 순서. 먼저 올리면 앱이 반쯤 올라간 파일을 받는다.
 - 앱 이름 `Meon.app` / `Meon.exe` (CMake 타깃 이름은 `MEON`), 번들 ID `com.meon.MEON`, 제조사·플러그인 코드 (`Meon`, `Mjam`), Inno Setup `AppId`.

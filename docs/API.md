@@ -1,11 +1,11 @@
-> 복사본입니다. 원본은 meonhq/server/docs/API.md (v0.5, 문서 정정 meonhq/server#14·#15 포함). 이 파일은 수정하지 마세요.
+> 복사본입니다. 원본은 meonhq/server/docs/API.md (v0.7). 이 파일은 수정하지 마세요.
 
-# MEON API 계약 v0.5
+# MEON API 계약 v0.7
 
 데스크톱 앱(`meonhq/desktop`)과 백엔드(`meonhq/server`)가 주고받는 모든 요청·응답·이벤트의 기준 문서.
 양쪽 에이전트는 이 문서만 보고 구현한다. 문서와 코드가 다르면 문서가 맞다. 바꿀 땐 문서를 먼저 바꾼다.
 
-- 상태: v0.5 (12장 "미정" 참고)
+- 상태: v0.7 (12장 "미정" 참고)
 - 범위: 계정, 프로필, 방, 방 권한, 입장 승인, 친구, 초대, 차단, 알림, 버전 검사, 실시간 이벤트
 - 범위 밖: 합주 오디오 (SonoBus/AOO가 담당. 서버는 접속 정보만 발급)
 - 화면 표기 규칙: 아이디는 어디서든 `@username`으로 보여준다 (`@`는 클라이언트가 붙인다. 서버 값에는 없음). `#숫자` 같은 꼬리표는 없다
@@ -491,6 +491,7 @@ Room 전체 필드 +
 
 ### 5.5 입장
 - `POST /rooms/{id}/join` — 공개 방. 비공개 방 ID로 부르면 `404 room_not_found`
+  - 본문(선택): `{ "via": "public_list" | "friend" }` — 어디서 눌러 들어왔는지 (공개 방 목록 / 친구의 "참여"). 행동 기록에만 쓰고 입장 결과는 바뀌지 않는다. 없거나 다른 값이어도 입장한다 (14장)
 - `POST /rooms/join-by-code` — 비공개 방
 - 이미 들어 있는 바로 그 방에 다시 입장하면 `200 RoomDetail` (재연결 등. 멱등)
 - 한 사람이 여러 방의 방장 권한을 가질 수 있다 (방장이 방을 비운 채 다른 방에 들어가거나 새 방을 만드는 경우)
@@ -788,8 +789,9 @@ Room 전체 필드 +
 - 로그인 직후 `wss://.../v1/ws` 연결
 - 첫 메시지로 인증. 5초 안에 오지 않으면 서버가 연결 종료
 ```json
-{ "type": "auth", "access_token": "...", "build": 51 }
+{ "type": "auth", "access_token": "...", "build": 51, "mode": "app", "os": "mac" }
 ```
+- `mode`(`app` | `plugin`)·`os`(`mac` | `windows` | `linux`)는 선택. 행동 기록에만 쓰고 없거나 다른 값이어도 연결된다 (14장)
 - 성공 시 서버가 `hello` 전송 (10.4)
 - 실패 시 `{ "type": "error", "code": "unauthorized" | "email_not_verified" | "client_outdated" }` 후 종료
 - 닉네임·파트를 아직 안 넣은 사용자(`profile_incomplete`)도 연결할 수 있다
@@ -908,6 +910,7 @@ Room 전체 필드 +
 | 초대 | 사용자당 1분 10회 |
 | 승인 요청 | 같은 방 5분 1회 (5.7). 사용자당 1분 10회 (요청이 실제로 만들어질 때만 센다) |
 | RTT 보고 | 사용자당 1분 2회 |
+| 행동 기록 (`POST /events`) | 사용자당 1분 120개 (요청 수가 아니라 기록 개수). 넘는 기록은 오류 없이 버린다 (14장) |
 | WebSocket 연결 | 사용자당 동시 1개. 새로 연결하면 기존 연결 종료 |
 | 그 외 인증 API | 사용자당 1분 120회 |
 | 인증 없는 그 밖의 API (`/auth/refresh`, `/config`, WebSocket 연결) | IP당 1분 60회 |
@@ -948,13 +951,26 @@ Room 전체 필드 +
 | `min_build` 이상, `< latest_build` | 홈 상단 새 버전 배너. "나중에" / "업데이트" |
 | `>= latest_build` | 아무것도 표시하지 않음 |
 
-- 업데이트 파일 다운로드와 설치는 지금처럼 앱의 업데이터가 GitHub 릴리스에서 한다. 서버는 버전 번호만 알려준다
+- 업데이트 확인·다운로드·설치는 앱의 업데이터가 서버 밖에서 한다. 서버는 버전 번호만 알려준다 (데스크톱 브리지 빌드부터, 배포 설계 ensemble-rust `docs/DISTRIBUTION_PLAN.md`)
+  - 먼저 `https://dl.meon.co.kr/meon/v1/{stable|beta}/{mac|windows}.json`: Ed25519 로 서명한 매니페스트. 앱에 넣은 공개 키로 검증하고, 받은 파일은 매니페스트의 크기·sha256 이 맞을 때만 설치한다
+  - 검증된 매니페스트가 없으면(없음·막힘·서명 틀림) GitHub 릴리스(`mac-latest`·`windows-latest` 의 `build.txt`)로 대체한다. 브리지 전 앱은 GitHub 만 본다
+- 빌드 번호는 두 플랫폼이 같다 (데스크톱 브리지부터 main 커밋 수). `min_build`·`latest_build` 는 플랫폼 구분 없는 한 숫자라서, 두 플랫폼 stable 매니페스트가 모두 그 번호 이상일 때만 올린다 (서버 `docs/DEPLOY.md` 5.1)
+- `latest_build` 가 올라 `config.updated` 를 받은 앱은 한꺼번에 몰리지 않게 0–60초 무작위로 늦춰 확인한다
 - "업데이트"를 누르기 전에는 내려받거나 설치하지 않는다
 - 값은 서버 DB(`app_config`)에 두고, 운영자는 관리 도구(`meonctl`)로 재시작 없이 바꾼다. 바꾸면 접속 중인 모든 클라이언트에 `config.updated`
 - 접속 중에 `min_build`가 올라 내 빌드가 낮아지면: 서버는 연결을 끊지 않는다(이미 연결된 WebSocket은 유지). 합주 중이면 방을 나갈 때까지 기다렸다가 강제 업데이트 화면, 홈이면 바로
 - 앱이 `426`이나 `client_outdated`를 받으면 `/config`를 다시 읽지 않아도 강제 업데이트 화면으로 간다
 
 ---
+
+## 14. 행동 기록 — `POST /events`
+
+테스터 사용 분석용. 자세한 규칙·type 목록은 서버 저장소의 `docs/EVENTS.md`.
+- 인증 필요 (이메일 인증 전에도 받는다). 본문 `{ "events": [ { "type", "at", "room_id", "props" } ] }`, 한 번에 최대 50개 (넘으면 `400 invalid_request`)
+- 응답은 항상 `204`. 허용하지 않은 `type`·props 키, 1분 120개를 넘는 기록은 조용히 버린다
+- `at`(RFC3339)이 서버 시각과 10분 넘게 다르면 서버 시각으로 바꾼다
+- 허용 type: `app_opened`, `screen_viewed {screen}`, `room_minimized`, `room_restored`, `chat_sent {chars}`, `chat_received`, `peer_audio_connected {ms_to_connect}`, `peer_audio_failed {reason}`, `file_player_used`, `panel_resized`, `settings_opened`, `update_banner_clicked`
+- 문자열 값은 짧은 코드만 (64자, 영문·숫자·`_-.:`). **채팅 글 같은 내용은 보내지 않는다** (`chat_sent` 는 글자 수만)
 
 ## 변경 이력
 - v0.1 (2026-10-13) 초안
@@ -1019,3 +1035,12 @@ Room 전체 필드 +
     - 13장 강제 업데이트: "별도 화면 없음" → **앱 전체를 덮는 강제 업데이트 화면** (426이면 `/me`·방 목록도 못 받아 홈을 띄울 수 없으므로). 독립 앱은 "업데이트" 버튼, 플러그인은 문구만. 저장된 로그인은 지우지 않는다
     - 1.6 목록: 지금은 모든 목록이 페이지를 나누지 않고 전부 준다 (`next_cursor` 없음. 서버 구현과 맞춤)
     - 2.10 `can_invite`: 2.4와 같은 문장으로 맞춤 ("내가 방에 있고" 조건이 빠져 있었다. 서버 구현은 원래 이 조건을 본다)
+- v0.6 (2026-10-20) 행동 기록 (서버 docs/EVENTS.md)
+  - 14장 `POST /events` 추가 (앱이 보내는 행동 기록. 11장 제한 표에 1분 120개)
+  - 10.1 `auth` 메시지에 선택 필드 `mode`·`os`
+  - 5.5 `POST /rooms/{id}/join` 에 선택 본문 `{ "via": "public_list" | "friend" }`
+  - 모두 선택이라 v0.5 앱도 그대로 동작한다
+- v0.7 (2026-10-23) 업데이트 경로 (데스크톱 브리지 빌드, 배포 설계 DISTRIBUTION_PLAN)
+  - 13장: 앱은 dl.meon.co.kr 의 서명한 매니페스트를 먼저 보고, 검증된 것이 없을 때만 GitHub 릴리스. 빌드 번호는 두 플랫폼 같음. `min_build`·`latest_build` 올리는 규칙은 DEPLOY 5.1
+  - 데스크톱 앱이 10.1 `auth` 의 `mode`·`os` 를 보내기 시작한다
+  - API 형식·서버 동작은 그대로 (설명만 바뀜)
