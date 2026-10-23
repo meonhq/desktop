@@ -39,7 +39,8 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMEON_BUILD_ID=0
 
       - name: 빌드
-        run: cmake --build build --parallel --target MEON_Tests MEON_Standalone
+        # MEON_ManifestTool: 릴리스(publish-dl)·dl-test 가 쓰는 매니페스트 검증 도구. 여기서는 빌드되는지만 본다
+        run: cmake --build build --parallel --target MEON_Tests MEON_Standalone MEON_ManifestTool
 
       - name: 단위 테스트
         # 전송층 테스트(Transport)는 가짜 HTTP·WebSocket 서버(scripts/meon_test_server.py)에 붙는다
@@ -49,6 +50,7 @@ jobs:
           for i in $(seq 1 60); do curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo && break; sleep 1; done
           curl -s -m 2 -o /dev/null http://127.0.0.1:18080/v1/echo || { echo "::error::가짜 서버가 뜨지 않음"; cat mock.log; exit 1; }
           MEON_TEST_MOCK=http://127.0.0.1:18080 build/MEON_Tests_artefacts/RelWithDebInfo/MEON_Tests
+          build/MEON_ManifestTool_artefacts/RelWithDebInfo/MEON_ManifestTool selftest
 
       - name: 화면 자가 테스트
         # 실제 창(Xvfb)에 마우스·키를 넣어 합주 화면 흐름을 확인한다 (--uitest, 빌드 0 전용: ui/dev/UiSelfTest).

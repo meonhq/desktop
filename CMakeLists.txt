@@ -133,6 +133,11 @@ else()
     target_link_libraries(meon_ixwebsocket PRIVATE Threads::Threads)
 endif()
 
+# 업데이트 매니페스트 서명 확인 (Ed25519, RFC 8032): Monocypher 4.0.2 (deps/README.md). 앱·단위 테스트·CI 도구가 같이 쓴다
+add_library(meon_monocypher STATIC deps/monocypher/monocypher.c deps/monocypher/monocypher-ed25519.c)
+target_include_directories(meon_monocypher PUBLIC deps/monocypher)
+set_target_properties(meon_monocypher PROPERTIES C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON)
+
 # MEON core: 화면 없는 로직 (서버 API, 가짜 서버, 상태, 모델). 앱·플러그인과 단위 테스트가 같이 쓴다.
 set(MEON_CORE_SOURCES
     Source/meon/core/util/Scheduler.h
@@ -774,8 +779,10 @@ if (MEON_TESTS)
         Source/meon/tests/AooSocketTests.cpp
         Source/meon/tests/RtGateTests.cpp
         Source/meon/tests/NetBufAutoTests.cpp
+        Source/meon/tests/UpdateManifestTests.cpp
         deps/aoo/lib/src/net_utils.cpp   # AOO 소켓 시험 (E8·E9)
         Source/meon/MeonEarGuard.cpp
+        Source/meon/MeonUpdateManifest.cpp
         ${MEON_CORE_SOURCES})
     target_include_directories(MEON_Tests PRIVATE deps/aoo/lib/src)
     target_compile_features(MEON_Tests PRIVATE cxx_std_17)
@@ -797,11 +804,35 @@ if (MEON_TESTS)
         juce::juce_cryptography
         MEON_Fixtures
         meon_ixwebsocket
+        meon_monocypher
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
     if (APPLE)
         target_link_libraries(MEON_Tests PRIVATE "-framework Security")
     endif()
+endif()
+
+# CI 도구: 업데이트 매니페스트 봉투 만들기·검증 (앱과 같은 확인 코드·같은 키 헤더). 워크플로(dl-test, 릴리스의 publish-dl)가 쓴다.
+# 비밀값은 다루지 않는다 (서명은 openssl). -DMEON_TOOLS=OFF 로 끈다.
+option(MEON_TOOLS "MEON CI 도구 타깃(MEON_ManifestTool)" ON)
+if (MEON_TOOLS)
+    juce_add_console_app(MEON_ManifestTool PRODUCT_NAME "MEON_ManifestTool")
+    juce_generate_juce_header(MEON_ManifestTool)
+    target_sources(MEON_ManifestTool PRIVATE
+        Source/meon/tools/ManifestTool.cpp
+        Source/meon/MeonUpdateManifest.cpp)
+    target_compile_features(MEON_ManifestTool PRIVATE cxx_std_17)
+    target_compile_options(MEON_ManifestTool PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    target_compile_definitions(MEON_ManifestTool PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(MEON_ManifestTool PRIVATE
+        juce::juce_core
+        juce::juce_cryptography
+        meon_monocypher
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
 endif()
 
 # Mobile targets
