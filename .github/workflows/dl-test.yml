@@ -6,10 +6,17 @@
 # - main 에서 수동 실행(workflow_dispatch)만 한다. 비밀값은 Environment "dl-release" (main·v* 태그만) 에 있다.
 # - 비밀값은 출력하지 않는다. 결과는 실행 요약(Summary)의 표.
 # - 앱·릴리스와 관계없다 (빌드 번호·릴리스를 건드리지 않는다).
+# - cleanup 을 켜고 실행하면 시험은 하지 않고 시험 파일(meon/v1/test/, meon/test/)만 지운다 (scripts/dl_test_cleanup.sh).
+#   다른 경로는 지우지 못하게 막혀 있다.
 name: dl test
 
 on:
   workflow_dispatch:
+    inputs:
+      cleanup:
+        description: '시험 파일만 지운다 (meon/v1/test/, meon/test/). 시험은 하지 않는다'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +38,7 @@ jobs:
 
       - name: 패키지 설치
         # 검증 도구는 JUCE(juce_core) 로 빌드한다. 프로젝트 구성에 linux.yml 과 같은 패키지가 필요하다
+        if: ${{ !inputs.cleanup }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -41,6 +49,7 @@ jobs:
             libgl1-mesa-dev libcurl4-openssl-dev
 
       - name: 검증 도구 빌드 (앱과 같은 확인 코드·키 헤더)
+        if: ${{ !inputs.cleanup }}
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMEON_BUILD_ID=0 -DMEON_TESTS=OFF
           cmake --build build --target MEON_ManifestTool
@@ -49,9 +58,18 @@ jobs:
           echo "TOOL=$T" >> "$GITHUB_ENV"
 
       - name: 시험
+        if: ${{ !inputs.cleanup }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           SIGNING_KEY: ${{ secrets.DL_SIGNING_KEY_GPL1 }}
         run: bash scripts/dl_test.sh
+
+      - name: 시험 파일 지우기
+        if: ${{ inputs.cleanup }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: bash scripts/dl_test_cleanup.sh
