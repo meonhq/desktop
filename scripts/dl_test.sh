@@ -157,7 +157,12 @@ row "http:// (TLS 없음)" "$HTTP" "앱은 https 만 쓴다"
 #==============================================================================
 section "4. 서명 키: CI 개인 키 ↔ 앱 키 헤더 (MeonUpdateKeys.h gpl-1)"
 "$TOOL" selftest > /dev/null || critical "검증 도구 selftest" "RFC 8032 벡터 실패"
-printf '%s\n' "$SIGNING_KEY" > key.pem
+# 비밀값을 openssl 이 읽는 PEM 으로 맞춘다 (줄바꿈이 깨진 PEM, OpenSSH 형식, hex 씨앗 등). 내용은 적지 않고 모양만 적는다
+if SIGNING_KEY="$SIGNING_KEY" python3 "$REPO/scripts/dl_signing_key.py" key.pem 2> keyshape.txt; then
+    row "비밀값 모양" "$(head -1 keyshape.txt | sed 's/^서명 키 모양: //')" "openssl 이 읽는 PEM 으로 맞춤 (내용은 적지 않음)"
+else
+    critical "비밀값 모양" "$(tr '\n' ' ' < keyshape.txt)"
+fi
 if ! openssl pkey -in key.pem -noout 2> pkey.err; then
     critical "개인 키 읽기" "PEM 으로 읽지 못함 ($(err pkey.err | head -c 120))"
 fi
