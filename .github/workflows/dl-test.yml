@@ -1,0 +1,57 @@
+# dl.meon.co.kr (Cloudflare R2 버킷 meon-dl) 시험. 배포 설계 DISTRIBUTION_PLAN (ensemble-rust docs) 8장의 "확인 못 함" 과 서명 키 확인.
+# - 무엇을 보나: AWS CLI 체크섬 설정, 조건부 PUT, 캐시 동작(MISS/HIT, Cache-Control, 쿼리), CORS,
+#   CI 서명 키(DL_SIGNING_KEY_GPL1)와 앱 키 헤더(Source/meon/MeonUpdateKeys.h) 일치를 앱과 같은 코드(MEON_ManifestTool)로,
+#   시험 매니페스트를 올리고 CDN 으로 다시 받아 검증, 위조 매니페스트 거절. 자세한 것은 scripts/dl_test.sh.
+# - 쓰는 곳: 시험 매니페스트 meon/v1/test/, 시험 파일 meon/test/<실행 번호>/ 뿐. 진짜 채널(stable·beta)과 빌드 폴더는 건드리지 않는다.
+# - main 에서 수동 실행(workflow_dispatch)만 한다. 비밀값은 Environment "dl-release" (main·v* 태그만) 에 있다.
+# - 비밀값은 출력하지 않는다. 결과는 실행 요약(Summary)의 표.
+# - 앱·릴리스와 관계없다 (빌드 번호·릴리스를 건드리지 않는다).
+name: dl test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dl-test
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    environment: dl-release
+    env:
+      BUCKET: meon-dl
+      DL: https://dl.meon.co.kr
+      TESTDIR: meon/test/${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 패키지 설치
+        # 검증 도구는 JUCE(juce_core) 로 빌드한다. 프로젝트 구성에 linux.yml 과 같은 패키지가 필요하다
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev libopus-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev \
+            libgl1-mesa-dev libcurl4-openssl-dev
+
+      - name: 검증 도구 빌드 (앱과 같은 확인 코드·키 헤더)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMEON_BUILD_ID=0 -DMEON_TESTS=OFF
+          cmake --build build --target MEON_ManifestTool
+          T=$PWD/build/MEON_ManifestTool_artefacts/Release/MEON_ManifestTool
+          "$T" selftest
+          echo "TOOL=$T" >> "$GITHUB_ENV"
+
+      - name: 시험
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          SIGNING_KEY: ${{ secrets.DL_SIGNING_KEY_GPL1 }}
+        run: bash scripts/dl_test.sh
