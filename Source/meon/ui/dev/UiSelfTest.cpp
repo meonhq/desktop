@@ -223,7 +223,15 @@ void UiSelfTest::enterNewRoom (bool approval)
 
 void UiSelfTest::minimize()
 {
-    add ([this] { if (auto* j = jam()) click (j->lobby); }, 0);
+    // 홈·사이드바 디자인 v2: 방 화면 윗줄의 로비 보기 버튼은 없다. 사이드바 "홈" 을 누르면 방은 그대로 두고 홈으로 (최소화).
+    // 창이 좁아 방 화면에서 사이드바가 숨으면(플러그인 900) 예전 윗줄의 로비 보기
+    add ([this]
+    {
+        if (auto* j = jam(); j != nullptr && j->lobby.isVisible()) { click (j->lobby); return; }
+        const auto r = root.sidebar->devRow (TXT ("홈"));
+        expect (root.sidebar->isVisible() && ! r.isEmpty(), TXT ("사이드바 \"홈\""));
+        click (*root.sidebar, r.getCentre());
+    }, 0);
     // 홈·사이드바 디자인: 최소화 막대 없이 사이드바 "참여 중" 항목이 방을 보여 준다
     waitUntil (TXT ("최소화 (홈 + 사이드바 참여 중)"), [this]
     {
@@ -565,7 +573,7 @@ void UiSelfTest::addResizeTests()
         auto* rz = j->devSideResizer();
         expect (j->sidePanelWidth() == def, TXT ("처음: 기본 너비 ") + juce::String (j->sidePanelWidth()));
         expect (rz->getWidth() == 18 && rz->getRight() == j->chatCard.getX() && rz->getX() == j->membersCard.getRight(), TXT ("끄는 자리: 멤버·패널 사이 18 전체"));
-        expect (rz->getY() == metric::headerH + 1 && rz->getBottom() == j->getHeight(), TXT ("끄는 자리: 본문 높이 전체"));
+        expect (rz->getY() == j->headerLine() + 1 && rz->getBottom() == j->getHeight(), TXT ("끄는 자리: 본문 높이 전체"));
         expect (rz->getMouseCursor() == juce::MouseCursor (juce::MouseCursor::LeftRightResizeCursor), TXT ("커서 col-resize"));
         expect (j->devSideLineColour().isTransparent(), TXT ("선: 평소 안 보임"));
         moveTo (*rz, { 9, rz->getHeight() / 2 });
@@ -828,6 +836,7 @@ void UiSelfTest::addRoomListTests()
     add ([this, listed, cardButton] { expect (! listed ("r_zero_selftest") && cardButton ("r_zero_selftest") == nullptr, TXT ("0명 방은 보이지 않음")); });
 
     begin (TXT ("방 목록: 닫힌 방 카드를 누르면"));
+    clickSidebar (TXT ("공개 방"));   // 방 카드는 공개 방 쪽에 (홈·사이드바 디자인)
     add ([this, saved] { core.store().upsertPublicRoom (*saved); }, 300);   // rooms.removed 를 놓친 목록
     waitUntil (TXT ("닫힌 방 카드가 보임"), [saved, cardButton] { return cardButton (saved->id) != nullptr; });
     add ([this, saved, cardButton] { if (auto* b = cardButton (saved->id)) click (*b); }, 0);
@@ -930,17 +939,40 @@ void UiSelfTest::addFriendRequestTests()
         home().toggleNotifications();   // 닫기
     }, 300);
 
-    begin (TXT ("친구 요청: 합주 화면 알림 목록"));
+    // 홈·사이드바 디자인 v2: 방 화면 윗줄에 알림 버튼이 없다. 내 프로필 줄 → 메뉴 "알림" → (방은 그대로 두고) 홈 위 알림 목록
+    begin (TXT ("친구 요청: 방 안에서 내 프로필 › 알림"));
     enterNewRoom();
-    add ([this] { if (auto* f = core.fakeServer()) f->devFriendRequest(); }, 0);
+    add ([this]
+    {
+        auto* j = jam();
+        if (root.sidebar->isVisible())
+        {
+            expect (! j->lobby.isVisible() && ! j->bell.isVisible() && ! j->settings.isVisible(), TXT ("방 화면 윗줄: 로비·알림·설정 버튼 없음"));
+            expect (j->leave.isVisible() && j->roomTitle.getX() == metric::padX, TXT ("방 이름은 왼쪽 18, 방 나가기는 그대로"));
+        }
+        else   // 창이 좁아 사이드바가 숨으면 예전 윗줄 (갈 곳이 없어지지 않게)
+            expect (j->lobby.isVisible() && j->bell.isVisible() && j->settings.isVisible(), TXT ("사이드바가 숨으면 로비·알림·설정 버튼"));
+        if (auto* f = core.fakeServer()) f->devFriendRequest();
+    }, 0);
     waitUntil (TXT ("방 안에서 새 친구 요청"), [this] { return core.store().state().friendRequests.size() == 1; });
-    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (jam()->bell); });
-    waitUntil (TXT ("합주 화면 알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
+    add ([this, reqs]
+    {
+        *reqs = core.store().state().friendRequests;
+        if (root.sidebar->isVisible()) click (*root.sidebar, root.sidebar->devProfileRow().getCentre());
+        else click (jam()->bell);
+    });
+    add ([this]
+    {
+        if (root.profileMenu == nullptr) return;   // 알림 버튼으로 연 경우
+        const auto b = root.profileMenu->box;
+        click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + 16 });   // 첫 줄 "알림"
+    }, 300);
+    waitUntil (TXT ("알림 목록 열림 (방은 그대로)"), [this, list] { return list() != nullptr && list()->isShowing() && inRoom(); });
     add ([press] { press (TXT ("수락")); }, 0);
-    waitUntil (TXT ("합주 화면에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    waitUntil (TXT ("방 안에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
     add ([this, sent, reqs, requestIds]
     {
-        expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("합주 화면 줄 수락: 그 줄의 id"));
+        expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("알림 목록 줄 수락: 그 줄의 id"));
         expect (requestIds().isEmpty(), TXT ("목록 비움"));
         if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
     }, 300);

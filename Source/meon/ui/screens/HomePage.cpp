@@ -301,7 +301,7 @@ void HomePage::refreshRecentButtons()
 HomePage::Layout HomePage::layout() const
 {
     Layout l;
-    auto area = getLocalBounds().reduced (pad);
+    auto area = getLocalBounds().reduced (metric::pagePad);   // 공개 방 쪽과 같은 바깥 여백
     const int cw = (area.getWidth() - gap * 2) / 3;
     for (int i = 0; i < 3; ++i)
     {

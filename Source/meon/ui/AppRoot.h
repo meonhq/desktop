@@ -24,6 +24,7 @@ public:
     std::function<void (int tab)> onOpenSettings;
 
     HomeScreen* getHome() { return home.get(); }
+    Sidebar* getSidebar() { return sidebar.get(); }   // 개발용 미리 보기
     /** 방 안이면 합주 화면 (개발용 미리 보기) */
     JamScreen* getJamScreen();
     /** 방 최소화 (합주 최종 디자인 5): 방에는 그대로 있고 화면만 홈 + 아래 막대로. 합주 화면은 지우지 않고 숨긴다 */
@@ -60,6 +61,7 @@ private:
     juce::OwnedArray<Toast> toasts;   // 아래에서 위로 (0 = 맨 아래)
     juce::String shownRoomId;
     juce::StringArray seenJoinRequests;   // 알림을 한 번 띄운 입장 요청
+    juce::StringArray seenInvites;        // 알림을 한 번 띄운 초대 (10초 뒤 닫히면 다시 띄우지 않는다. 사이드바 카드는 남는다)
     bool minimized = false;   // 방 안이면서 홈을 보는 중 (방에 있는지는 store.currentRoom)
 
     void updateScreen();

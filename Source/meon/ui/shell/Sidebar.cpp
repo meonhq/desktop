@@ -8,7 +8,7 @@ namespace meon::ui
 namespace
 {
     // 디자인 값 (홈·사이드바, activeStyle 회색)
-    const juce::Colour sideBg     { 0xFFFCFCFCu };
+    const juce::Colour sideBg     { 0xFFFFFFFFu };   // v2: #FFFFFF (예전 #FCFCFC)
     const juce::Colour activeBg   { 0xFFEFEFEFu };   // 선택된 메뉴·방
     const juce::Colour buttonHover { 0xFFF0F0F0u };  // 접기·+ 버튼 호버
     constexpr int headerH = 52, profileH = 1 + 9 + 40 + 9, padX = 9, padY = 12, sectionGap = 12, rowGap = 2;
@@ -130,12 +130,10 @@ struct Sidebar::Body : public juce::Component
         for (auto& f : s.friends) if (f.status == "in_room") on.push_back (&f);
         for (auto& f : s.friends) if (f.status == "online") on.push_back (&f);
         for (auto& f : s.friends) if (f.status != "in_room" && f.status != "online") off.push_back (&f);
-        const bool reqDot = ! s.friendRequests.empty();
         if (open)
         {
             Row h { Kind::header, { x, y, rw, 28 }, TXT ("친구"), juce::String ((int) s.friends.size()) };
-            h.open = friendsOpen;
-            h.dot = reqDot;
+            h.open = friendsOpen;   // v2: 친구 요청 점은 여기가 아니라 내 프로필 아바타에
             h.act = [this] { friendsOpen = ! friendsOpen; rebuildAndLayout(); };
             h.plus = true;
             h.plusR = { x + rw - 6 - 22, y + 3, 22, 22 };
@@ -149,7 +147,6 @@ struct Sidebar::Body : public juce::Component
             y += 6 + 1 + 8;
             Row b { Kind::iconButton, { x, y, rw, 32 } };
             b.icon = icons::Id::users;
-            b.dot = reqDot;
             b.act = [this] { friendsOpen = true; owner.setCollapsed (false); };
             add (std::move (b));
             y += 32 + rowGap;
@@ -238,7 +235,9 @@ struct Sidebar::Body : public juce::Component
 
     void paint (juce::Graphics& g) override
     {
-        const bool open = ! owner.shut();
+        // 메뉴·방·친구 글자는 접기·펼치기 동안 같이 흐려지고 진해진다 (디자인 labelOp). 움직이는 중에는 말줄임 없이 잘린다
+        const float alpha = owner.labelAlpha();
+        const bool ellipsis = ! owner.animating();
         for (int i = 0; i < (int) rows.size(); ++i)
         {
             const auto& r = rows[(size_t) i];
@@ -259,21 +258,22 @@ struct Sidebar::Body : public juce::Component
                     const auto ink = r.kind == Kind::nav && r.active ? col::ink : col::inkSub;
                     drawIcon (g, r.icon, ib, 18.0f, ink);
                     if (r.dot) drawDot (g, { ib.getRight() - 3.0f, ib.getY() + 4.0f }, 6.5f, r.active ? activeBg : sideBg);
-                    if (open && r.kind != Kind::iconButton)
+                    if (alpha > 0.001f && r.kind != Kind::iconButton)
                     {
                         auto t = r.r.withTrimmedLeft (9 + 20 + 9).withTrimmedRight (9);
+                        if (t.getWidth() <= 0) break;
                         if (r.kind == Kind::room && r.sub.isNotEmpty())
                         {
                             const auto cf = font (400, 12.0f);
                             const int cw = (int) std::ceil (tabularWidth (cf, r.sub)) + 1;
-                            g.setColour (col::inkSub);
+                            g.setColour (col::inkSub.withMultipliedAlpha (alpha));
                             g.setFont (cf);
                             g.drawText (r.sub, t.removeFromRight (cw), juce::Justification::centredRight, false);
                             t.removeFromRight (9);
                         }
-                        g.setColour (col::ink);
+                        g.setColour (col::ink.withMultipliedAlpha (alpha));
                         g.setFont (font (r.active ? 600 : 400, 14.0f));
-                        g.drawText (r.text, t, juce::Justification::centredLeft, true);
+                        g.drawText (r.text, t, juce::Justification::centredLeft, ellipsis);
                     }
                     break;
                 }
@@ -367,14 +367,14 @@ struct Sidebar::Body : public juce::Component
                     {
                         const auto sf = font (400, 12.0f);
                         const int sw = (int) std::ceil (textWidth (sf, r.sub)) + 1;
-                        g.setColour (col::inkSub);
+                        g.setColour (col::inkSub.withMultipliedAlpha (alpha));
                         g.setFont (sf);
                         g.drawText (r.sub, t.removeFromRight (sw), juce::Justification::centredRight, false);
                         t.removeFromRight (6);
                     }
-                    g.setColour (off ? col::inkSub : col::ink);
+                    g.setColour ((off ? col::inkSub : col::ink).withMultipliedAlpha (alpha));
                     g.setFont (font (400, 14.0f));
-                    g.drawText (r.text, t, juce::Justification::centredLeft, true);
+                    g.drawText (r.text, t, juce::Justification::centredLeft, ellipsis);
                     break;
                 }
             }
@@ -438,23 +438,36 @@ Sidebar::~Sidebar()
     core.store().removeListener (this);
 }
 
+int Sidebar::currentWidth() const
+{
+    return juce::roundToInt ((float) closedW + (float) (openW - closedW) * fold.value (foldPanel));
+}
+
 void Sidebar::setCollapsed (bool b)
 {
     if (b == collapsed) return;
     collapsed = b;
     body->hotRow = -1;
-    if (onLayoutChanged) onLayoutChanged();
-    resized();
-    repaint();
+    // 배치(펼친 줄·접힌 줄)는 바로 바뀌고, 폭과 글자 불투명도만 움직인다 (디자인: open 은 바로, width·opacity 는 transition)
+    fold.setOpen (foldPanel, ! shut());   // 프레임마다 onLayoutChanged → AppRoot::resized
 }
 
 void Sidebar::setForcedCollapsed (bool b)
 {
-    // AppRoot::resized 가 부른다 (onLayoutChanged 를 부르지 않는다: 폭은 부른 쪽이 정한다)
+    // AppRoot::resized 가 부른다: 그 안에서는 다시 배치하지 않는다 (부른 쪽이 곧 currentWidth 를 읽는다). 다음 프레임부터는 보통대로
     if (b == forced) return;
     forced = b;
     body->hotRow = -1;
     hot = 0;
+    const juce::ScopedValueSetter<bool> guard (laying, true);
+    fold.setOpen (foldPanel, ! shut());
+}
+
+void Sidebar::previewFold (bool open, float e)
+{
+    collapsed = ! open;
+    fold.freeze (foldPanel, open, e);
+    if (onLayoutChanged) onLayoutChanged();
     resized();
     repaint();
 }
@@ -543,18 +556,26 @@ void Sidebar::paint (juce::Graphics& g)
     const juce::String part = me ? me->part.value_or ("other") : juce::String ("other");
     const auto av = juce::Rectangle<float> (pb.getX() + 5.0f, pb.getCentreY() - 14.0f, 28.0f, 28.0f);
     Avatar::paintCircle (g, av, part, 16.0f, col::ink, true);
-    if (! shut())
+    // v2: 친구 요청·초대가 있으면 내 프로필 아바타에 점 (지름 8, 흰 테두리 1.5, 아바타 오른쪽 위 top -1 right -2)
+    {
+        const auto& st = core.store().state();
+        if (! st.friendRequests.empty() || ! st.invites.empty())
+            drawDot (g, { av.getX() + 25.0f, av.getY() + 4.0f }, 6.5f, profileMenuOpen ? activeBg : (hot == 2 ? col::hoverBg : sideBg));
+    }
+    if (const float alpha = labelAlpha(); alpha > 0.001f && pb.getRight() - av.getRight() > 30.0f)
     {
         const float tx = av.getRight() + 9.0f;
         const float tw = pb.getRight() - 2.0f - 20.0f - 6.0f - tx;
-        g.setColour (col::ink);
+        const bool ellipsis = ! animating();
+        g.setColour (col::ink.withMultipliedAlpha (alpha));
         g.setFont (font (600, 13.0f));
         g.drawText (me ? me->nickname.value_or (me->username) : juce::String(), juce::Rectangle<float> (tx, pb.getCentreY() - 16.0f, tw, 16.0f),
-                    juce::Justification::centredLeft, true);
-        g.setColour (col::inkSub);
+                    juce::Justification::centredLeft, ellipsis);
+        g.setColour (col::inkSub.withMultipliedAlpha (alpha));
         g.setFont (font (400, 12.0f));
-        g.drawText (icons::partLabel (part), juce::Rectangle<float> (tx, pb.getCentreY() + 1.0f, tw, 15.0f), juce::Justification::centredLeft, true);
-        drawIcon (g, icons::Id::chevronUpDown, juce::Rectangle<float> (pb.getRight() - 2.0f - 20.0f, pb.getCentreY() - 10.0f, 20.0f, 20.0f), 14.0f, col::inkSub);
+        g.drawText (icons::partLabel (part), juce::Rectangle<float> (tx, pb.getCentreY() + 1.0f, tw, 15.0f), juce::Justification::centredLeft, ellipsis);
+        drawIcon (g, icons::Id::chevronUpDown, juce::Rectangle<float> (pb.getRight() - 2.0f - 20.0f, pb.getCentreY() - 10.0f, 20.0f, 20.0f), 14.0f,
+                  col::inkSub.withMultipliedAlpha (alpha));
     }
 }
 

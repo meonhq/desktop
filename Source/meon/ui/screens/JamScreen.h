@@ -67,12 +67,18 @@ private:
 public:
     /** 프로필 창 (사이드바의 친구를 눌렀을 때도 연다. 홈·사이드바 디자인) */
     void openProfile (const juce::String& userId);
+    /** 홈·사이드바 디자인 v2: 사이드바가 옆에 있으면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 숨긴다
+        (방 이름·방 설정·입장 요청·입장 코드·방 나가기만). 사이드바가 숨으면(좁은 플러그인 창) 예전 윗줄로 돌아간다 */
+    void setSidebarShown (bool);
 
 private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     core::JamSession& jam;
     const bool plugin;
+    bool sidebarShown = false;
+    /** 윗줄 아래 선의 y: 사이드바가 옆에 있으면 사이드바·홈 머리말과 같은 51 (높이 52), 아니면 예전 58 (로고 높이) */
+    int headerLine() const { return sidebarShown ? 51 : metric::headerH; }
 
     // 헤더
     Text roomTitle { {}, 600, 16.0f };

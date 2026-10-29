@@ -6,6 +6,7 @@
 #include "../widgets/Display.h"
 #include "../widgets/Button.h"
 #include "../theme/Icons.h"
+#include "../widgets/FoldAnimator.h"
 #include "../../core/MeonCore.h"
 
 namespace meon::ui
@@ -21,7 +22,8 @@ public:
     ~Sidebar() override;
 
     static constexpr int openW = 240, closedW = 56;
-    int currentWidth() const { return shut() ? closedW : openW; }
+    /** 지금 폭: 접기·펼치기 중이면 56 ~ 240 사이 (FoldAnimator, 180ms). 프레임마다 onLayoutChanged 로 알린다 */
+    int currentWidth() const;
     bool isCollapsed() const { return shut(); }
     void setCollapsed (bool);   // 사용자가 접기 버튼으로 정한 상태
     /** 창이 좁아 방 화면이 모자랄 때 잠시 접는다 (사용자가 정한 상태는 그대로, 넓어지면 돌아간다). 그동안 접기 버튼은 숨긴다 */
@@ -32,6 +34,9 @@ public:
     void setProfileMenuOpen (bool);
     /** 개발용 (화면 자가 테스트): 글자가 text 인 줄(메뉴·참여 중 방)의 사이드바 안 위치. 없으면 빈 사각형 */
     juce::Rectangle<int> devRow (const juce::String& text) const;
+    juce::Rectangle<int> devProfileRow() const { return profileBounds(); }
+    /** 개발용 스냅숏: 접히는(open=false)·펼쳐지는 중 e 에 멈춘다 (--screen=home:sidebar=0.5) */
+    void previewFold (bool open, float e);
 
     std::function<void()> onLayoutChanged;   // 접기·펼치기 (폭이 바뀐다)
     std::function<void()> onHome, onRooms, onJoinCode, onShowRoom, onCreateRoom, onAddFriend, onProfileMenu;
@@ -49,6 +54,14 @@ private:
     core::MeonCore& core;
     bool collapsed = false, forced = false, profileMenuOpen = false;
     bool shut() const { return collapsed || forced; }
+    // 폭 애니메이션 (디자인: width 180ms cubic-bezier(0.2, 0, 0, 1), 글자는 같은 시간 동안 opacity).
+    // 화면 쪽 타이머(VBlank)만 쓴다: 오디오 처리와 무관
+    bool laying = false;   // setForcedCollapsed 를 AppRoot::resized 가 부르는 중 (그 안에서 다시 배치하지 않는다)
+    FoldAnimator fold { *this, [this] { if (! laying && onLayoutChanged) onLayoutChanged(); resized(); repaint(); } };
+    const int foldPanel = fold.add ("sidebar", true);
+    /** 메뉴·방·친구·내 프로필 글자의 불투명도 (펼침 1, 접힘 0) */
+    float labelAlpha() const { return fold.value (foldPanel); }
+    bool animating() const { return fold.isMoving (foldPanel); }
     Page page = Page::home;
 
     struct Body;

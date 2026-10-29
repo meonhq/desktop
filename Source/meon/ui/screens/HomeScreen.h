@@ -76,6 +76,8 @@ public:
     /** 사이드바 안 홈 쪽 (HomePage) 이 쓰는 연결 */
     std::function<void (int tab)> onOpenSettingsTab;
     std::function<void()> onShowRooms;
+    /** 알림 목록의 초대 "입장" (AppRoot::acceptInvite: 실패하면 토스트·입장 실패 상자) */
+    std::function<void (const juce::String& inviteId)> onAcceptInvite;
     bool isShell() const { return shell; }
     /** 친구 추가 (사이드바의 +) */
     void openAddFriend();

@@ -489,8 +489,36 @@ void JoinFailDialog::resized()
 //==============================================================================
 struct NotificationList::Row : juce::Component
 {
+    /** 받은 초대 (디자인: "OO님이 초대했어요" · 방 이름, 거절·입장). 줄을 눌러도 아무 일 없다 */
+    Row (NotificationList& o, const core::Invite& inv) : owner (o), invite (true)
+    {
+        inviteId = inv.id;
+        title = inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요");
+        sub = inv.room.title;
+        avatar.setPart (inv.from.part.value_or ("other"));
+        avatar.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (avatar);
+        addAndMakeVisible (decline);
+        addAndMakeVisible (accept);
+        // 누른 줄이 목록에서 지워지므로 다음 메시지에서 (id 는 먼저 복사)
+        juce::Component::SafePointer<NotificationList> safe (&owner);
+        const auto id = inviteId;
+        decline.onPress = [safe, id] { juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.home().dismissInvite (id); }); };
+        accept.onPress = [safe, id]
+        {
+            juce::MessageManager::callAsync ([safe, id]
+            {
+                if (safe == nullptr) return;
+                if (safe->onAcceptInvite) safe->onAcceptInvite (id);
+                else safe->core.home().acceptInvite (id, [] (core::Result<core::JoinResult>) {});
+            });
+        };
+    }
+
     Row (NotificationList& o, const core::FriendRequest& r) : owner (o), request (r)
     {
+        title = r.from.nickname.value_or (r.from.username);
+        sub = TXT ("친구 요청 · ") + icons::partLabel (r.from.part.value_or ("other"));
         avatar.setPart (r.from.part.value_or ("other"));
         avatar.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (avatar);
@@ -514,11 +542,10 @@ struct NotificationList::Row : juce::Component
         const int right = decline.getX() - 9;
         g.setColour (col::ink);
         g.setFont (font (600, 13.0f));
-        g.drawText (request.from.nickname.value_or (request.from.username), x, 6, right - x, 17, juce::Justification::centredLeft, true);
+        g.drawText (title, x, 6, right - x, 17, juce::Justification::centredLeft, true);
         g.setColour (col::inkSub);
         g.setFont (font (400, 12.0f));
-        g.drawText (TXT ("친구 요청 · ") + icons::partLabel (request.from.part.value_or ("other")), x, 6 + 17 + 3, right - x, 16,
-                    juce::Justification::centredLeft, true);
+        g.drawText (sub, x, 6 + 17 + 3, right - x, 16, juce::Justification::centredLeft, true);
     }
 
     void resized() override
@@ -533,12 +560,14 @@ struct NotificationList::Row : juce::Component
 
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { repaint(); }
-    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && owner.onOpenProfile) owner.onOpenProfile (request.from); }
+    void mouseUp (const juce::MouseEvent& e) override { if (! invite && e.mouseWasClicked() && owner.onOpenProfile) owner.onOpenProfile (request.from); }
 
     NotificationList& owner;
+    const bool invite = false;
     core::FriendRequest request;
+    juce::String inviteId, title, sub;
     Avatar avatar { 32.0f, 16.0f };
-    Button decline { Button::Kind::small, TXT ("거절") }, accept { Button::Kind::smallPrimary, TXT ("수락") };
+    Button decline { Button::Kind::small, TXT ("거절") }, accept { Button::Kind::smallPrimary, invite ? TXT ("입장") : TXT ("수락") };   // 디자인: 초대는 입장
 };
 
 NotificationList::NotificationList (core::MeonCore& c) : core (c)
@@ -554,14 +583,17 @@ NotificationList::~NotificationList()
 
 void NotificationList::stateChanged (core::StateKey k)
 {
-    if (k == core::StateKey::friendRequests) rebuild();
+    if (k == core::StateKey::friendRequests || k == core::StateKey::invites) rebuild();
 }
 
 void NotificationList::rebuild()
 {
     rows.clear();
+    // 디자인 순서: 받은 친구 요청, 그다음 받은 초대
     for (auto& r : core.store().state().friendRequests)
         addAndMakeVisible (rows.add (new Row (*this, r)));
+    for (auto& inv : core.store().state().invites)
+        addAndMakeVisible (rows.add (new Row (*this, inv)));
     resized();
     repaint();
     if (onSizeChanged) onSizeChanged();

@@ -183,6 +183,9 @@ public:
     int getPreferredHeight() const;
     std::function<void()> onSizeChanged;
     std::function<void (const core::UserPublic&)> onOpenProfile;
+    /** 받은 초대 줄 (홈·사이드바 디자인 v2: 알림 = 친구 요청 + 초대). 입장 = 초대 수락(실패 안내는 AppRoot), 거절 = 닫기.
+        비어 있으면 입장은 core 의 acceptInvite 만 부른다 */
+    std::function<void (const juce::String& inviteId)> onAcceptInvite;
     void paint (juce::Graphics&) override;
     void resized() override;
 

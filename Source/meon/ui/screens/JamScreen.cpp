@@ -13,7 +13,6 @@ namespace meon::ui
 
 namespace
 {
-    constexpr int headerLineY = metric::headerH;
     constexpr int bottomCardH = 48 + 1 + 43;
 
     juce::String nameOf (const core::UserPublic& u) { return u.nickname.value_or (u.username); }
@@ -1287,20 +1286,31 @@ void JamScreen::timerCallback()
     if (jam.hasFile()) filePlayer->refresh();
 }
 
+void JamScreen::setSidebarShown (bool b)
+{
+    if (b == sidebarShown) return;
+    sidebarShown = b;
+    for (auto* c : { &lobby, &settings, &bell }) c->setVisible (! b);
+    if (b) { tip.hide(); if (popover != nullptr && notifications != nullptr) closePopover(); }
+    resized();
+    repaint();
+}
+
 //==============================================================================
 void JamScreen::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
     // 상단 바 아래 작업 영역 (패널들을 감싸는 곳)
-    const int canvasTop = headerLineY + 1;
+    const int canvasTop = headerLine() + 1;
     g.setColour (col::surfaceCanvas);
     g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
     const float logoW = meon::logoWidth (metric::logoDrawH);
-    meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
-                    juce::Justification::centredLeft);
+    if (! sidebarShown)   // 사이드바가 있으면 로고는 사이드바에
+        meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
+                        juce::Justification::centredLeft);
     // 로고 오른쪽 세로 구분선은 없다 (디자인 파일과 다른 결정, REMAKE_PLAN 3.6). 로고 끝에서 18px 뒤에 방 제목
     g.setColour (col::line);
-    g.fillRect (0, headerLineY, getWidth(), 1);
+    g.fillRect (0, headerLine(), getWidth(), 1);
 
 
 }
@@ -1311,12 +1321,13 @@ void JamScreen::resized()
     // 헤더
     {
         const float logoW = meon::logoWidth (metric::logoDrawH);
-        auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
+        auto h = area.withHeight (headerLine()).reduced (metric::padX, 0);
         // 오른쪽부터: 방 나가기 · 로비 · 설정 · 알림 · 입장 요청(방장) · 입장 코드(비공개), 간격 9. 버튼은 줄지 않고 방 이름이 먼저 줄어든다
         const int lw = leave.getIdealWidth();
         leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));
         for (auto* b : { &lobby, &settings, &bell })
         {
+            if (! b->isVisible()) continue;   // 사이드바가 있으면 숨김 (setSidebarShown)
             h.removeFromRight (metric::gap);
             b->setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         }
@@ -1331,27 +1342,27 @@ void JamScreen::resized()
             const int cw = codeBox->idealWidth();
             codeBox->setBounds (h.removeFromRight (cw).withSizeKeepingCentre (cw, metric::buttonH));
         }
-        const int tx = (int) (metric::padX + logoW + 18.0f);
+        const int tx = sidebarShown ? metric::padX : (int) (metric::padX + logoW + 18.0f);   // 디자인: 방 이름은 왼쪽 18
         const int tagW = (privateTag->isVisible() ? privateTag->getIdealWidth() + 6 : 0) + (gear.isVisible() ? 24 + 6 : 0);
         const int titleMax = juce::jmax (40, h.getRight() - 18 - tx - tagW);
         const int tw = juce::jmin (titleMax, roomTitle.getIdealWidth() + 2);
-        roomTitle.setBounds (tx, 0, tw, metric::headerH);
+        roomTitle.setBounds (tx, 0, tw, headerLine());
         int gx = tx + tw + 6;
         if (privateTag->isVisible())
         {
-            privateTag->setBounds (gx, (metric::headerH - 17) / 2, privateTag->getIdealWidth(), 17);
+            privateTag->setBounds (gx, (headerLine() - 17) / 2, privateTag->getIdealWidth(), 17);
             gx += privateTag->getIdealWidth() + 6;
         }
-        gear.setBounds (gx, (metric::headerH - 24) / 2, 24, 24);
+        gear.setBounds (gx, (headerLine() - 24) / 2, 24, 24);
     }
-    area.removeFromTop (headerLineY + 1);
+    area.removeFromTop (headerLine() + 1);
     area.reduce (metric::padX, metric::padX);
 
     // 오른쪽: 채팅 · 친구 · 파일. 너비는 끌어서 바꾼다 (앱 320~, 플러그인 240~, 최대 min(창 50%, 창 − 54 − 566))
     const int sideW = sidePanelWidth();
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
-    sideResizer->setBounds (side.getX() - metric::padX, headerLineY + 1, metric::padX, getHeight() - headerLineY - 1);
+    sideResizer->setBounds (side.getX() - metric::padX, headerLine() + 1, metric::padX, getHeight() - headerLine() - 1);
     const bool vMoving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
     const bool hMoving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
     {
@@ -1539,9 +1550,9 @@ void JamScreen::resized()
     }
     if (modal != nullptr) modal->setBounds (getLocalBounds());
     if (popover != nullptr && requestList != nullptr)
-        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + requestList->getPreferredHeight());
+        popover->setBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + requestList->getPreferredHeight());
     if (popover != nullptr && notifications != nullptr)
-        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + notifications->getPreferredHeight());
+        popover->setBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + notifications->getPreferredHeight());
     // 움직이는 동안은 화면 전체를 다시 그리지 않는다 (옮겨진 카드 자리만 JUCE 가 다시 그린다)
     if (! (vMoving || hMoving)) repaint();
 }

@@ -67,6 +67,7 @@ namespace metric
     constexpr int smallH = 19;          // 작은 버튼·슬라이더·미터 상자
     constexpr int bigButtonH = 40;      // 온보딩 버튼
     constexpr int gap = 9;              // 나란히 붙는 카드·헤더 버튼 사이
+    constexpr int pagePad = 18;         // 사이드바 오른쪽 쪽(홈·공개 방)의 바깥 여백: 머리말 아래 본문 가장자리 ~ 카드 (홈·사이드바 디자인 padding 18)
     constexpr float radius = 6.0f;      // 카드·버튼·입력
     constexpr float smallRadius = 5.0f; // 작은 버튼·미터 상자
 

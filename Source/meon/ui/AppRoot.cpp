@@ -47,6 +47,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     home->setShell (sidebar->currentWidth(), TXT ("홈"));
     home->onOpenSettingsTab = [this] (int tab) { if (onOpenSettings) onOpenSettings (tab); };
     home->onShowRooms = [this] { showPage (Sidebar::Page::rooms); };
+    home->onAcceptInvite = [this] (const juce::String& id) { acceptInvite (id); };
     home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     home->onReturnToRoom = [this] { setMinimized (false); };
@@ -277,7 +278,8 @@ void AppRoot::syncInviteToasts()
     {
         bool shown = false;
         for (auto* t : toasts) if (t->key == inv.id) shown = true;
-        if (shown) continue;
+        if (shown || seenInvites.contains (inv.id)) continue;
+        seenInvites.add (inv.id);
         added = true;
         // 홈·사이드바 디자인: 거절·수락 (예전 "입장" + 닫기와 같은 동작: 수락 = acceptInvite, 거절 = dismissInvite)
         auto* t = toasts.add (new Toast (inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title, TXT ("수락")));
@@ -296,6 +298,10 @@ void AppRoot::syncInviteToasts()
         };
         t->onClose = t->onSecondary;
         addAndMakeVisible (t);
+        // 디자인 v2: 알림은 10초 뒤 닫힌다. 초대는 사이드바 카드·알림 목록에 초대가 끝날 때까지 남는다
+        juce::Component::SafePointer<AppRoot> safe (this);
+        juce::Component::SafePointer<Toast> sp (t);
+        juce::Timer::callAfterDelay (10000, [safe, sp] { if (safe != nullptr && sp != nullptr) safe->removeToast (sp.getComponent()); });
     }
     layoutToasts();
     // 초대 토스트 소리 (설정 › 알림). 합주 중에는 울리지 않는다 (여기까지 왔으면 방 밖). 잠정: 시스템 알림음 (Q13)
@@ -494,6 +500,8 @@ void AppRoot::resized()
     const bool hideSidebar = roomView && getWidth() - Sidebar::closedW < need;
     sidebar->setVisible (! hideSidebar);
     const int sw = hideSidebar ? 0 : sidebar->currentWidth();
+    // 사이드바가 옆에 있으면 방 화면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 뺀다. 숨으면(좁은 플러그인 창) 예전 윗줄 (갈 곳이 없어지지 않게)
+    if (auto* screen = getJamScreen()) screen->setSidebarShown (! hideSidebar);
     sidebar->setBounds (0, 0, juce::jmax (sw, Sidebar::closedW), getHeight());
     home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
     home->setBounds (getLocalBounds());

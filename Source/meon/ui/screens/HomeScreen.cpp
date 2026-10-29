@@ -675,7 +675,7 @@ void HomeScreen::layoutRooms()
     const int viewW = roomViewport.getWidth();
     if (viewW <= 0) return;
     const int n = Masonry::columnsForWidth (shell ? getWidth() - shellInset : getWidth());
-    const int pad = 12, gap = Masonry::gap;
+    const int pad = shell ? metric::pagePad : 12, gap = Masonry::gap;   // 사이드바 안: 홈 쪽과 같은 바깥 여백
     // 스크롤 막대가 필요할 때만 그 폭을 뺀다
     int contentW = viewW, colW = 0;
     std::vector<std::vector<juce::String>> cols;
@@ -1007,6 +1007,7 @@ void HomeScreen::toggleNotifications()
     }
     core.home().markNotificationsRead();
     notifications = std::make_unique<NotificationList> (core);
+    notifications->onAcceptInvite = [this] (const juce::String& id) { if (onAcceptInvite) onAcceptInvite (id); };
     popover = std::make_unique<Popover> (TXT ("알림"));
     popover->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
                                                                  { if (safe != nullptr) { safe->popover.reset(); safe->notifications.reset(); } }); };
@@ -1288,7 +1289,7 @@ void HomeScreen::resized()
             filterButton->setBounds (shellInset + metric::padX + titleW + 6, (headerLine() - 24) / 2, 24, 24);
             const int cw = createRoom.getIdealWidth();
             createRoom.setBounds (getWidth() - metric::padX - cw, (headerLine() - metric::buttonH) / 2, cw, metric::buttonH);
-            roomViewport.setBounds (area.expanded (metric::padX - 12));   // 카드 목록 안쪽 여백 12 + 6 = 디자인 18
+            roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작
             if (! fold.isMoving (foldFriends)) layoutRooms();
         }
         if (modal != nullptr) modal->setBounds (getLocalBounds());

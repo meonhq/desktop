@@ -485,6 +485,18 @@ void MeonEditor::applyHomePreview()
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
     else if (p == "notif")  home->toggleNotifications();
+    else if (p == "rooms")  { if (home->onShowRooms) home->onShowRooms(); }   // 공개 방 쪽 (홈·사이드바 디자인)
+    else if (p.startsWith ("sidebar="))   // 사이드바가 접히는 중 e 에 멈춘 화면 (sidebar=0.5, 펼치는 중은 sidebar=open:0.5)
+    {
+        const bool open = p.contains ("open:");
+        appRoot->getSidebar()->previewFold (open, p.fromLastOccurrenceOf (open ? ":" : "=", false, false).getFloatValue());
+    }
+    else if (p == "notifinv")   // 알림 목록에 친구 요청 + 초대 (초대는 가짜 서버가 조금 뒤에 보낸다)
+    {
+        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (2500, [safe] { if (safe != nullptr && safe->appRoot != nullptr) safe->appRoot->getHome()->toggleNotifications(); });
+    }
     else if (p == "homemon")   // 설정 › 오디오 "입장 전에도 내 소리 듣기" 를 켠 홈 ("내 소리 듣는 중")
     {
         if (auto* jam = core.jam()) jam->setHomeMonitor (true);
