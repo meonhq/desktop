@@ -9,6 +9,9 @@
 #include "ui/Messages.h"
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
+#if MEON_BRIDGE_SPIKE
+ #include "bridge/BridgeAppSide.h"
+#endif
 
 namespace meon
 {
@@ -86,6 +89,12 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     updater = std::make_unique<MeonUpdater>();
     updater->setChannel (settings->getUpdateChannel());
     updater->onDownloaded = [this] { installUpdate(); };
+
+   #if MEON_BRIDGE_SPIKE
+    // 브리지 실험 앱: 자기 오디오 장치 대신 플러그인 블록으로 돈다 (셸이 장치 관리자를 연결한 뒤에 바꾼다)
+    if (! pluginMode)
+        juce::MessageManager::callAsync ([] { meon::bridge::installAppSide(); });
+   #endif
 
    #if MEON_DEV_OPTIONS
     devJam = meon::devOptions().getAllKeys().contains ("dev-jam");

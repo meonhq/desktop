@@ -1,0 +1,22 @@
+Meon Bridge (test) 설치 방법 (Windows)
+
+실험용 빌드입니다. 지금 쓰시는 Meon 앱·플러그인과 이름이 달라서 따로 설치되고, 서로 영향을 주지 않습니다.
+
+1. 이 zip 을 풀면 아래 두 개가 있습니다.
+   - Meon Bridge (test).vst3          플러그인 (폴더처럼 보입니다)
+   - Meon Bridge App (test).exe       브리지 앱
+
+2. 플러그인 넣기
+   파일 탐색기 주소창에 아래 주소를 붙여 넣고 Enter.
+     C:\Program Files\Common Files\VST3
+   열린 폴더에 "Meon Bridge (test).vst3" 를 통째로 끌어다 놓습니다. 관리자 권한을 물으면 '계속' 을 누릅니다.
+
+3. 앱: "Meon Bridge App (test).exe" 는 바탕화면 같은 아무 폴더에 두고 두 번 눌러 켭니다.
+   "Windows의 PC 보호" 창이 뜨면 '추가 정보' > '실행' 을 누릅니다 (서명이 없는 실험 빌드라 뜹니다).
+
+4. DAW 에서 플러그인을 다시 검색합니다.
+   - Ableton Live: 설정 > 플러그인 > 'VST3 플러그인 시스템 폴더 사용' 켜기 > '다시 검색'
+   - Cubase: 스튜디오 > VST 플러그인 관리자 > 왼쪽 위 새로 고침
+
+지우기: 위에서 넣은 두 개를 지우면 끝입니다.
+기록 파일은 '문서 > Meon Bridge (test) > 기록.txt' 에 쌓입니다 (시험 결과를 보낼 때 같이 주세요).

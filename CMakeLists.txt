@@ -309,6 +309,12 @@ set (MacPList "<plist version=\"1.0\">
 # Check the readme at `docs/CMake API.md` in the JUCE repo for the full list.
 
 function(sono_add_custom_plugin_target target_name product_name formats is_instrument plugincode)
+   # 6번째 인자(선택): 번들 ID. 없으면 com.meon.MEON (지금 앱·플러그인. 바꾸면 자동 업데이트가 깨진다)
+   if (ARGC GREATER 5)
+        set (bundle_id "${ARGV5}")
+   else()
+        set (bundle_id "com.meon.MEON")
+   endif()
 
    if (is_instrument)
         set (vst3cats Instrument Network)
@@ -324,7 +330,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         NEEDS_MIDI_OUTPUT TRUE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
         COMPANY_NAME "Meon"
-        BUNDLE_ID "com.meon.MEON"
+        BUNDLE_ID "${bundle_id}"
         MICROPHONE_PERMISSION_ENABLED TRUE
         
         ICON_BIG "images/icons/mac/meon_mac_1024.png"
@@ -751,6 +757,67 @@ if (APPLE AND TARGET MEON_Standalone)
             COMMAND /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "${MEON_DEV_INSTALL_DIR}/Meon.app"
             COMMENT "Meon.app -> ${MEON_DEV_INSTALL_DIR}/Meon.app"
             VERBATIM)
+    endif()
+endif()
+
+# 브리지 실험 (제품에 넣지 않는다, Source/meon/bridge/README.md): -DMEON_BRIDGE_SPIKE=ON 일 때만 아래 타깃을 만든다.
+# 기본은 꺼져 있어서 지금 앱·플러그인 빌드(MEON)는 그대로다.
+option(MEON_BRIDGE_SPIKE "플러그인 → 독립 앱 오디오 브리지 실험 타깃 (MEONBridge, MEONBridgeApp, meon_bridge_bench)" OFF)
+if (MEON_BRIDGE_SPIKE)
+    # 1) 실험 플러그인 "Meon Bridge (test)": 소리 통로만. 지금 Meon 플러그인과 이름·번들 ID·플러그인 코드가 다르다
+    set (BridgeFormats VST3)
+    if (APPLE)
+        list (APPEND BridgeFormats AU)
+    endif()
+    juce_add_plugin(MEONBridge
+        PRODUCT_NAME "Meon Bridge (test)"
+        COMPANY_NAME "Meon"
+        BUNDLE_ID "com.meon.MEONBridgeTest"
+        PLUGIN_MANUFACTURER_CODE Meon
+        PLUGIN_CODE Mbrt
+        FORMATS ${BridgeFormats}
+        IS_SYNTH FALSE
+        NEEDS_MIDI_INPUT FALSE
+        NEEDS_MIDI_OUTPUT FALSE
+        VST3_CATEGORIES Fx Network
+        AU_MAIN_TYPE "kAudioUnitType_Effect"
+        DESCRIPTION "Meon bridge experiment (not for release)"
+        COPY_PLUGIN_AFTER_BUILD FALSE)
+    juce_generate_juce_header(MEONBridge)
+    target_sources(MEONBridge PRIVATE
+        Source/meon/bridge/BridgePlugin.cpp
+        Source/meon/bridge/BridgeCore.cpp
+        Source/meon/bridge/BridgeCore.h)
+    target_compile_features(MEONBridge PRIVATE cxx_std_17)
+    target_compile_options(MEONBridge PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    target_compile_definitions(MEONBridge PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(MEONBridge
+        PRIVATE juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
+
+    # 2) 실험 앱 "Meon Bridge App (test)": 지금 독립 앱과 같은 코드 + 브리지 오디오 장치 (MEON_BRIDGE_SPIKE=1).
+    #    이름·번들 ID 가 달라 설치된 Meon 과 따로 산다 (설정 파일·창 이름도 따로. 로그인·MEON 설정 폴더는 같이 쓴다)
+    sono_add_custom_plugin_target(MEONBridgeApp "Meon Bridge App (test)" "Standalone" FALSE "Mbra" "com.meon.MEONBridgeApp")
+    target_sources(MEONBridgeApp PRIVATE
+        Source/meon/bridge/BridgeAppSide.cpp
+        Source/meon/bridge/BridgeAppSide.h
+        Source/meon/bridge/BridgeCore.cpp
+        Source/meon/bridge/BridgeCore.h)
+    target_compile_definitions(MEONBridgeApp PUBLIC MEON_BRIDGE_SPIKE=1)
+
+    # 3) 플러그인 호스트 없이 통로를 재는 시험 프로그램 (리눅스·macOS 명령줄)
+    if (UNIX)
+        add_executable(meon_bridge_bench Source/meon/bridge/BridgeBench.cpp Source/meon/bridge/BridgeCore.cpp)
+        target_compile_features(meon_bridge_bench PRIVATE cxx_std_17)
+        find_package(Threads REQUIRED)
+        target_link_libraries(meon_bridge_bench PRIVATE Threads::Threads)
+        if (NOT APPLE)
+            target_link_libraries(meon_bridge_bench PRIVATE rt)
+        endif()
     endif()
 endif()
 

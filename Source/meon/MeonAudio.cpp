@@ -1,5 +1,8 @@
 #include "MeonAudio.h"
 #include "MeonTheme.h"
+#if MEON_BRIDGE_SPIKE
+ #include "bridge/BridgeAppSide.h"
+#endif
 
 namespace meon
 {
@@ -48,6 +51,11 @@ void setDriverType (juce::AudioDeviceManager& dm, const juce::String& typeName)
 
 juce::String preferredDriverType (juce::AudioDeviceManager& dm)
 {
+#if MEON_BRIDGE_SPIKE
+    // 브리지 실험 앱 (Windows 셸이 처음 장치를 열기 전에 부른다): 진짜 장치(ASIO 등)를 잠깐이라도 열지 않는다.
+    // ASIO 드라이버는 보통 한 프로그램만 쓸 수 있어서, 앱이 열면 DAW 와 부딪힌다
+    return meon::bridge::registerDeviceType (dm);
+#endif
 #if JUCE_WINDOWS
     if (auto* asio = findType (dm, "ASIO"))
     {
