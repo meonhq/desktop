@@ -229,6 +229,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/screens/OnboardingScreen.h
     Source/meon/ui/screens/OnboardingScreen.cpp
     Source/meon/ui/screens/HomeScreen.h
+    Source/meon/ui/screens/HomePage.h
+    Source/meon/ui/screens/HomePage.cpp
     Source/meon/ui/screens/HomeScreen.cpp
     Source/meon/ui/screens/JamScreen.h
     Source/meon/ui/screens/JamScreen.cpp

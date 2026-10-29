@@ -1,4 +1,5 @@
 #include "HomeScreen.h"
+#include "HomePage.h"
 #include "../Messages.h"
 #include "../Links.h"
 #include "../theme/Icons.h"
@@ -673,7 +674,7 @@ void HomeScreen::layoutRooms()
 {
     const int viewW = roomViewport.getWidth();
     if (viewW <= 0) return;
-    const int n = Masonry::columnsForWidth (getWidth());
+    const int n = Masonry::columnsForWidth (shell ? getWidth() - shellInset : getWidth());
     const int pad = 12, gap = Masonry::gap;
     // 스크롤 막대가 필요할 때만 그 폭을 뺀다
     int contentW = viewW, colW = 0;
@@ -796,10 +797,25 @@ void HomeScreen::sendFriendRequest()
 //==============================================================================
 int HomeScreen::headerLine() const { return shell ? 51 : metric::headerH; }
 
-void HomeScreen::setShell (int leftInset, const juce::String& title)
+void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePageShown)
 {
-    const bool changed = ! shell || leftInset != shellInset || title != pageTitle;
+    const bool changed = ! shell || leftInset != shellInset || title != pageTitle || homePageShown != shellHome;
+    if (! shell)
+    {
+        // 공개 방 쪽 (디자인): 카드 없이 쪽 머리말에 필터·방 만들기, 그 아래 방 목록. 코드로 입장은 사이드바 메뉴에 있다
+        addChildComponent (roomViewport);
+        addChildComponent (*filterButton);
+        addChildComponent (createRoom);
+        roomsCard.setVisible (false);
+        audioCard.setVisible (false);   // 내 오디오는 방 안에만 (사용자 결정 2026-10-29). 홈은 "내 준비 상태"
+        auto page = std::make_unique<HomePage> (core);
+        page->onOpenSettings = [this] (int tab) { if (onOpenSettingsTab) onOpenSettingsTab (tab); };
+        page->onGoRooms = [this] { if (onShowRooms) onShowRooms(); };
+        homePage = std::move (page);
+        addChildComponent (*homePage);
+    }
     shell = true;
+    shellHome = homePageShown;
     shellInset = leftInset;
     pageTitle = title;
     setOpaque (false);   // 왼쪽 사이드바 자리는 비워 둔다
@@ -1251,6 +1267,41 @@ void HomeScreen::resized()
     // 방 최소화 중: 아래에 막대가 붙고 위의 목록들만 57 줄어든다
     if (roomBar != nullptr) roomBar->setBounds (area.removeFromBottom (roomBarH));
     area.reduce (metric::padX, metric::padX);
+
+    if (shell)
+    {
+        // 사이드바 안: 홈 쪽(HomePage) 또는 공개 방 쪽(머리말 필터·방 만들기 + 목록). 친구·친구 추가·내 오디오 카드는 숨긴다
+        friendsCard.setVisible (false);
+        addCard.setVisible (false);
+        roomsCard.setVisible (false);
+        audioCard.setVisible (false);
+        homePage->setVisible (shellHome);
+        roomViewport.setVisible (! shellHome);
+        filterButton->setVisible (! shellHome);
+        createRoom.setVisible (! shellHome);
+        if (shellHome)
+            homePage->setBounds (area.expanded (metric::padX));   // HomePage 가 디자인 여백 18 을 직접 둔다
+        else
+        {
+            const int titleW = (int) std::ceil (textWidth (font (600, 16.0f), pageTitle));
+            filterButton->setBounds (shellInset + metric::padX + titleW + 6, (headerLine() - 24) / 2, 24, 24);
+            const int cw = createRoom.getIdealWidth();
+            createRoom.setBounds (getWidth() - metric::padX - cw, (headerLine() - metric::buttonH) / 2, cw, metric::buttonH);
+            roomViewport.setBounds (area.expanded (metric::padX - 12));   // 카드 목록 안쪽 여백 12 + 6 = 디자인 18
+            if (! fold.isMoving (foldFriends)) layoutRooms();
+        }
+        if (modal != nullptr) modal->setBounds (getLocalBounds());
+        if (confirm != nullptr) confirm->setBounds (getLocalBounds());
+        if (popover != nullptr && notifications != nullptr)
+        {
+            popover->setContent (notifications.get(), notifications->getPreferredHeight());
+            const int ph = popover->getPreferredHeight();
+            popover->setBounds (9, getHeight() - 55 - ph, 340, ph);   // 프로필 줄 위 (디자인 left 9, bottom 55)
+            popover->toFront (false);
+        }
+        repaint();
+        return;
+    }
 
     // 오른쪽: 친구 + 친구 추가 (사이드바 안이면 친구는 사이드바에 있어 숨긴다)
     friendsCard.setVisible (! shell);

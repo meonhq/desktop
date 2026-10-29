@@ -37,6 +37,8 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     sidebar->onProfileMenu = [this] { if (profileMenu != nullptr) closeProfileMenu(); else openProfileMenu(); };
     home = std::make_unique<HomeScreen> (core, update);
     home->setShell (sidebar->currentWidth(), TXT ("홈"));
+    home->onOpenSettingsTab = [this] (int tab) { if (onOpenSettings) onOpenSettings (tab); };
+    home->onShowRooms = [this] { showPage (Sidebar::Page::rooms); };
     home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     home->onReturnToRoom = [this] { setMinimized (false); };
@@ -100,7 +102,8 @@ void AppRoot::applyScreen()
     if (minimized)
     {
         if (jam != nullptr) jam->setVisible (false);   // 지우지 않는다: 채팅 스크롤·입력 중인 글·접기 상태가 남는다
-        home->setRoomBar (true);
+        // 최소화 막대는 쓰지 않는다: 사이드바 "참여 중" 항목이 대신한다 (사용자 결정 2026-10-29)
+        home->setRoomBar (false);
         home->setVisible (true);
         core.home().setHomeVisible (true);
         home->grabKeyboardFocus();
@@ -124,7 +127,7 @@ void AppRoot::syncSidebar()
 {
     const bool inRoomView = core.store().state().currentRoom && ! minimized;
     sidebar->setPage (inRoomView ? Sidebar::Page::room : page);
-    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"));
+    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
 }
 
 void AppRoot::showPage (Sidebar::Page p)
@@ -421,7 +424,7 @@ void AppRoot::resized()
 {
     const int sw = sidebar->currentWidth();
     sidebar->setBounds (0, 0, sw, getHeight());
-    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"));
+    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
     home->setBounds (getLocalBounds());
     if (jam != nullptr) jam->setBounds (getLocalBounds().withTrimmedLeft (sw));
     if (profileMenu != nullptr)

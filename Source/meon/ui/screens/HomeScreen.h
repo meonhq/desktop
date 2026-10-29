@@ -72,7 +72,10 @@ public:
 
     /** 사이드바 안에 들어간 홈 (홈·사이드바 디자인). 창 전체를 덮되 왼쪽 leftInset(사이드바 폭)은 그리지도 받지도 않는다
         (모달·확인 창은 창 전체를 덮는다). 머리말은 52 높이의 쪽 제목, 로고·알림·설정과 오른쪽 친구 패널은 사이드바로 옮겨 숨긴다 */
-    void setShell (int leftInset, const juce::String& title);
+    void setShell (int leftInset, const juce::String& title, bool homePage = true);
+    /** 사이드바 안 홈 쪽 (HomePage) 이 쓰는 연결 */
+    std::function<void (int tab)> onOpenSettingsTab;
+    std::function<void()> onShowRooms;
     bool isShell() const { return shell; }
     /** 친구 추가 (사이드바의 +) */
     void openAddFriend();
@@ -84,8 +87,9 @@ private:
     core::MeonCore& core;
     UpdateHooks update;
     const bool plugin;
-    bool shell = false;
+    bool shell = false, shellHome = true;
     int shellInset = 0;
+    std::unique_ptr<juce::Component> homePage;   // 사이드바 안 "홈" (HomePage)
     juce::String pageTitle;
     int headerLine() const;   // 헤더 아래 구분선 y (사이드바 안이면 51)
 

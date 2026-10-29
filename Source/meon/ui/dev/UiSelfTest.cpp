@@ -880,7 +880,7 @@ void UiSelfTest::addFriendRequestTests()
             f->onRequestForTest = [sent] (const core::HttpRequest& q) { if (q.path.startsWith ("/friends/requests/")) sent->add (q.method + " " + q.path); };
     }, 0);
     waitUntil (TXT ("받은 친구 요청 2개"), [this] { return core.store().state().friendRequests.size() == 2; });
-    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (home().bell); });
+    add ([this, reqs] { *reqs = core.store().state().friendRequests; home().toggleNotifications(); });
     waitUntil (TXT ("알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
     add ([press] { press (TXT ("수락")); }, 0);
     waitUntil (TXT ("수락이 서버로"), [sent] { return sent->size() == 1; });
@@ -927,7 +927,7 @@ void UiSelfTest::addFriendRequestTests()
     {
         expect (sent->size() == 4 && (*sent)[3] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("재시도: 같은 id"));
         expect (requestIds().isEmpty(), TXT ("목록 비움"));
-        click (home().bell);   // 닫기
+        home().toggleNotifications();   // 닫기
     }, 300);
 
     begin (TXT ("친구 요청: 합주 화면 알림 목록"));
