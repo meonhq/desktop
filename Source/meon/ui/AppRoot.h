@@ -59,11 +59,15 @@ private:
     std::unique_ptr<juce::Component> roomClosed;   // 내가 방을 닫은 뒤 덮개
     juce::OwnedArray<Toast> toasts;   // 아래에서 위로 (0 = 맨 아래)
     juce::String shownRoomId;
+    juce::StringArray seenJoinRequests;   // 알림을 한 번 띄운 입장 요청
     bool minimized = false;   // 방 안이면서 홈을 보는 중 (방에 있는지는 store.currentRoom)
 
     void updateScreen();
     void applyScreen();   // 방 안: minimized 에 따라 홈(+막대)과 합주 화면 중 하나를 보인다
     void syncInviteToasts();
+    /** 방장일 때 받은 입장 요청 (홈·사이드바 디자인): 오른쪽 아래 알림이 여러 개 쌓인다. 거절·승인, 10초 뒤 알림만 닫힘 */
+    void syncJoinRequestToasts();
+    void acceptInvite (const juce::String& inviteId);
     void removeToast (Toast*);
     void layoutToasts();
 

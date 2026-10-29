@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../widgets/Display.h"
+#include "../widgets/Button.h"
 #include "../theme/Icons.h"
 #include "../../core/MeonCore.h"
 
@@ -20,9 +21,11 @@ public:
     ~Sidebar() override;
 
     static constexpr int openW = 240, closedW = 56;
-    int currentWidth() const { return collapsed ? closedW : openW; }
-    bool isCollapsed() const { return collapsed; }
-    void setCollapsed (bool);
+    int currentWidth() const { return shut() ? closedW : openW; }
+    bool isCollapsed() const { return shut(); }
+    void setCollapsed (bool);   // 사용자가 접기 버튼으로 정한 상태
+    /** 창이 좁아 방 화면이 모자랄 때 잠시 접는다 (사용자가 정한 상태는 그대로, 넓어지면 돌아간다). 그동안 접기 버튼은 숨긴다 */
+    void setForcedCollapsed (bool);
     void setPage (Page);
     Page getPage() const { return page; }
     /** 프로필 메뉴가 열려 있으면 프로필 줄을 선택된 색으로 */
@@ -33,6 +36,8 @@ public:
     std::function<void()> onLayoutChanged;   // 접기·펼치기 (폭이 바뀐다)
     std::function<void()> onHome, onRooms, onJoinCode, onShowRoom, onCreateRoom, onAddFriend, onProfileMenu;
     std::function<void (const core::UserPublic&)> onOpenFriend;
+    /** 받은 초대 카드 (친구 목록 위): 수락·거절 */
+    std::function<void (const juce::String& inviteId)> onAcceptInvite, onDeclineInvite;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -42,7 +47,8 @@ public:
 
 private:
     core::MeonCore& core;
-    bool collapsed = false, profileMenuOpen = false;
+    bool collapsed = false, forced = false, profileMenuOpen = false;
+    bool shut() const { return collapsed || forced; }
     Page page = Page::home;
 
     struct Body;

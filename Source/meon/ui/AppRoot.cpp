@@ -3,6 +3,7 @@
 #include "../MeonSettings.h"
 #include "screens/JamScreen.h"
 #include "overlays/JamOverlays.h"
+#include "../core/model/PanelWidth.h"
 
 namespace meon::ui
 {
@@ -35,6 +36,13 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
         else home->openProfile (u);
     };
     sidebar->onProfileMenu = [this] { if (profileMenu != nullptr) closeProfileMenu(); else openProfileMenu(); };
+    sidebar->onAcceptInvite = [this] (const juce::String& id) { acceptInvite (id); };
+    sidebar->onDeclineInvite = [this] (const juce::String& id)
+    {
+        // 누른 카드(버튼)가 목록에서 지워지므로 다음 메시지에서
+        juce::Component::SafePointer<AppRoot> safe (this);
+        juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.home().dismissInvite (id); });
+    };
     home = std::make_unique<HomeScreen> (core, update);
     home->setShell (sidebar->currentWidth(), TXT ("홈"));
     home->onOpenSettingsTab = [this] (int tab) { if (onOpenSettings) onOpenSettings (tab); };
@@ -186,7 +194,7 @@ void AppRoot::updateScreen()
         shownRoomId = room->id;
         // 방에 들어가면 받은 초대는 모두 사라진다 (API 7.11)
         for (int i = toasts.size(); --i >= 0;)
-            if (toasts[i]->key.isNotEmpty()) toasts.remove (i);
+            if (toasts[i]->key.isNotEmpty() && ! toasts[i]->key.startsWith ("jr:")) toasts.remove (i);
         fail.reset();
         applyScreen();
         return;
@@ -230,6 +238,8 @@ void AppRoot::stateChanged (core::StateKey k)
     {
         syncInviteToasts();
     }
+    if (k == core::StateKey::joinRequests || k == core::StateKey::currentRoom)
+        syncJoinRequestToasts();
 }
 
 void AppRoot::notice (const core::Notice& n)
@@ -255,7 +265,7 @@ void AppRoot::syncInviteToasts()
     for (int i = toasts.size(); --i >= 0;)
     {
         auto* t = toasts[i];
-        if (t->key.isEmpty()) continue;
+        if (t->key.isEmpty() || t->key.startsWith ("jr:")) continue;   // 입장 요청 알림은 syncJoinRequestToasts 가
         bool present = false;
         for (auto& inv : s.invites) if (inv.id == t->key) present = true;
         if (! present || s.inRoom()) toasts.remove (i);
@@ -269,32 +279,22 @@ void AppRoot::syncInviteToasts()
         for (auto* t : toasts) if (t->key == inv.id) shown = true;
         if (shown) continue;
         added = true;
-        auto* t = toasts.add (new Toast (inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title, TXT ("입장")));
+        // 홈·사이드바 디자인: 거절·수락 (예전 "입장" + 닫기와 같은 동작: 수락 = acceptInvite, 거절 = dismissInvite)
+        auto* t = toasts.add (new Toast (inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title, TXT ("수락")));
         t->key = inv.id;
+        t->setClosable (false);
+        t->setSecondary (TXT ("거절"));
         const auto id = inv.id;
         // 버튼 콜백 안에서 토스트가 지워지지 않게 다음 메시지에서 처리한다
-        t->onAction = [this, id]
-        {
-            juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf, id]
-            {
-                if (safe == nullptr) return;
-                safe->core.home().acceptInvite (id, [safe] (core::Result<core::JoinResult> r)
-                {
-                    if (safe == nullptr || r.ok()) return;
-                    // 방이 닫혔거나(410) 이미 끝난 초대(404)면 토스트로 알린다. 나머지는 입장 실패 모달 (7.9)
-                    const auto text = msg::inviteAcceptFailure (r.code());
-                    if (text.isNotEmpty()) safe->addInfoToast (text, {});
-                    else safe->showJoinFailure (r.err());
-                });
-            });
-        };
-        t->onClose = [this, id]
+        t->onAction = [this, id] { acceptInvite (id); };
+        t->onSecondary = [this, id]
         {
             juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf, id]
             {
                 if (safe != nullptr) safe->core.home().dismissInvite (id);
             });
         };
+        t->onClose = t->onSecondary;
         addAndMakeVisible (t);
     }
     layoutToasts();
@@ -305,6 +305,70 @@ void AppRoot::syncInviteToasts()
         if (settings.properties().getBoolValue ("toastSound", true))
             juce::LookAndFeel::getDefaultLookAndFeel().playAlertSound();
     }
+}
+
+void AppRoot::acceptInvite (const juce::String& id)
+{
+    // 버튼 콜백 안에서 토스트·사이드바 카드가 지워지지 않게 다음 메시지에서 처리한다
+    juce::Component::SafePointer<AppRoot> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf, id]
+    {
+        if (safe == nullptr) return;
+        safe->core.home().acceptInvite (id, [safe] (core::Result<core::JoinResult> r)
+        {
+            if (safe == nullptr || r.ok()) return;
+            // 방이 닫혔거나(410) 이미 끝난 초대(404)면 토스트로 알린다. 나머지는 입장 실패 모달 (7.9)
+            const auto text = msg::inviteAcceptFailure (r.code());
+            if (text.isNotEmpty()) safe->addInfoToast (text, {});
+            else safe->showJoinFailure (r.err());
+        });
+    });
+}
+
+void AppRoot::syncJoinRequestToasts()
+{
+    const auto& s = core.store().state();
+    const bool host = s.amHost();
+    // 사라진 요청 (승인·거절·만료·방 나감)
+    for (int i = toasts.size(); --i >= 0;)
+    {
+        auto* t = toasts[i];
+        if (! t->key.startsWith ("jr:")) continue;
+        bool present = false;
+        for (auto& q : s.joinRequests) if ("jr:" + q.id == t->key) present = true;
+        if (! present || ! host) toasts.remove (i);
+    }
+    if (! host) { layoutToasts(); return; }
+    for (auto& q : s.joinRequests)
+    {
+        const auto key = "jr:" + q.id;
+        bool shown = false;
+        for (auto* t : toasts) if (t->key == key) shown = true;
+        if (shown || seenJoinRequests.contains (q.id)) continue;   // 10초 뒤 닫힌 알림은 다시 띄우지 않는다
+        seenJoinRequests.add (q.id);
+        const auto name = q.user.nickname.value_or (q.user.username);
+        const auto sub = icons::partLabel (q.user.part.value_or ("other")) + TXT (" · ") + (s.currentRoom ? s.currentRoom->title : juce::String());
+        auto* t = toasts.add (new Toast (name + TXT ("님이 입장을 요청했어요"), sub, TXT ("승인")));
+        t->key = key;
+        t->setClosable (false);
+        t->setSecondary (TXT ("거절"));
+        const auto id = q.id;
+        t->onAction = [this, id]
+        {
+            juce::Component::SafePointer<AppRoot> safe (this);
+            juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.room().acceptJoinRequest (id); });
+        };
+        t->onSecondary = [this, id]
+        {
+            juce::Component::SafePointer<AppRoot> safe (this);
+            juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.room().declineJoinRequest (id); });
+        };
+        addAndMakeVisible (t);
+        // 디자인: 10초 뒤 알림만 닫힌다 (요청은 방 화면의 입장 요청 목록·사이드바 점에 남는다)
+        juce::Component::SafePointer<AppRoot> safe (this);
+        juce::Component::SafePointer<Toast> sp (t);
+        juce::Timer::callAfterDelay (10000, [safe, sp] { if (safe != nullptr && sp != nullptr) safe->removeToast (sp.getComponent()); });
+    }
+    layoutToasts();
 }
 
 void AppRoot::connectionToastChanged (core::ConnectionWatch::Toast state)
@@ -422,8 +486,15 @@ bool AppRoot::handleShortcut (const juce::KeyPress& k)
 
 void AppRoot::resized()
 {
-    const int sw = sidebar->currentWidth();
-    sidebar->setBounds (0, 0, sw, getHeight());
+    // 방 화면이 들어갈 폭 (멤버 쪽 566 + 여백 54 + 오른쪽 패널 기본폭: 앱 940, 플러그인 860). 창이 좁으면 방 화면에서만
+    // 사이드바를 잠시 접고(56), 그래도 모자라면 숨긴다 (사용자 결정 2026-10-29). 홈에서는 늘 사용자가 정한 대로
+    const bool roomView = jam != nullptr && jam->isVisible() && ! minimized;
+    const int need = core::panel::chrome + core::panel::membersMin + core::panel::defaultWidth (core.isPlugin());
+    sidebar->setForcedCollapsed (roomView && getWidth() - Sidebar::openW < need);
+    const bool hideSidebar = roomView && getWidth() - Sidebar::closedW < need;
+    sidebar->setVisible (! hideSidebar);
+    const int sw = hideSidebar ? 0 : sidebar->currentWidth();
+    sidebar->setBounds (0, 0, juce::jmax (sw, Sidebar::closedW), getHeight());
     home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
     home->setBounds (getLocalBounds());
     if (jam != nullptr) jam->setBounds (getLocalBounds().withTrimmedLeft (sw));

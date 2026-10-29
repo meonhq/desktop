@@ -597,7 +597,7 @@ void MeonEditor::applyHomePreview()
         // jam:mini — 방 최소화 (홈 + 아래 막대, 배지 0). jam:minihost — 방장 + 긴 방 이름 + 입장 요청 1 + 새 채팅 3.
         // jam:miniarm — minihost 에서 막대의 나가기를 한 번 누른 상태 (방장 툴팁). jam:miniconfirm / jam:minicreate — 최소화 중
         // 공개 방 '바로 입장' / '방 만들기' 를 누른 확인 모달
-        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide";
+        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide" || p == "jam:minireqs";
         core::CreateRoom c;
         c.type = hostRoom ? "public" : "private";
         if (hostRoom) c.entryMode = juce::String ("approval");
@@ -611,7 +611,11 @@ void MeonEditor::applyHomePreview()
             if (safe != nullptr && p.startsWith ("jam:mini"))
             {
                 if (hostRoom)
-                    if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();
+                    if (auto* fake = safe->core.fakeServer())
+                    {
+                        fake->devJoinRequest();
+                        if (p == "jam:minireqs") fake->devJoinRequest();   // 홈·사이드바: 입장 요청 둘 (쌓인 토스트 + 참여 중 점)
+                    }
                 juce::Timer::callAfterDelay (800, [safe, p, hostRoom]
                 {
                     if (safe == nullptr || safe->appRoot == nullptr) return;

@@ -1,5 +1,6 @@
 #include "Sidebar.h"
 #include "../../MeonTheme.h"
+#include <map>
 
 namespace meon::ui
 {
@@ -35,7 +36,7 @@ struct Sidebar::Body : public juce::Component
 {
     explicit Body (Sidebar& s) : owner (s) { setRepaintsOnMouseActivity (false); }
 
-    enum class Kind { label, nav, header, separator, room, empty, friendOn, friendOff, offHeader, iconButton };
+    enum class Kind { label, nav, header, separator, room, empty, friendOn, friendOff, offHeader, iconButton, invite };
     struct Row
     {
         Kind kind;
@@ -53,12 +54,15 @@ struct Sidebar::Body : public juce::Component
     bool roomsOpen = true, friendsOpen = true, offlineOpen = false;   // 오프라인은 처음에 접힘
 
     Sidebar& owner;
+    struct InviteButtons { std::unique_ptr<Button> no, ok; };
+    std::map<juce::String, InviteButtons> inviteButtons;
 
     void rebuild()
     {
         rows.clear();
+        juce::StringArray liveInvites;
         const auto& s = owner.core.store().state();
-        const bool open = ! owner.collapsed;
+        const bool open = ! owner.shut();
         const int w = getWidth() > 0 ? getWidth() : owner.currentWidth();
         const int x = padX, rw = w - padX * 2;
         int y = padY;
@@ -152,6 +156,33 @@ struct Sidebar::Body : public juce::Component
         }
         if (open && friendsOpen)
         {
+            // 받은 초대: 친구 목록 위 카드 (홈·사이드바 디자인)
+            for (auto& inv : s.invites)
+            {
+                const int h = 9 + 32 + 9 + metric::smallH + 9;
+                Row r { Kind::invite, { x, y, rw, h }, inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title };
+                r.part = inv.from.part.value_or ("other");
+                add (std::move (r));
+                liveInvites.add (inv.id);
+                auto& b = inviteButtons[inv.id];
+                if (b.ok == nullptr)
+                {
+                    b.no = std::make_unique<Button> (Button::Kind::small, TXT ("거절"));
+                    b.ok = std::make_unique<Button> (Button::Kind::smallPrimary, TXT ("수락"));
+                    const auto id = inv.id;
+                    b.no->onPress = [this, id] { if (owner.onDeclineInvite) owner.onDeclineInvite (id); };
+                    b.ok->onPress = [this, id] { if (owner.onAcceptInvite) owner.onAcceptInvite (id); };
+                    addAndMakeVisible (*b.no);
+                    addAndMakeVisible (*b.ok);
+                }
+                const int by = y + 9 + 32 + 9;
+                const int ow = b.ok->getIdealWidth(), nw = b.no->getIdealWidth();
+                b.ok->setBounds (x + rw - 9 - ow, by, ow, metric::smallH);
+                b.no->setBounds (x + rw - 9 - ow - 6 - nw, by, nw, metric::smallH);
+                b.ok->setVisible (true);
+                b.no->setVisible (true);
+                y += h + 4 + rowGap;
+            }
             const juce::String myRoom = joined ? s.currentRoom->id : juce::String();
             for (auto* f : on)
             {
@@ -184,11 +215,20 @@ struct Sidebar::Body : public juce::Component
                 }
             }
         }
+        // 사라진 초대의 버튼은 지우고, 접혔으면 숨긴다
+        for (auto it = inviteButtons.begin(); it != inviteButtons.end();)
+        {
+            if (! liveInvites.contains (it->first)) { it = inviteButtons.erase (it); continue; }
+            ++it;
+        }
+        if (! (open && friendsOpen))
+            for (auto& kv : inviteButtons) { kv.second.no->setVisible (false); kv.second.ok->setVisible (false); }
         preferredH = y + padY;
     }
 
     int preferredH = 0;
 
+    // (목록이 다시 만들어질 때 지운 버튼의 콜백이 남지 않게 버튼은 map 이 소유한다)
     void rebuildAndLayout()
     {
         rebuild();
@@ -198,7 +238,7 @@ struct Sidebar::Body : public juce::Component
 
     void paint (juce::Graphics& g) override
     {
-        const bool open = ! owner.collapsed;
+        const bool open = ! owner.shut();
         for (int i = 0; i < (int) rows.size(); ++i)
         {
             const auto& r = rows[(size_t) i];
@@ -280,6 +320,23 @@ struct Sidebar::Body : public juce::Component
                     g.setColour (col::line);
                     g.fillRect (r.r);
                     break;
+                case Kind::invite:
+                {
+                    g.setColour (col::white);
+                    g.fillRoundedRectangle (rf, 6.0f);
+                    g.setColour (col::line);
+                    g.drawRoundedRectangle (rf.reduced (0.5f), 6.0f, 1.0f);
+                    const auto av = juce::Rectangle<float> (rf.getX() + 9.0f, rf.getY() + 9.0f, 32.0f, 32.0f);
+                    Avatar::paintCircle (g, av, r.part, 16.0f, col::ink, true);
+                    const auto t = juce::Rectangle<float> (av.getRight() + 9.0f, av.getY(), rf.getRight() - 9.0f - av.getRight() - 9.0f, 32.0f);
+                    g.setColour (col::ink);
+                    g.setFont (font (600, 13.0f));
+                    g.drawText (r.text, t.withHeight (17.0f).translated (0.0f, -0.5f), juce::Justification::centredLeft, true);
+                    g.setColour (col::inkSub);
+                    g.setFont (font (400, 12.0f));
+                    g.drawText (r.sub, t.withTrimmedTop (17.0f).withHeight (16.0f), juce::Justification::centredLeft, true);
+                    break;
+                }
                 case Kind::empty:
                     g.setColour (col::inkFaint);
                     g.setFont (font (400, 13.0f));
@@ -391,6 +448,17 @@ void Sidebar::setCollapsed (bool b)
     repaint();
 }
 
+void Sidebar::setForcedCollapsed (bool b)
+{
+    // AppRoot::resized 가 부른다 (onLayoutChanged 를 부르지 않는다: 폭은 부른 쪽이 정한다)
+    if (b == forced) return;
+    forced = b;
+    body->hotRow = -1;
+    hot = 0;
+    resized();
+    repaint();
+}
+
 juce::Rectangle<int> Sidebar::devRow (const juce::String& text) const
 {
     for (auto& r : body->rows)
@@ -418,7 +486,7 @@ void Sidebar::stateChanged (core::StateKey k)
     using K = core::StateKey;
     switch (k)
     {
-        case K::friends: case K::friendRequests: case K::currentRoom: case K::joinRequests: case K::me:
+        case K::friends: case K::friendRequests: case K::currentRoom: case K::joinRequests: case K::me: case K::invites:
             body->rebuild();
             resized();
             body->repaint();
@@ -430,6 +498,7 @@ void Sidebar::stateChanged (core::StateKey k)
 
 juce::Rectangle<int> Sidebar::toggleBounds() const
 {
+    if (forced) return {};   // 잠시 접힌 동안은 펼칠 자리가 없다
     return collapsed ? juce::Rectangle<int> (12, 10, 32, 32) : juce::Rectangle<int> (getWidth() - 12 - 32, 10, 32, 32);
 }
 
@@ -458,11 +527,13 @@ void Sidebar::paint (juce::Graphics& g)
     g.fillRect (0, getHeight() - profileH, getWidth() - 1, 1);
 
     // 머리말: 로고 (펼쳤을 때만) + 접기 버튼
-    if (! collapsed)
+    if (! shut())
         meon::drawLogo (g, juce::Rectangle<float> (18.0f, 14.0f, 140.0f, 24.0f), 24.0f, col::ink, juce::Justification::centredLeft);
-    const auto tb = toggleBounds().toFloat();
-    if (hot == 1) { g.setColour (buttonHover); g.fillRoundedRectangle (tb, 6.0f); }
-    drawIcon (g, icons::Id::sidebar, tb, 18.0f, hot == 1 ? col::ink : col::inkSub);
+    if (const auto tb = toggleBounds().toFloat(); ! tb.isEmpty())
+    {
+        if (hot == 1) { g.setColour (buttonHover); g.fillRoundedRectangle (tb, 6.0f); }
+        drawIcon (g, icons::Id::sidebar, tb, 18.0f, hot == 1 ? col::ink : col::inkSub);
+    }
 
     // 내 프로필 줄
     const auto pb = profileBounds().toFloat();
@@ -472,7 +543,7 @@ void Sidebar::paint (juce::Graphics& g)
     const juce::String part = me ? me->part.value_or ("other") : juce::String ("other");
     const auto av = juce::Rectangle<float> (pb.getX() + 5.0f, pb.getCentreY() - 14.0f, 28.0f, 28.0f);
     Avatar::paintCircle (g, av, part, 16.0f, col::ink, true);
-    if (! collapsed)
+    if (! shut())
     {
         const float tx = av.getRight() + 9.0f;
         const float tw = pb.getRight() - 2.0f - 20.0f - 6.0f - tx;

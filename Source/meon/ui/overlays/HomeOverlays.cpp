@@ -613,8 +613,17 @@ namespace
     juce::Font toastSubFont()   { return font (400, 12.0f); }
 }
 
+void Toast::setSecondary (const juce::String& label)
+{
+    secondary = std::make_unique<Button> (Button::Kind::small, label);
+    secondary->onPress = [this] { if (onSecondary) onSecondary(); };
+    addAndMakeVisible (*secondary);
+    resized();
+}
+
 int Toast::textRight (int w) const
 {
+    if (secondary != nullptr) return secondary->getX() - 9;
     if (action != nullptr) return action->getX() - 9;
     return (close.isVisible() ? w - 12 - 19 : w - 12) - 9;
 }
@@ -670,11 +679,20 @@ void Toast::resized()
     close.setBounds (kind == Kind::warning && sub.isNotEmpty()
                          ? juce::Rectangle<int> (closeArea.getX(), toastTitleY + (toastTitleH - 19) / 2, 19, 19)
                          : closeArea.withSizeKeepingCentre (19, 19));
+    // 닫기 없이 두 버튼 (입장 요청, 디자인: 오른쪽 여백 12, 사이 9)
+    const bool twoButtons = ! close.isVisible() && secondary != nullptr;
+    if (twoButtons) r = getLocalBounds().withTrimmedLeft (toastPadX).withTrimmedRight (12);
     if (action != nullptr)
     {
-        r.removeFromRight (9);
+        if (! twoButtons) r.removeFromRight (9);
         const int w = action->getIdealWidth();
         action->setBounds (r.removeFromRight (w).withSizeKeepingCentre (w, metric::smallH));
+    }
+    if (secondary != nullptr)
+    {
+        r.removeFromRight (twoButtons ? 9 : 6);
+        const int w = secondary->getIdealWidth();
+        secondary->setBounds (r.removeFromRight (w).withSizeKeepingCentre (w, metric::smallH));
     }
 }
 

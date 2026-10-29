@@ -210,6 +210,9 @@ public:
     int heightForWidth (int w) const;
     /** 닫기 버튼을 숨긴다 (연결이 끊긴 동안의 토스트: 다시 붙으면 저절로 바뀐다) */
     void setClosable (bool c) { close.setVisible (c); repaint(); }
+    /** 주 버튼 왼쪽에 보조 버튼 (입장 요청의 "거절", 홈·사이드바 디자인). 없으면 지금까지와 같다 */
+    void setSecondary (const juce::String& label);
+    std::function<void()> onSecondary;
     juce::String key;   // 초대 ID 등 (지울 때 찾는 용도)
     const juce::String& getTitle() const { return title; }
     void paint (juce::Graphics&) override;
@@ -218,7 +221,7 @@ public:
 private:
     Kind kind = Kind::normal;
     juce::String title, sub;
-    std::unique_ptr<Button> action;
+    std::unique_ptr<Button> action, secondary;
     int textRight (int w) const;
     float subHeight (int w) const;
     IconButton close;
