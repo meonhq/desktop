@@ -391,6 +391,14 @@ void Sidebar::setCollapsed (bool b)
     repaint();
 }
 
+juce::Rectangle<int> Sidebar::devRow (const juce::String& text) const
+{
+    for (auto& r : body->rows)
+        if ((r.kind == Body::Kind::nav || r.kind == Body::Kind::room) && r.text == text)
+            return getLocalArea (body.get(), r.r);
+    return {};
+}
+
 void Sidebar::setPage (Page p)
 {
     if (p == page) return;

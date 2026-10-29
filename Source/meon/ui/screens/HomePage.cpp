@@ -122,9 +122,99 @@ HomePage::HomePage (core::MeonCore& c) : core (c), plugin (c.isPlugin())
         }
     }
 
+    // 내 프로필
+    addAndMakeVisible (editBtn);
+    addAndMakeVisible (copyBtn);
+    editBtn.onPress = [this] { if (onOpenSettings) onOpenSettings (1); };
+    copyBtn.onPress = [this]
+    {
+        if (const auto& me = core.store().state().me) juce::SystemClipboard::copyTextToClipboard ("@" + me->username);
+        copiedAt = juce::Time::getMillisecondCounter();
+        copyBtn.setButtonText (TXT ("복사됨"));
+        resized();
+    };
+
     core.store().addListener (this);
+    rebuildGroups();
     refresh();
     startTimer (250);
+}
+
+//==============================================================================
+std::vector<int> HomePage::jamDays (int year, int month) const
+{
+    // 합주한 날: 서버에 아직 없는 자료라 디자인의 목 데이터 (2026년 8~10월). 최근 같이 합주한 사람이 없으면 비움
+    if (! hasRecent() || year != 2026) return {};
+    if (month == 10) return { 3, 5, 9, 12, 15, 18, 20, 22, 24, 25, 26, 27, 29 };
+    if (month == 9) return { 6, 12, 19, 21, 26, 28 };
+    if (month == 8) return { 8, 15, 22, 29 };
+    return {};
+}
+
+int HomePage::calRows() const
+{
+    const auto now = juce::Time::getCurrentTime();
+    int y = now.getYear(), m = now.getMonth() + calOff;   // getMonth 0~11
+    while (m < 0) { m += 12; --y; }
+    const juce::Time first (y, m, 1, 0, 0);
+    const int lead = first.getDayOfWeek();
+    const int days = juce::Time (m == 11 ? y + 1 : y, (m + 1) % 12, 1, 0, 0).toMilliseconds() > first.toMilliseconds()
+                         ? (int) ((juce::Time (m == 11 ? y + 1 : y, (m + 1) % 12, 1, 0, 0) - first).inDays() + 0.5) : 30;
+    return (lead + days + 6) / 7;
+}
+
+void HomePage::rebuildGroups()
+{
+    for (auto& g : groups) if (g.button != nullptr) removeChildComponent (g.button.get());
+    groups.clear();
+    const auto& s = core.store().state();
+    const juce::String myRoom = s.currentRoom ? s.currentRoom->id : juce::String();
+    for (auto& f : s.friends)
+    {
+        if (f.status != "in_room" || ! f.room || f.room->id == myRoom) continue;
+        auto it = std::find_if (groups.begin(), groups.end(), [&f] (const JamGroup& g) { return g.roomId == f.room->id; });
+        if (it == groups.end())
+        {
+            JamGroup g;
+            g.roomId = f.room->id;
+            g.title = f.room->title;
+            g.button = std::make_unique<Button> (Button::Kind::small);
+            addChildComponent (*g.button);
+            groups.push_back (std::move (g));
+            it = groups.end() - 1;
+        }
+        it->friends.push_back (f);
+    }
+    for (size_t i = 0; i < groups.size(); ++i)
+    {
+        const auto first = groups[i].friends.front();
+        groups[i].button->onPress = [this, first]
+        {
+            using J = core::HomeController::FriendJoin;
+            if (core.home().friendJoinState (first) == J::requested) return;
+            if (onJoinFriend) onJoinFriend (first);
+        };
+    }
+    refreshGroupButtons();
+}
+
+void HomePage::refreshGroupButtons()
+{
+    using J = core::HomeController::FriendJoin;
+    for (auto& g : groups)
+    {
+        const auto st = core.home().friendJoinState (g.friends.front());
+        g.button->setVisible (st != J::none);
+        g.button->setButtonText (st == J::request ? TXT ("입장 요청") : st == J::requested ? TXT ("요청 보냄") : TXT ("참여"));
+        g.button->setEnabled (st != J::requested);
+    }
+}
+
+int HomePage::jamFriendCount() const
+{
+    int n = 0;
+    for (auto& g : groups) n += (int) g.friends.size();
+    return n;
 }
 
 HomePage::~HomePage()
@@ -224,7 +314,7 @@ HomePage::Layout HomePage::layout() const
     l.profileCard = c0;
     l.recentCard = l.col[1];
     auto c2 = l.col[2];
-    l.calCard = c2.removeFromTop (juce::jmin (c2.getHeight() / 2, 290));
+    l.calCard = c2.removeFromTop (1 + cardHeadH + 9 + 28 + 2 + calRows() * 34 - 2 + 12 + 1 + 34);
     c2.removeFromTop (gap);
     l.jamCard = c2;
 
@@ -288,6 +378,34 @@ void HomePage::resized()
         {
             const int w = browseRooms.getIdealWidth();
             browseRooms.setBounds (body.getCentreX() - w / 2, body.getCentreY() + 6, w, metric::buttonH);
+        }
+    }
+
+    // 내 프로필: 편집(머리말 오른쪽 12), 복사(이름 줄 오른쪽)
+    {
+        const int ew = editBtn.getIdealWidth();
+        editBtn.setBounds (l.profileCard.getRight() - 12 - ew, l.profileCard.getY() + (cardHeadH - metric::smallH) / 2, ew, metric::smallH);
+        const int cw = copyBtn.getIdealWidth();
+        const int rowY = l.profileCard.getY() + cardHeadH + 1 + 18;
+        copyBtn.setBounds (l.profileCard.getRight() - 18 - cw, rowY + 24 - metric::smallH / 2, cw, metric::smallH);
+    }
+
+    // 합주 기록: 이전·다음 달
+    {
+        const int y = l.calCard.getY() + 12;
+        calNext = { l.calCard.getRight() - 12 - 24, y, 24, 24 };
+        calPrev = { calNext.getX() - 2 - 76 - 2 - 24, y, 24, 24 };
+    }
+
+    // 합주 중인 친구: 줄마다 버튼
+    {
+        auto rows = l.jamCard.withTrimmedTop (cardHeadH + 1 + 6).reduced (9, 0);
+        for (auto& g : groups)
+        {
+            const auto row = rows.removeFromTop (recentRowH);
+            rows.removeFromTop (recentGap);
+            const int w = g.button->getIdealWidth();
+            g.button->setBounds (row.getRight() - 9 - w, row.getCentreY() - metric::smallH / 2, w, metric::smallH);
         }
     }
 }
@@ -406,13 +524,153 @@ void HomePage::paint (juce::Graphics& g)
                    juce::Justification::centred);
         }
     }
+
+    // 내 프로필 (이름·파트·아이디는 실제, 합주한 사람·이번 달 합주는 목 데이터)
+    paintCard (g, l.profileCard, TXT ("내 프로필"));
+    {
+        const auto& me = s.me;
+        const juce::String part = me ? me->part.value_or ("other") : juce::String ("other");
+        const int x0 = l.profileCard.getX() + pad;
+        const int y0 = l.profileCard.getY() + cardHeadH + 1 + pad;
+        const auto av = juce::Rectangle<float> ((float) x0, (float) y0, 48.0f, 48.0f);
+        Avatar::paintCircle (g, av, part, 24.0f, col::ink, true);
+        const int tx = x0 + 48 + 12, right = copyBtn.getX() - 9;
+        label (g, me ? me->nickname.value_or (me->username) : juce::String(), { tx, y0 + 4, right - tx, 20 }, 600, 16.0f, col::ink);
+        const auto pf = font (400, 12.0f);
+        const auto pl = icons::partLabel (part);
+        const int pw = (int) std::ceil (textWidth (pf, pl)) + 1;
+        label (g, pl, { tx, y0 + 28, pw, 16 }, 400, 12.0f, col::inkSub);
+        g.setColour (col::inkFaint);
+        g.fillEllipse ((float) (tx + pw + 4), (float) y0 + 35.0f, 2.0f, 2.0f);
+        label (g, me ? "@" + me->username : juce::String(), { tx + pw + 10, y0 + 28, juce::jmax (0, right - tx - pw - 10), 16 }, 400, 12.0f, col::inkFaint);
+
+        const int sy = y0 + 48 + 18, sw = (l.profileCard.getWidth() - pad * 2 - 12) / 3;
+        const juce::String vals[3] = { juce::String ((int) s.friends.size()), juce::String ((int) recent.size()),
+                                       juce::String ((int) jamDays (juce::Time::getCurrentTime().getYear(), juce::Time::getCurrentTime().getMonth() + 1).size()) + TXT ("회") };
+        const juce::String names[3] = { TXT ("친구"), TXT ("합주한 사람"), TXT ("이번 달 합주") };
+        for (int i = 0; i < 3; ++i)
+        {
+            const juce::Rectangle<int> box (x0 + i * (sw + 6), sy, i == 2 ? l.profileCard.getRight() - pad - (x0 + i * (sw + 6)) : sw, 9 + 22 + 3 + 15 + 9);
+            g.setColour (col::rowHover);
+            g.fillRoundedRectangle (box.toFloat(), 6.0f);
+            const auto vf = font (600, 18.0f);
+            g.setColour (col::ink);
+            g.setFont (vf);
+            drawTabular (g, vf, vals[i], (float) box.getX() + 12.0f, (float) box.getY() + 9.0f, 22.0f);
+            label (g, names[i], { box.getX() + 12, box.getY() + 9 + 22 + 3, box.getWidth() - 12, 15 }, 400, 12.0f, col::inkSub);
+        }
+    }
+
+    // 합주 기록 (달력: 오늘은 실제 날짜, 합주한 날은 목 데이터)
+    paintCard (g, l.calCard, TXT ("합주 기록"));
+    {
+        const auto now = juce::Time::getCurrentTime();
+        int y = now.getYear(), m = now.getMonth() + calOff;
+        while (m < 0) { m += 12; --y; }
+        const juce::Time first (y, m, 1, 0, 0);
+        const int lead = first.getDayOfWeek();
+        const juce::Time next (m == 11 ? y + 1 : y, (m + 1) % 12, 1, 0, 0);
+        const int days = (int) ((next - first).inDays() + 0.5);
+        const juce::Time prevFirst (m == 0 ? y - 1 : y, (m + 11) % 12, 1, 0, 0);
+        const int prevDays = (int) ((first - prevFirst).inDays() + 0.5);
+        const auto jam = jamDays (y, m + 1);
+
+        // 머리말 오른쪽: < 2026년 10월 >
+        if (calHot == 1) { g.setColour (col::hoverBg); g.fillRoundedRectangle (calPrev.toFloat(), 5.0f); }
+        icons::draw (g, icons::Id::chevronLeft, calPrev.toFloat().withSizeKeepingCentre (14.0f, 14.0f), calHot == 1 ? col::ink : col::inkSub);
+        label (g, juce::String (y) + TXT ("년 ") + juce::String (m + 1) + TXT ("월"), { calPrev.getRight() + 2, calPrev.getY(), 76, 24 }, 500, 13.0f, col::ink,
+               juce::Justification::centred);
+        const bool canNext = calOff < 0;
+        if (calHot == 2 && canNext) { g.setColour (col::hoverBg); g.fillRoundedRectangle (calNext.toFloat(), 5.0f); }
+        icons::draw (g, icons::Id::chevronRight, calNext.toFloat().withSizeKeepingCentre (14.0f, 14.0f), canNext ? col::inkSub : col::statusOff);
+
+        const auto body = l.calCard.withTrimmedTop (cardHeadH + 1).withTrimmedLeft (12).withTrimmedRight (12);
+        const int cellW = body.getWidth() / 7;
+        const juce::String week[7] = { TXT ("일"), TXT ("월"), TXT ("화"), TXT ("수"), TXT ("목"), TXT ("금"), TXT ("토") };
+        for (int i = 0; i < 7; ++i)
+            label (g, week[i], { body.getX() + i * cellW, body.getY() + 9, cellW, 28 }, 500, 11.0f, col::inkFaint, juce::Justification::centred);
+        const int rows = (lead + days + 6) / 7;
+        for (int cell = 0; cell < rows * 7; ++cell)
+        {
+            const int d = cell - lead + 1;
+            const int cx = body.getX() + (cell % 7) * cellW, cy = body.getY() + 9 + 28 + 2 + (cell / 7) * 34;
+            const auto box = juce::Rectangle<float> ((float) cx, (float) cy, (float) cellW, 32.0f);
+            const float sz = juce::jmin (28.0f, (float) cellW);
+            const auto circ = box.withSizeKeepingCentre (sz, sz);
+            juce::String t;
+            juce::Colour ink = col::ink;
+            int fw = 400;
+            if (d < 1) { t = juce::String (prevDays + d); ink = col::statusOff; }
+            else if (d > days) { t = juce::String (d - days); ink = col::statusOff; }
+            else
+            {
+                t = juce::String (d);
+                const bool isJam = std::find (jam.begin(), jam.end(), d) != jam.end();
+                const bool today = calOff == 0 && d == now.getDayOfMonth();
+                if (calOff == 0 && d > now.getDayOfMonth()) ink = col::inkFaint;
+                if (isJam) { g.setColour (col::accent); g.fillEllipse (circ); fw = 600; }
+                if (today)
+                {
+                    g.setColour (col::ink);
+                    g.drawEllipse (circ.withSizeKeepingCentre (26.5f, 26.5f), 1.5f);
+                    fw = 600;
+                }
+            }
+            g.setColour (ink);
+            g.setFont (font (fw, 12.0f));
+            g.drawText (t, box, juce::Justification::centred, false);
+        }
+        // 아래: 합주한 날 N일
+        const int fy = body.getY() + 9 + 28 + 2 + rows * 34 - 2 + 12;
+        g.setColour (col::line);
+        g.fillRect (l.calCard.getX() + 1, fy, l.calCard.getWidth() - 2, 1);
+        label (g, TXT ("합주한 날"), { l.calCard.getX() + pad, fy + 1, 120, 33 }, 400, 12.0f, col::inkSub);
+        label (g, juce::String ((int) jam.size()) + TXT ("일"), { l.calCard.getRight() - pad - 80, fy + 1, 80, 33 }, 600, 12.0f, col::ink,
+               juce::Justification::centredRight);
+    }
+
+    // 합주 중인 친구 (실제 데이터)
+    paintCard (g, l.jamCard, TXT ("합주 중인 친구"), juce::String (jamFriendCount()));
+    {
+        if (groups.empty())
+        {
+            label (g, TXT ("지금 합주 중인 친구가 없어요"), l.jamCard.withTrimmedTop (cardHeadH + 1), 400, 13.0f, col::inkFaint, juce::Justification::centred);
+        }
+        else
+        {
+            auto rows = l.jamCard.withTrimmedTop (cardHeadH + 1 + 6).reduced (9, 0);
+            for (auto& gr : groups)
+            {
+                const auto row = rows.removeFromTop (recentRowH);
+                rows.removeFromTop (recentGap);
+                const int n = juce::jmin (3, (int) gr.friends.size());
+                float ax = (float) row.getX() + 9.0f;
+                for (int i = 0; i < n; ++i)
+                {
+                    const auto av = juce::Rectangle<float> (ax, (float) row.getCentreY() - 14.0f, 28.0f, 28.0f);
+                    g.setColour (col::white);
+                    g.fillEllipse (av.expanded (2.0f));   // 흰 테두리 2 (겹친 아바타 사이)
+                    Avatar::paintCircle (g, av, gr.friends[(size_t) i].user.part.value_or ("other"), 14.0f, col::ink, true);
+                    ax += 28.0f - 8.0f;
+                }
+                const int tx = (int) (ax + 8.0f) + 9;
+                const int right = gr.button->isVisible() ? gr.button->getX() - 9 : row.getRight() - 9;
+                const int ty = row.getCentreY() - 18;
+                label (g, gr.title, { tx, ty, right - tx, 17 }, 600, 13.0f, col::ink);
+                juce::StringArray names;
+                for (auto& f : gr.friends) names.add (f.user.nickname.value_or (f.user.username));
+                label (g, names.joinIntoString (", ") + TXT (" 합주 중"), { tx, ty + 17 + 3, right - tx, 16 }, 400, 12.0f, col::inkSub);
+            }
+        }
+    }
 }
 
 //==============================================================================
 void HomePage::stateChanged (core::StateKey k)
 {
     using K = core::StateKey;
-    if (k == K::link || k == K::myRtt || k == K::currentRoom || k == K::me || k == K::friends)
+    if (k == K::friends || k == K::currentRoom || k == K::publicRooms) rebuildGroups();
+    if (k == K::link || k == K::myRtt || k == K::currentRoom || k == K::me || k == K::friends || k == K::publicRooms)
         refresh();
 }
 
@@ -422,14 +680,22 @@ void HomePage::timerCallback()
     bool pending = false;
     for (auto& r : recent) if (r.friend_ && r.state == 1) pending = true;
     if (pending) { refreshRecentButtons(); repaint (layout().recentCard); }
-    if (++ticks % 4 == 0) refresh();
+    if (copiedAt != 0 && juce::Time::getMillisecondCounter() - copiedAt >= 1500)
+    {
+        copiedAt = 0;
+        copyBtn.setButtonText (TXT ("복사"));
+        resized();
+    }
+    if (++ticks % 4 == 0) { refreshGroupButtons(); refresh(); }
 }
 
 void HomePage::mouseMove (const juce::MouseEvent& e)
 {
     const bool h = moreBounds.contains (e.getPosition());
     if (h != moreHot) { moreHot = h; repaint (moreBounds); }
-    setMouseCursor (h ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    const int ch = calPrev.contains (e.getPosition()) ? 1 : (calNext.contains (e.getPosition()) && calOff < 0 ? 2 : 0);
+    if (ch != calHot) { calHot = ch; repaint (layout().calCard); }
+    setMouseCursor (h || ch != 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void HomePage::mouseExit (const juce::MouseEvent&)
@@ -439,6 +705,14 @@ void HomePage::mouseExit (const juce::MouseEvent&)
 
 void HomePage::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mouseWasClicked() && (calPrev.contains (e.getPosition()) || calNext.contains (e.getPosition())))
+    {
+        if (calPrev.contains (e.getPosition())) calOff = juce::jmax (-12, calOff - 1);
+        else if (calOff < 0) ++calOff;
+        resized();
+        repaint();
+        return;
+    }
     if (e.mouseWasClicked() && moreBounds.contains (e.getPosition()))
     {
         recentAll = ! recentAll;

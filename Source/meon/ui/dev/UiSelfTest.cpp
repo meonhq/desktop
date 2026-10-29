@@ -224,7 +224,24 @@ void UiSelfTest::enterNewRoom (bool approval)
 void UiSelfTest::minimize()
 {
     add ([this] { if (auto* j = jam()) click (j->lobby); }, 0);
-    waitUntil (TXT ("최소화 (홈 + 막대)"), [this] { return root.isMinimized() && home().isShowing() && home().hasRoomBar(); });
+    // 홈·사이드바 디자인: 최소화 막대 없이 사이드바 "참여 중" 항목이 방을 보여 준다
+    waitUntil (TXT ("최소화 (홈 + 사이드바 참여 중)"), [this]
+    {
+        const auto& s = core.store().state();
+        return root.isMinimized() && home().isShowing() && ! home().hasRoomBar()
+            && s.currentRoom && ! root.sidebar->devRow (s.currentRoom->title).isEmpty();
+    });
+    wait (200);
+}
+
+void UiSelfTest::clickSidebar (const juce::String& text)
+{
+    add ([this, text]
+    {
+        const auto r = root.sidebar->devRow (text);
+        expect (! r.isEmpty(), TXT ("사이드바에 \"") + text + "\"");
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+    }, 0);
     wait (200);
 }
 
@@ -308,9 +325,6 @@ void UiSelfTest::addMinimizeTests()
                 TXT ("오디오 연결 그대로 (단계 ") + juce::String ((int) (*state)["phase"]) + " -> " + juce::String ((int) session->getPhase()) + ")");
         expect (session->isSelfMonitorAudible() == (bool) (*state)["selfMon"] && ! session->isHomeMonitorAudible(), TXT ("셀프 모니터 같음 (끔)"));
         expect (! home().monitorTag.isVisible(), TXT ("홈의 \"내 소리 듣는 중\" 표시 없음"));
-        expect (home().devRoomBar()->getHeight() == HomeScreen::roomBarH && home().devRoomBar()->getBottom() == home().getHeight(), TXT ("막대 57, 아래에 붙음"));
-        expect (home().roomsCard.getBottom() <= home().devRoomBar()->getY(), TXT ("목록은 막대 위로 줄어듦"));
-        expect (home().devRoomBarUnread() == 0, TXT ("새 채팅 0 부터"));
         // 최소화 중 받은 채팅 2개
         auto& chat = session->chat();
         chat.received ({ chat.group(), "u_left_preview", "id:uitest1", TXT ("최소화 중 1") });
@@ -319,26 +333,25 @@ void UiSelfTest::addMinimizeTests()
     }, 300);
     add ([this]
     {
-        expect (home().devRoomBarUnread() == 2, TXT ("막대: 새 채팅 2"));
         bool found = false;
         for (auto* t : root.toasts)
             if (t->getTitle() == TXT ("자가 테스트 토스트"))
             {
                 found = true;
-                expect (t->getBottom() == root.getHeight() - 69, TXT ("토스트 아래 여백 69"));
+                expect (t->getBottom() == root.getHeight() - 12, TXT ("토스트 아래 여백 12 (막대 없음)"));
             }
         expect (found, TXT ("토스트가 뜸"));
         // 셀프 모니터를 켜도 같은 값
         core.jam()->setSelfMonitor (true);
         expect (core.jam()->isSelfMonitorAudible(), TXT ("최소화 중 셀프 모니터 켬 → 들림"));
-        click (*home().devRoomBar(), { 60, 28 });   // 막대 왼쪽 (방 이름)
     }, 0);
-    waitUntil (TXT ("막대를 누르면 합주 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
+    clickSidebar (TXT ("자가 테스트 방"));   // 사이드바 참여 중 항목
+    waitUntil (TXT ("참여 중 항목을 누르면 합주 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
     add ([this, state]
     {
         auto* j = jam();
         auto* session = core.jam();
-        expect (! home().isVisible() && ! home().hasRoomBar(), TXT ("돌아오면 홈·막대 숨김"));
+        expect (! home().isVisible() && ! home().hasRoomBar(), TXT ("돌아오면 홈 숨김"));
         expect (session->chat().getUnread() == 0, TXT ("돌아오면 새 채팅 읽음"));
         expect (j->chatInput.getText() == (*state)["text"].toString(), TXT ("입력 중인 글 그대로"));
         expect (std::abs (j->chatViewport.getViewPositionY() - (int) (*state)["scroll"]) <= 1,
@@ -350,31 +363,16 @@ void UiSelfTest::addMinimizeTests()
         session->setHomeMonitor (false);
     });
 
-    begin (TXT ("5 최소화: 막대의 나가기"));
-    minimize();
-    add ([this] { click ((*home().devRoomBarLeave())); });
-    add ([this]
-    {
-        auto& bar = *home().devRoomBar();
-        auto& leaveB = *home().devRoomBarLeave();
-        expect (leaveB.isArmed() && root.isMinimized() && inRoom(), TXT ("첫 클릭: 막대 그대로, 확인 상태 (막대는 돌아가지 않음)"));
-        expect (leaveB.getButtonText() == TXT ("한 번 더 누르면 나가요"), TXT ("확인 문구"));
-        expect (home().tip.isVisible() && home().tip.getBottom() == home().getLocalPoint (&bar, leaveB.getPosition()).y - 6,
-                TXT ("방장 툴팁: 버튼 위 6"));
-        click (home().roomsCard, { 30, 24 });   // 바깥 (공개 방 제목)
-    });
-    add ([this]
-    {
-        expect (! (*home().devRoomBarLeave()).isArmed() && root.isMinimized(), TXT ("바깥 클릭: 원래대로"));
-        click ((*home().devRoomBarLeave()));
-    });
-    add ([this] { click ((*home().devRoomBarLeave())); }, 0);
-    waitUntil (TXT ("막대에서 두 번 눌러 나감"), [this] { return ! inRoom() && ! home().hasRoomBar(); });
-    add ([this] { expect (! root.isMinimized() && home().isShowing() && jam() == nullptr, TXT ("나가면 막대 사라지고 보통 홈")); });
+    // 막대의 나가기는 없다 (최소화 막대를 뺐다): 합주 화면에서 나간다
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("합주 화면에서 두 번 눌러 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
 
     begin (TXT ("5 최소화: 다른 방 확인 모달"));
     enterNewRoom();
     minimize();
+    clickSidebar (TXT ("공개 방"));   // 방 목록은 공개 방 쪽에
+    add ([this] { expect (root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("공개 방 쪽")); });
     auto target = std::make_shared<juce::String>();
     auto pickCard = [this, target] () -> juce::Button*
     {
@@ -419,12 +417,13 @@ void UiSelfTest::addMinimizeTests()
 
     begin (TXT ("5 최소화: 친구 참여·코드로 입장"));
     minimize();
+    clickSidebar (TXT ("홈"));
     add ([this]
     {
-        // 친구 목록의 참여·요청 (승인 방에 있는 친구는 "요청")
-        auto* b = findButton (home().friendsCard, TXT ("요청"));
-        if (b == nullptr) b = findButton (home().friendsCard, TXT ("참여"));
-        expect (b != nullptr, TXT ("친구 목록에 참여·요청 버튼"));
+        // 홈 "합주 중인 친구" 카드의 참여·입장 요청 (승인 방에 있는 친구는 "입장 요청")
+        auto* b = findButton (home(), TXT ("입장 요청"));
+        if (b == nullptr) b = findButton (home(), TXT ("참여"));
+        expect (b != nullptr, TXT ("합주 중인 친구에 참여·입장 요청 버튼"));
         if (b != nullptr) click (*b);
     }, 300);
     add ([this]
@@ -453,6 +452,7 @@ void UiSelfTest::addMinimizeTests()
 
     begin (TXT ("5 최소화: 새 방 확인 모달"));
     minimize();
+    clickSidebar (TXT ("공개 방"));   // 방 만들기는 공개 방 쪽 머리말에
     add ([this] { click (home().createRoom); }, 300);
     add ([this]
     {

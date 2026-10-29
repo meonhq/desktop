@@ -77,6 +77,7 @@ private:
     // 방에 들어가는 단계 (approval: 방장인 승인 방)
     void enterNewRoom (bool approval = false);
     void minimize();
+    void clickSidebar (const juce::String& text);   // 사이드바 줄(메뉴·참여 중 방)을 누른다
 
     // 시나리오
     void addLeaveTests();

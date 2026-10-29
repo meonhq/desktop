@@ -811,6 +811,7 @@ void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePa
         auto page = std::make_unique<HomePage> (core);
         page->onOpenSettings = [this] (int tab) { if (onOpenSettingsTab) onOpenSettingsTab (tab); };
         page->onGoRooms = [this] { if (onShowRooms) onShowRooms(); };
+        page->onJoinFriend = [this] (const core::Friend& f) { joinFriend (f); };
         homePage = std::move (page);
         addChildComponent (*homePage);
     }

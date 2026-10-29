@@ -27,6 +27,8 @@ public:
     Page getPage() const { return page; }
     /** 프로필 메뉴가 열려 있으면 프로필 줄을 선택된 색으로 */
     void setProfileMenuOpen (bool);
+    /** 개발용 (화면 자가 테스트): 글자가 text 인 줄(메뉴·참여 중 방)의 사이드바 안 위치. 없으면 빈 사각형 */
+    juce::Rectangle<int> devRow (const juce::String& text) const;
 
     std::function<void()> onLayoutChanged;   // 접기·펼치기 (폭이 바뀐다)
     std::function<void()> onHome, onRooms, onJoinCode, onShowRoom, onCreateRoom, onAddFriend, onProfileMenu;

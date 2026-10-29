@@ -25,6 +25,7 @@ public:
 
     std::function<void (int tab)> onOpenSettings;   // 0 계정, 1 프로필, 2 오디오 …
     std::function<void()> onGoRooms;                 // "공개 방 둘러보기"
+    std::function<void (const core::Friend&)> onJoinFriend;   // 합주 중인 친구의 참여·입장 요청 (HomeScreen::joinFriend)
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -63,6 +64,30 @@ private:
     bool hasRecent() const { return ! recent.empty(); }
     int recentShown() const { return recentAll ? (int) recent.size() : juce::jmin (8, (int) recent.size()); }
     void refreshRecentButtons();
+
+    // 내 프로필
+    Button editBtn { Button::Kind::small, TXT ("편집") };
+    Button copyBtn { Button::Kind::small, TXT ("복사") };
+    juce::uint32 copiedAt = 0;
+
+    // 합주 기록 (목 데이터: 합주한 날)
+    int calOff = 0;             // 0 = 이번 달, -1 = 지난달 … (-12 까지)
+    int calHot = 0;             // 1 이전 달, 2 다음 달
+    std::vector<int> jamDays (int year, int month) const;   // month 1~12
+    int calRows() const;
+    juce::Rectangle<int> calPrev, calNext;
+
+    // 합주 중인 친구 (실제: 친구 상태 in_room, 방마다 묶음. 내가 있는 방은 뺀다)
+    struct JamGroup
+    {
+        juce::String roomId, title;
+        std::vector<core::Friend> friends;
+        std::unique_ptr<Button> button;
+    };
+    std::vector<JamGroup> groups;
+    void rebuildGroups();
+    void refreshGroupButtons();
+    int jamFriendCount() const;
 
     // 배치 (paint·resized 가 같이 쓴다)
     struct Layout
