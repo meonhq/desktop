@@ -3,6 +3,7 @@
 #pragma once
 
 #include "screens/HomeScreen.h"
+#include "shell/Sidebar.h"
 #include "overlays/HomeOverlays.h"
 #include "../core/MeonCore.h"
 
@@ -43,6 +44,15 @@ private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     HomeScreen::UpdateHooks update;
+    // 왼쪽 사이드바 (홈·사이드바 디자인). 홈 화면은 창 전체를 덮되 사이드바 자리는 비워 둔다 (모달이 창 전체를 덮게).
+    // 합주 화면은 사이드바 오른쪽에만 둔다 (방 화면 안은 그대로)
+    std::unique_ptr<Sidebar> sidebar;
+    std::unique_ptr<ProfileMenu> profileMenu;
+    Sidebar::Page page = Sidebar::Page::home;   // 방 밖(또는 최소화)에서 보는 쪽: 홈 / 공개 방
+    void syncSidebar();
+    void showPage (Sidebar::Page);
+    void openProfileMenu();
+    void closeProfileMenu();
     std::unique_ptr<HomeScreen> home;
     std::unique_ptr<juce::Component> jam;
     std::unique_ptr<JoinFailDialog> fail;

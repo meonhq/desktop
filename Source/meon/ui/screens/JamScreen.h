@@ -65,6 +65,8 @@ public:
 private:
     mutable std::map<juce::String, juce::String> knownNames;   // 나간 멤버의 채팅 줄도 이름으로 (마지막으로 본 이름)
 public:
+    /** 프로필 창 (사이드바의 친구를 눌렀을 때도 연다. 홈·사이드바 디자인) */
+    void openProfile (const juce::String& userId);
 
 private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
@@ -95,7 +97,6 @@ private:
     void closePopover();
     void toggleRequests();
     void toggleNotifications();
-    void openProfile (const juce::String& userId);
     void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);
 

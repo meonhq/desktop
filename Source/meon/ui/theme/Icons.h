@@ -20,7 +20,18 @@ enum class Id
     play,           // 재생 (12×14)
     check,          // 체크
     gearHeader,     // 헤더 설정 버튼 (선 1.8, 합주 최종 디자인)
-    lobby           // 로비 보기(방 최소화): 아래 화살표 + 바닥 선
+    lobby,          // 로비 보기(방 최소화): 아래 화살표 + 바닥 선
+    // 사이드바·홈 (홈·사이드바 디자인, 24 그리드 선 1.6)
+    navHome,        // 홈
+    navRooms,       // 공개 방 (네 칸)
+    navHash,        // 코드로 입장 (#)
+    sidebar,        // 사이드바 접기·펼치기
+    plus,           // 방 만들기·친구 추가 (+)
+    door,           // 참여 중인 방
+    users,          // 친구 (접힌 사이드바)
+    chevronUpDown,  // 내 프로필 줄 (위아래 화살표)
+    chevronLeft,    // 달력 이전 달 (선 2)
+    chevronRight    // 달력 다음 달 (선 2)
 };
 
 /** area 안에 비율을 지켜 그린다. angleRad 만큼 가운데 기준 회전 */

@@ -240,6 +240,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/overlays/SettingsModal.h
     Source/meon/ui/overlays/SettingsModal.cpp
     Source/meon/ui/AppRoot.h
+    Source/meon/ui/shell/Sidebar.h
+    Source/meon/ui/shell/Sidebar.cpp
     Source/meon/ui/AppRoot.cpp
     Source/meon/ui/dev/WidgetGallery.h
     Source/meon/ui/dev/WidgetGallery.cpp

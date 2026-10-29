@@ -68,6 +68,14 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool hitTest (int x, int y) override;
+
+    /** 사이드바 안에 들어간 홈 (홈·사이드바 디자인). 창 전체를 덮되 왼쪽 leftInset(사이드바 폭)은 그리지도 받지도 않는다
+        (모달·확인 창은 창 전체를 덮는다). 머리말은 52 높이의 쪽 제목, 로고·알림·설정과 오른쪽 친구 패널은 사이드바로 옮겨 숨긴다 */
+    void setShell (int leftInset, const juce::String& title);
+    bool isShell() const { return shell; }
+    /** 친구 추가 (사이드바의 +) */
+    void openAddFriend();
 
     static constexpr int sideWidthApp = 320, sideWidthPlugin = 240;
 
@@ -76,6 +84,10 @@ private:
     core::MeonCore& core;
     UpdateHooks update;
     const bool plugin;
+    bool shell = false;
+    int shellInset = 0;
+    juce::String pageTitle;
+    int headerLine() const;   // 헤더 아래 구분선 y (사이드바 안이면 51)
 
     // 헤더
     IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };

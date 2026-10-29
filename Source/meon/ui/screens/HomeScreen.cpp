@@ -10,7 +10,6 @@ namespace meon::ui
 
 namespace
 {
-    constexpr int headerLineY = metric::headerH;        // 헤더 아래 구분선
     constexpr int roomsHeaderH = 56;                     // 12 + 32 + 12
     constexpr int audioCardH = 48 + 1 + 43;
     constexpr int addRowH = 44;
@@ -795,6 +794,112 @@ void HomeScreen::sendFriendRequest()
 }
 
 //==============================================================================
+int HomeScreen::headerLine() const { return shell ? 51 : metric::headerH; }
+
+void HomeScreen::setShell (int leftInset, const juce::String& title)
+{
+    const bool changed = ! shell || leftInset != shellInset || title != pageTitle;
+    shell = true;
+    shellInset = leftInset;
+    pageTitle = title;
+    setOpaque (false);   // 왼쪽 사이드바 자리는 비워 둔다
+    if (changed && getWidth() > 0) { resized(); repaint(); }
+}
+
+bool HomeScreen::hitTest (int x, int y)
+{
+    // 사이드바 자리는 사이드바가 받는다. 모달·확인 창·알림이 떠 있으면 창 전체를 덮는다
+    if (shell && x < shellInset && ! hasOverlay()) return false;
+    return juce::Component::hitTest (x, y);
+}
+
+namespace
+{
+    /** 친구 추가 (사이드바 +): 아이디 입력 + 요청. 결과는 입력 아래 한 줄 (홈 친구 추가 카드와 같은 문구) */
+    class AddFriendModal : public Modal
+    {
+    public:
+        explicit AddFriendModal (core::MeonCore& c) : Modal (TXT ("친구 추가"), 400), core (c)
+        {
+            body.owner = this;
+            body.addAndMakeVisible (input);
+            body.addAndMakeVisible (send);
+            body.addChildComponent (note);
+            input.setFontPx (14.0f);
+            input.setMaxLength (16);
+            input.transform = [] (const juce::String& t) { return t.toLowerCase(); };
+            input.onReturn = [this] { submit(); };
+            input.onChange = [this] { if (note.isVisible()) { note.setVisible (false); layoutHeight(); } };
+            send.onPress = [this] { submit(); };
+            note.setLineHeight (15.0f);
+            layoutHeight();
+        }
+        void focus() { input.grabKeyboardFocus(); }
+
+    private:
+        struct Body : juce::Component
+        {
+            AddFriendModal* owner = nullptr;
+            void resized() override
+            {
+                if (owner == nullptr) return;
+                auto r = getLocalBounds().reduced (metric::padX);
+                auto row = r.removeFromTop (metric::buttonH);
+                const int sw = owner->send.getIdealWidth();
+                owner->send.setBounds (row.removeFromRight (sw));
+                row.removeFromRight (metric::gap);
+                owner->input.setBounds (row);
+                r.removeFromTop (6);
+                owner->note.setBounds (r.withHeight (juce::jmax (15, owner->note.getHeightForWidth (r.getWidth()))));
+            }
+        } body;
+        core::MeonCore& core;
+        TextInput input { TXT ("친구 아이디 입력") };
+        Button send { Button::Kind::primary, TXT ("요청 보내기") };
+        Text note { {}, 400, 12.0f, col::inkSub };
+        std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
+
+        void layoutHeight()
+        {
+            const int w = 400 - metric::padX * 2;
+            const int nh = note.isVisible() ? 6 + juce::jmax (15, note.getHeightForWidth (w)) : 0;
+            setContent (&body, metric::padX * 2 + metric::buttonH + nh);
+        }
+        void show (const juce::String& t)
+        {
+            note.setText (t);
+            note.setVisible (t.isNotEmpty());
+            layoutHeight();
+            body.resized();
+        }
+        void submit()
+        {
+            const auto id = input.getText().trim().trimCharactersAtStart ("@");
+            if (id.isEmpty()) { show (TXT ("아이디를 입력해 주세요")); return; }
+            std::weak_ptr<bool> weak = alive;
+            core.home().sendFriendRequest (id, [this, weak, id] (core::Result<juce::String> r)
+            {
+                if (weak.expired()) return;
+                if (r.ok())
+                {
+                    show (msg::friendRequestResult (r.get(), id.toLowerCase()));
+                    if (r.get() == "sent" || r.get() == "accepted") input.setText ({});
+                }
+                else
+                    show (msg::friendRequestError (r.err()));
+            });
+        }
+    };
+}
+
+void HomeScreen::openAddFriend()
+{
+    auto m = std::make_unique<AddFriendModal> (core);
+    auto* raw = m.get();
+    showModal (std::move (m));
+    raw->focus();
+}
+
 void HomeScreen::showModal (std::unique_ptr<Modal> m)
 {
     popover.reset();
@@ -1035,37 +1140,49 @@ void HomeScreen::timerCallback()
     const int before = bannersHeight();
     refreshHeader();
     if (bannersHeight() != before) resized();
-    if (showUpdate()) repaint (0, headerLineY, getWidth(), bannersHeight() + 1);
+    if (showUpdate()) repaint (0, headerLine(), getWidth(), bannersHeight() + 1);
     if (! sendGain.isDragging()) refreshAudio();
 }
 
 //==============================================================================
 void HomeScreen::paint (juce::Graphics& g)
 {
-    g.fillAll (col::white);
+    const int x0 = shell ? shellInset : 0;   // 사이드바 안이면 왼쪽 사이드바 자리는 그리지 않는다
+    g.setColour (col::white);
+    g.fillRect (x0, 0, getWidth() - x0, getHeight());
     // 배너 아래 작업 영역 (패널들을 감싸는 곳)
-    const int canvasTop = headerLineY + 1 + bannersHeight();
+    const int canvasTop = headerLine() + 1 + bannersHeight();
     g.setColour (col::surfaceCanvas);
-    g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
-    const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
-    meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
+    g.fillRect (x0, canvasTop, getWidth() - x0, getHeight() - canvasTop);
+    if (shell)
+    {
+        // 쪽 제목 (디자인: 52 높이, 600 16px, 왼쪽 18)
+        g.setColour (col::ink);
+        g.setFont (font (600, 16.0f));
+        g.drawText (pageTitle, x0 + metric::padX, 0, getWidth() - x0 - metric::padX * 2, headerLine(), juce::Justification::centredLeft, true);
+    }
+    else
+    {
+        const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
+        meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
+    }
     g.setColour (col::line);
-    g.fillRect (0, headerLineY, getWidth(), 1);
+    g.fillRect (x0, headerLine(), getWidth() - x0, 1);
 
-    int y = headerLineY + 1;
+    int y = headerLine() + 1;
     if (showUpdate())
     {
         g.setColour (col::hoverBg);
-        g.fillRect (0, y, getWidth(), 37);
+        g.fillRect (x0, y, getWidth() - x0, 37);
         g.setColour (col::line);
-        g.fillRect (0, y + 37, getWidth(), 1);
+        g.fillRect (x0, y + 37, getWidth() - x0, 1);
         const auto st = updateState();
         const auto f1 = font (500, 13.0f);
         const auto t1 = st == UpdateHooks::State::failed ? TXT ("새 버전을 받지 못했어요") : TXT ("새 버전이 나왔어요");
         g.setColour (col::ink);
         g.setFont (f1);
         const int w1 = (int) std::ceil (textWidth (f1, t1)) + 1;
-        g.drawText (t1, metric::padX, y, w1, 37, juce::Justification::centredLeft, false);
+        g.drawText (t1, x0 + metric::padX, y, w1, 37, juce::Justification::centredLeft, false);
         const int latest = update.latestBuild ? update.latestBuild() : 0;
         const auto ver = TXT ("빌드 ") + juce::String (latest);
         juce::String note = ver;
@@ -1078,7 +1195,7 @@ void HomeScreen::paint (juce::Graphics& g)
             note = TXT ("Meon을 응용 프로그램 폴더로 옮긴 뒤 다시 켜 주세요");
         g.setColour (col::inkSub);
         g.setFont (font (400, 12.0f));
-        g.drawText (note, metric::padX + w1 + 9, y, getWidth() / 2, 37, juce::Justification::centredLeft, true);
+        g.drawText (note, x0 + metric::padX + w1 + 9, y, (getWidth() - x0) / 2, 37, juce::Justification::centredLeft, true);
         if (st == UpdateHooks::State::downloading)
         {
             const juce::Rectangle<float> bar ((float) getWidth() - metric::padX - 160.0f, (float) y + 16.5f, 160.0f, 4.0f);
@@ -1092,19 +1209,22 @@ void HomeScreen::paint (juce::Graphics& g)
 
 void HomeScreen::resized()
 {
-    auto area = getLocalBounds();
-    // 헤더: 오른쪽에 설정, 알림
+    auto area = getLocalBounds().withTrimmedLeft (shell ? shellInset : 0);
+    // 헤더: 오른쪽에 설정, 알림 (사이드바 안이면 프로필 메뉴로 옮겨 숨긴다)
+    bell.setVisible (! shell);
+    settings.setVisible (! shell);
+    if (! shell)
     {
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
         settings.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         h.removeFromRight (metric::gap);
         bell.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
     }
-    area.removeFromTop (headerLineY + 1);
+    area.removeFromTop (headerLine() + 1);
 
     // 배너 버튼
     {
-        const int top = headerLineY + 1;
+        const int top = headerLine() + 1;
         int x = getWidth() - metric::padX;
         if (updateNow.isVisible())
         {
@@ -1132,10 +1252,13 @@ void HomeScreen::resized()
     if (roomBar != nullptr) roomBar->setBounds (area.removeFromBottom (roomBarH));
     area.reduce (metric::padX, metric::padX);
 
-    // 오른쪽: 친구 + 친구 추가
+    // 오른쪽: 친구 + 친구 추가 (사이드바 안이면 친구는 사이드바에 있어 숨긴다)
+    friendsCard.setVisible (! shell);
+    addCard.setVisible (! shell);
     const int sideW = plugin ? sideWidthPlugin : sideWidthApp;
-    auto side = area.removeFromRight (sideW);
-    area.removeFromRight (metric::padX);
+    auto side = shell ? juce::Rectangle<int>() : area.removeFromRight (sideW);
+    if (! shell) area.removeFromRight (metric::padX);
+    if (! shell)
     {
         // 결과 문구: 입력 줄 아래 (디자인 padding 0 18px 12px, margin-top -6px)
         addNote.setText (addMessage);
@@ -1231,7 +1354,11 @@ void HomeScreen::resized()
     {
         const int h = popover->getPreferredHeight() - 0;
         popover->setContent (notifications.get(), notifications->getPreferredHeight());
-        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, juce::jmax (h, popover->getPreferredHeight()));
+        const int ph = juce::jmax (h, popover->getPreferredHeight());
+        if (shell)   // 사이드바 안: 프로필 줄 위 (디자인 left 9, bottom 55)
+            popover->setBounds (9, getHeight() - 55 - ph, 340, ph);
+        else
+            popover->setBounds (getWidth() - 12 - 340, headerLine() + 10, 340, ph);
     }
     if (! fold.isMoving (foldFriends)) repaint();   // 움직이는 동안은 옮겨진 카드 자리만 다시 그린다
 }

@@ -65,7 +65,7 @@ jobs:
         id: num
         # 릴리스: 커밋 수 (두 플랫폼 같은 번호, D3). 그 밖은 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다).
         # 감시 (배포 설계 4.1): windows-latest 의 build.txt 보다 커야 하고, mac-latest 보다 작으면 옛 커밋이라 멈춘다.
-        # desktop 은 10000 미만 (그 위는 meon-app). dl 매니페스트 감시는 publish-dl 이 한다
+        # desktop 은 10000 미만 (그 위는 app). dl 매니페스트 감시는 publish-dl 이 한다
         run: |
           if [ "$RELEASE" != "true" ]; then echo "build_id=0" >> "$GITHUB_OUTPUT"; echo "BUILD_ID=0" >> "$GITHUB_ENV"; exit 0; fi
           if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch --unshallow --quiet origin; fi

@@ -10,7 +10,33 @@ namespace meon::ui
 AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), update (std::move (u))
 {
     setOpaque (true);
+    // 사이드바를 먼저 넣는다 (홈 화면 아래). 홈 화면은 사이드바 자리를 그리지도 받지도 않고, 모달만 창 전체를 덮는다
+    sidebar = std::make_unique<Sidebar> (core);
+    addAndMakeVisible (*sidebar);
+    sidebar->onLayoutChanged = [this] { resized(); };
+    sidebar->onHome = [this] { showPage (Sidebar::Page::home); };
+    sidebar->onRooms = [this] { showPage (Sidebar::Page::rooms); };
+    sidebar->onShowRoom = [this] { setMinimized (false); };
+    sidebar->onJoinCode = [this]
+    {
+        // 코드로 입장은 홈의 모달 (기존 화면). 방 안이면 방은 그대로 두고 홈 위에 띄운다 (들어가기 전에 나가기 확인)
+        if (core.store().state().currentRoom && ! minimized) setMinimized (true);
+        home->openJoinCode();
+    };
+    sidebar->onCreateRoom = [this] { home->openCreateRoom(); };
+    sidebar->onAddFriend = [this]
+    {
+        if (core.store().state().currentRoom && ! minimized) setMinimized (true);
+        home->openAddFriend();
+    };
+    sidebar->onOpenFriend = [this] (const core::UserPublic& u)
+    {
+        if (auto* screen = getJamScreen(); screen != nullptr && screen->isVisible()) screen->openProfile (u.id);
+        else home->openProfile (u);
+    };
+    sidebar->onProfileMenu = [this] { if (profileMenu != nullptr) closeProfileMenu(); else openProfileMenu(); };
     home = std::make_unique<HomeScreen> (core, update);
+    home->setShell (sidebar->currentWidth(), TXT ("홈"));
     home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     home->onReturnToRoom = [this] { setMinimized (false); };
@@ -43,6 +69,7 @@ AppRoot::~AppRoot()
     core.home().onInviteFailed = nullptr;
     core.home().onFriendRequestFailed = nullptr;
     core.home().setHomeVisible (false);
+    profileMenu.reset();
     toasts.clear();
     fail.reset();
     jam.reset();
@@ -86,9 +113,50 @@ void AppRoot::applyScreen()
         core.home().setHomeVisible (false);
         if (jam != nullptr) jam->setVisible (true);
     }
+    syncSidebar();
     resized();
     for (auto* t : toasts) t->toFront (false);
     if (fail != nullptr) fail->toFront (false);
+}
+
+//==============================================================================
+void AppRoot::syncSidebar()
+{
+    const bool inRoomView = core.store().state().currentRoom && ! minimized;
+    sidebar->setPage (inRoomView ? Sidebar::Page::room : page);
+    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"));
+}
+
+void AppRoot::showPage (Sidebar::Page p)
+{
+    page = p;
+    // 방 안이면 방은 그대로 두고 화면만 홈으로 (방 최소화와 같다)
+    if (core.store().state().currentRoom && ! minimized) setMinimized (true);
+    syncSidebar();
+}
+
+void AppRoot::openProfileMenu()
+{
+    const auto& s = core.store().state();
+    profileMenu = std::make_unique<ProfileMenu> ((int) (s.friendRequests.size() + s.invites.size()));
+    profileMenu->onDismiss = [this] { closeProfileMenu(); };
+    profileMenu->onNotifications = [this]
+    {
+        closeProfileMenu();
+        if (core.store().state().currentRoom && ! minimized) setMinimized (true);
+        home->toggleNotifications();
+    };
+    profileMenu->onSettings = [this] { closeProfileMenu(); if (onOpenSettings) onOpenSettings (0); };
+    addAndMakeVisible (*profileMenu);
+    sidebar->setProfileMenuOpen (true);
+    resized();
+    profileMenu->toFront (false);
+}
+
+void AppRoot::closeProfileMenu()
+{
+    profileMenu.reset();
+    sidebar->setProfileMenuOpen (false);
 }
 
 void AppRoot::updateScreen()
@@ -141,6 +209,7 @@ void AppRoot::updateScreen()
         }
         core.home().setHomeVisible (true);
     }
+    syncSidebar();
     resized();
     for (auto* t : toasts) t->toFront (false);
     if (fail != nullptr) fail->toFront (false);
@@ -338,6 +407,7 @@ bool AppRoot::handleShortcut (const juce::KeyPress& k)
 {
     if (k == juce::KeyPress::escapeKey)
     {
+        if (profileMenu != nullptr) { closeProfileMenu(); return true; }
         if (fail != nullptr) { fail.reset(); return true; }
         if (home->isVisible() && home->closeTopOverlay()) return true;
     }
@@ -349,8 +419,16 @@ bool AppRoot::handleShortcut (const juce::KeyPress& k)
 
 void AppRoot::resized()
 {
+    const int sw = sidebar->currentWidth();
+    sidebar->setBounds (0, 0, sw, getHeight());
+    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"));
     home->setBounds (getLocalBounds());
-    if (jam != nullptr) jam->setBounds (getLocalBounds());
+    if (jam != nullptr) jam->setBounds (getLocalBounds().withTrimmedLeft (sw));
+    if (profileMenu != nullptr)
+    {
+        profileMenu->setBounds (getLocalBounds());
+        profileMenu->box = { 9, getHeight() - 55 - ProfileMenu::boxH, ProfileMenu::boxW, ProfileMenu::boxH };
+    }
     if (roomClosed != nullptr) { roomClosed->setBounds (getLocalBounds()); roomClosed->toFront (false); }
     if (fail != nullptr)
         fail->setBounds (juce::Rectangle<int> (380, fail->getPreferredHeight()).withCentre (getLocalBounds().getCentre()));
