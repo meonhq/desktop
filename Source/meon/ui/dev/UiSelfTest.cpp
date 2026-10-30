@@ -28,6 +28,7 @@ void UiSelfTest::start()
     if (want ("chat"))     addChatInputTests();
     if (want ("aoodrop"))  addAooDropTests();
     if (want ("rooms"))    addRoomListTests();
+    if (want ("sidebar"))  addSidebarTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -976,6 +977,68 @@ void UiSelfTest::addFriendRequestTests()
         expect (requestIds().isEmpty(), TXT ("목록 비움"));
         if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
     }, 300);
+}
+
+//==============================================================================
+// 홈·사이드바 디자인 v2.1: 접은 사이드바의 아이콘 순서와 동작. 방 칸은 방이 없으면 방 만들기, 있으면 그 방 (입장 요청 점).
+// 친구 칸은 친구 추가 (펼친 "친구 +" 와 같은 창). 접고 펴는 폭은 애니메이션 (180ms)
+void UiSelfTest::addSidebarTests()
+{
+    begin (TXT ("사이드바: 접은 상태 (v2.1)"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (true); }, 0);
+    waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    add ([this]
+    {
+        auto* sb = root.sidebar.get();
+        const auto home_ = sb->devRow (TXT ("홈")), rooms = sb->devRow (TXT ("공개 방")), code = sb->devRow (TXT ("코드로 입장"));
+        const auto make = sb->devRow (TXT ("방 만들기")), add_ = sb->devRow (TXT ("친구 추가"));
+        expect (! home_.isEmpty() && ! make.isEmpty() && ! add_.isEmpty(), TXT ("아이콘: 홈·공개 방·코드로 입장·방 만들기·친구 추가"));
+        expect (home_.getY() < rooms.getY() && rooms.getY() < code.getY() && code.getY() < make.getY() && make.getY() < add_.getY(), TXT ("순서: 메뉴 → 방 칸 → 친구 추가"));
+        expect (code.getBottom() + 2 + 10 + 9 == make.getY() && make.getBottom() + 2 + 10 + 9 == add_.getY(), TXT ("간격: 구분선 위 -2, 아래 8 (v2.1)"));
+        click (*sb, make.getCentre());
+    });
+    add ([this]
+    {
+        expect (dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr, TXT ("방 만들기 아이콘 → 방 만들기 창"));
+        home().closeOverlays();   // (방 이름 칸에 포커스가 있으면 Esc 가 창을 닫지 않는다: main 과 같은 기존 동작)
+    }, 400);
+    add ([this] { click (*root.sidebar, root.sidebar->devRow (TXT ("친구 추가")).getCentre()); }, 300);
+    add ([this]
+    {
+        expect (home().modal != nullptr && dynamic_cast<CreateRoomModal*> (home().modal.get()) == nullptr
+                && findButton (*home().modal, TXT ("요청 보내기")) != nullptr, TXT ("친구 추가 아이콘 → 친구 추가 창"));
+        home().closeOverlays();
+    }, 400);
+    enterNewRoom (true);
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        expect (root.sidebar->devRow (TXT ("방 만들기")).isEmpty() && ! root.sidebar->devRow (s.currentRoom->title).isEmpty(), TXT ("방에 있으면 방 칸 = 참여 중인 방"));
+        expect (root.sidebar->currentWidth() == Sidebar::closedW, TXT ("방 화면에서도 접힌 채"));
+        if (auto* f = core.fakeServer()) f->devJoinRequest();
+    }, 0);
+    waitUntil (TXT ("입장 요청"), [this] { return ! core.store().state().joinRequests.empty(); });
+    add ([this]
+    {
+        expect (core.store().state().amHost(), TXT ("방장"));
+        // 방은 그대로, 홈으로 (좁은 플러그인 창은 방 화면에서 사이드바가 숨으므로 예전 로비 보기)
+        if (root.sidebar->isVisible()) click (*root.sidebar, root.sidebar->devRow (TXT ("홈")).getCentre());
+        else click (jam()->lobby);
+    });
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        expect (root.isMinimized(), TXT ("홈 아이콘: 방은 그대로 홈으로"));
+        click (*root.sidebar, root.sidebar->devRow (s.currentRoom->title).getCentre());
+    }, 300);
+    waitUntil (TXT ("방 아이콘 → 방 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
+    add ([this] { click (jam()->leave); }, 300);
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("다시 펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
 }
 
 //==============================================================================

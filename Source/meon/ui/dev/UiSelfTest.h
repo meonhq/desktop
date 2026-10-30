@@ -87,6 +87,7 @@ private:
     void addAooDropTests();
     void addRoomListTests();
     void addFriendRequestTests();
+    void addSidebarTests();
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

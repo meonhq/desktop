@@ -100,8 +100,9 @@ struct Sidebar::Body : public juce::Component
         }
         else
         {
-            add ({ Kind::separator, { x, y + 6, rw, 1 } });
-            y += 6 + 1 + 8;
+            // v2.1: 구분선 margin -2px 9px 8px (좌우 9 안쪽, 위로 2 당김) + 목록 gap 2
+            add ({ Kind::separator, { x + 9, y - 2, rw - 18, 1 } });
+            y += -2 + 1 + 8 + rowGap;
         }
         if (! open || roomsOpen)
         {
@@ -120,6 +121,15 @@ struct Sidebar::Body : public juce::Component
             else if (open)
             {
                 add ({ Kind::empty, { x, y, rw, 32 }, TXT ("참여 중인 방이 없어요") });
+                y += 32 + rowGap;
+            }
+            else
+            {
+                // v2.1 접힌 상태: 방이 없으면 방 만들기 아이콘 (펼친 "참여 중 +" 와 같은 동작)
+                Row b { Kind::iconButton, { x, y, rw, 32 }, TXT ("방 만들기") };   // 글자는 그리지 않는다 (devRow 로 찾는 이름)
+                b.icon = icons::Id::doorPlus;
+                b.act = [this] { if (owner.onCreateRoom) owner.onCreateRoom(); };
+                add (std::move (b));
                 y += 32 + rowGap;
             }
         }
@@ -143,11 +153,12 @@ struct Sidebar::Body : public juce::Component
         }
         else
         {
-            add ({ Kind::separator, { x, y + 6, rw, 1 } });
-            y += 6 + 1 + 8;
-            Row b { Kind::iconButton, { x, y, rw, 32 } };
-            b.icon = icons::Id::users;
-            b.act = [this] { friendsOpen = true; owner.setCollapsed (false); };
+            // v2.1 접힌 상태: 친구 목록 대신 친구 추가 아이콘 (펼친 "친구 +" 와 같은 친구 추가 창)
+            add ({ Kind::separator, { x + 9, y - 2, rw - 18, 1 } });
+            y += -2 + 1 + 8 + rowGap;
+            Row b { Kind::iconButton, { x, y, rw, 32 }, TXT ("친구 추가") };
+            b.icon = icons::Id::userPlus;
+            b.act = [this] { if (owner.onAddFriend) owner.onAddFriend(); };
             add (std::move (b));
             y += 32 + rowGap;
         }
@@ -156,7 +167,7 @@ struct Sidebar::Body : public juce::Component
             // 받은 초대: 친구 목록 위 카드 (홈·사이드바 디자인)
             for (auto& inv : s.invites)
             {
-                const int h = 9 + 32 + 9 + metric::smallH + 9;
+                const int h = 1 + 9 + 34 + 9 + metric::smallH + 9 + 1;   // 82
                 Row r { Kind::invite, { x, y, rw, h }, inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title };
                 r.part = inv.from.part.value_or ("other");
                 add (std::move (r));
@@ -172,10 +183,10 @@ struct Sidebar::Body : public juce::Component
                     addAndMakeVisible (*b.no);
                     addAndMakeVisible (*b.ok);
                 }
-                const int by = y + 9 + 32 + 9;
+                const int by = y + 1 + 9 + 34 + 9;
                 const int ow = b.ok->getIdealWidth(), nw = b.no->getIdealWidth();
-                b.ok->setBounds (x + rw - 9 - ow, by, ow, metric::smallH);
-                b.no->setBounds (x + rw - 9 - ow - 6 - nw, by, nw, metric::smallH);
+                b.ok->setBounds (x + rw - 10 - ow, by, ow, metric::smallH);
+                b.no->setBounds (x + rw - 10 - ow - 6 - nw, by, nw, metric::smallH);
                 b.ok->setVisible (true);
                 b.no->setVisible (true);
                 y += h + 4 + rowGap;
@@ -257,7 +268,7 @@ struct Sidebar::Body : public juce::Component
                     const auto ib = juce::Rectangle<float> (rf.getX() + 9.0f, rf.getCentreY() - 10.0f, 20.0f, 20.0f);
                     const auto ink = r.kind == Kind::nav && r.active ? col::ink : col::inkSub;
                     drawIcon (g, r.icon, ib, 18.0f, ink);
-                    if (r.dot) drawDot (g, { ib.getRight() - 3.0f, ib.getY() + 4.0f }, 6.5f, r.active ? activeBg : sideBg);
+                    if (r.dot) drawDot (g, { ib.getRight() - 3.0f, ib.getY() + 4.0f }, 5.0f, r.active ? activeBg : (hot ? col::hoverBg : sideBg));   // 빨강 5, 테두리 포함 8
                     if (alpha > 0.001f && r.kind != Kind::iconButton)
                     {
                         auto t = r.r.withTrimmedLeft (9 + 20 + 9).withTrimmedRight (9);
@@ -305,8 +316,8 @@ struct Sidebar::Body : public juce::Component
                         tx += 6.0f + 1.0f;
                     }
                     tx += 3.0f;
-                    // 접힘 화살표: 펼침 아래(0), 접힘 오른쪽(-90°)
-                    icons::draw (g, icons::Id::chevronDown, { tx, cy - 6.0f, 12.0f, 12.0f }, ink,
+                    // 접힘 화살표 14 (24 그리드 선 1.6): 펼침 아래(0), 접힘 오른쪽(-90°)
+                    icons::draw (g, icons::Id::chevronDown24, { tx, cy - 7.0f, 14.0f, 14.0f }, ink,
                                  r.open ? 0.0f : -juce::MathConstants<float>::halfPi);
                     if (r.plus)
                     {
@@ -326,15 +337,16 @@ struct Sidebar::Body : public juce::Component
                     g.fillRoundedRectangle (rf, 6.0f);
                     g.setColour (col::line);
                     g.drawRoundedRectangle (rf.reduced (0.5f), 6.0f, 1.0f);
-                    const auto av = juce::Rectangle<float> (rf.getX() + 9.0f, rf.getY() + 9.0f, 32.0f, 32.0f);
+                    // v2.1: 안쪽 10 (테두리 1 + 9), 아바타 줄 34 (아바타 32 가운데), 제목 17 · 간격 2 · 보조 16
+                    const auto av = juce::Rectangle<float> (rf.getX() + 10.0f, rf.getY() + 11.0f, 32.0f, 32.0f);
                     Avatar::paintCircle (g, av, r.part, 16.0f, col::ink, true);
-                    const auto t = juce::Rectangle<float> (av.getRight() + 9.0f, av.getY(), rf.getRight() - 9.0f - av.getRight() - 9.0f, 32.0f);
+                    const auto t = juce::Rectangle<float> (av.getRight() + 9.0f, rf.getY() + 10.0f, rf.getRight() - 10.0f - av.getRight() - 9.0f, 34.0f);
                     g.setColour (col::ink);
                     g.setFont (font (600, 13.0f));
-                    g.drawText (r.text, t.withHeight (17.0f).translated (0.0f, -0.5f), juce::Justification::centredLeft, true);
+                    g.drawText (r.text, t.withHeight (17.0f), juce::Justification::centredLeft, true);
                     g.setColour (col::inkSub);
                     g.setFont (font (400, 12.0f));
-                    g.drawText (r.sub, t.withTrimmedTop (17.0f).withHeight (16.0f), juce::Justification::centredLeft, true);
+                    g.drawText (r.sub, t.withTrimmedTop (17.0f + 2.0f).withHeight (16.0f), juce::Justification::centredLeft, true);
                     break;
                 }
                 case Kind::empty:
@@ -355,8 +367,8 @@ struct Sidebar::Body : public juce::Component
                     }
                     if (! off)
                     {
-                        // 상태 점 8 (테두리 1.5 #FCFCFC), 오른쪽 아래 -2
-                        const auto d = juce::Rectangle<float> (av.getRight() + 2.0f - 8.0f, av.getBottom() + 2.0f - 8.0f, 8.0f, 8.0f);
+                        // 상태 점 8 (테두리 1.5, 배경색), 아바타 오른쪽·아래로 1 (v2.1)
+                        const auto d = juce::Rectangle<float> (av.getRight() + 1.0f - 8.0f, av.getBottom() + 1.0f - 8.0f, 8.0f, 8.0f);
                         g.setColour (hot ? col::hoverBg : sideBg);
                         g.fillEllipse (d);
                         g.setColour (col::live);
@@ -475,7 +487,7 @@ void Sidebar::previewFold (bool open, float e)
 juce::Rectangle<int> Sidebar::devRow (const juce::String& text) const
 {
     for (auto& r : body->rows)
-        if ((r.kind == Body::Kind::nav || r.kind == Body::Kind::room) && r.text == text)
+        if ((r.kind == Body::Kind::nav || r.kind == Body::Kind::room || r.kind == Body::Kind::iconButton) && r.text == text)
             return getLocalArea (body.get(), r.r);
     return {};
 }
@@ -512,12 +524,12 @@ void Sidebar::stateChanged (core::StateKey k)
 juce::Rectangle<int> Sidebar::toggleBounds() const
 {
     if (forced) return {};   // 잠시 접힌 동안은 펼칠 자리가 없다
-    return collapsed ? juce::Rectangle<int> (12, 10, 32, 32) : juce::Rectangle<int> (getWidth() - 12 - 32, 10, 32, 32);
+    return shut() ? juce::Rectangle<int> (12, 10, 32, 32) : juce::Rectangle<int> (getWidth() - 1 - 12 - 32, 10, 32, 32);   // 오른쪽 선 1 안쪽에서 12
 }
 
 juce::Rectangle<int> Sidebar::profileBounds() const
 {
-    return { padX, getHeight() - profileH + 1 + 9, getWidth() - padX * 2, 40 };
+    return { padX, getHeight() - profileH + 1 + 9, getWidth() - 1 - padX * 2, 40 };   // 오른쪽 선 1 안쪽 (펼침 221, 접힘 37)
 }
 
 void Sidebar::resized()
@@ -560,21 +572,23 @@ void Sidebar::paint (juce::Graphics& g)
     {
         const auto& st = core.store().state();
         if (! st.friendRequests.empty() || ! st.invites.empty())
-            drawDot (g, { av.getX() + 25.0f, av.getY() + 4.0f }, 6.5f, profileMenuOpen ? activeBg : (hot == 2 ? col::hoverBg : sideBg));
+            drawDot (g, { av.getX() + 24.0f, av.getY() + 5.0f }, 6.5f, profileMenuOpen ? activeBg : (hot == 2 ? col::hoverBg : sideBg));
     }
     if (const float alpha = labelAlpha(); alpha > 0.001f && pb.getRight() - av.getRight() > 30.0f)
     {
+        // v2.1: 안쪽 5, 아바타 28 · 9 · 글자(이름 15, 간격 1, 파트 14) · 9 · 화살표 20 · 오른쪽 2
         const float tx = av.getRight() + 9.0f;
-        const float tw = pb.getRight() - 2.0f - 20.0f - 6.0f - tx;
+        const float cx = pb.getRight() - 5.0f - 2.0f - 20.0f;
+        const float tw = cx - 9.0f - tx;
         const bool ellipsis = ! animating();
         g.setColour (col::ink.withMultipliedAlpha (alpha));
         g.setFont (font (600, 13.0f));
-        g.drawText (me ? me->nickname.value_or (me->username) : juce::String(), juce::Rectangle<float> (tx, pb.getCentreY() - 16.0f, tw, 16.0f),
+        g.drawText (me ? me->nickname.value_or (me->username) : juce::String(), juce::Rectangle<float> (tx, pb.getCentreY() - 15.0f, tw, 15.0f),
                     juce::Justification::centredLeft, ellipsis);
         g.setColour (col::inkSub.withMultipliedAlpha (alpha));
         g.setFont (font (400, 12.0f));
-        g.drawText (icons::partLabel (part), juce::Rectangle<float> (tx, pb.getCentreY() + 1.0f, tw, 15.0f), juce::Justification::centredLeft, ellipsis);
-        drawIcon (g, icons::Id::chevronUpDown, juce::Rectangle<float> (pb.getRight() - 2.0f - 20.0f, pb.getCentreY() - 10.0f, 20.0f, 20.0f), 14.0f,
+        g.drawText (icons::partLabel (part), juce::Rectangle<float> (tx, pb.getCentreY() + 1.0f, tw, 14.0f), juce::Justification::centredLeft, ellipsis);
+        drawIcon (g, icons::Id::chevronUpDown, juce::Rectangle<float> (cx, pb.getCentreY() - 10.0f, 20.0f, 20.0f), 14.0f,
                   col::inkSub.withMultipliedAlpha (alpha));
     }
 }

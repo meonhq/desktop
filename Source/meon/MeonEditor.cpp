@@ -443,6 +443,9 @@ void MeonEditor::applyHomePreview()
 {
     // 개발용 스냅숏: 홈의 겹침 요소를 열어 둔다
     if (appRoot == nullptr) return;
+    // --sidebar=collapsed: 다른 미리 보기와 같이 사이드바를 접은 채로 (홈·사이드바 디자인 v2.1 접힌 상태 확인)
+    if (meon::devOptions()["sidebar"] == "collapsed")
+        appRoot->getSidebar()->previewFold (false, 0.0f);
     auto* home = appRoot->getHome();
     const auto p = devHomePreview;
     if (p == "uitest")

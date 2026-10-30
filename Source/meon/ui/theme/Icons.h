@@ -28,7 +28,10 @@ enum class Id
     sidebar,        // 사이드바 접기·펼치기
     plus,           // 방 만들기·친구 추가 (+)
     door,           // 참여 중인 방
-    users,          // 친구 (접힌 사이드바)
+    users,          // 친구 (예전 접힌 사이드바)
+    doorPlus,       // 방 만들기 (접힌 사이드바, v2.1)
+    userPlus,       // 친구 추가 (접힌 사이드바, v2.1: 선 1.6)
+    chevronDown24,  // 사이드바 머리말 접기 화살표 (24 그리드 선 1.6, 14px)
     chevronUpDown,  // 내 프로필 줄 (위아래 화살표)
     chevronLeft,    // 달력 이전 달 (선 2)
     chevronRight    // 달력 다음 달 (선 2)
