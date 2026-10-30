@@ -493,11 +493,13 @@ bool AppRoot::handleShortcut (const juce::KeyPress& k)
 void AppRoot::resized()
 {
     // 방 화면이 들어갈 폭 (멤버 쪽 566 + 여백 54 + 오른쪽 패널 기본폭: 앱 940, 플러그인 860). 창이 좁으면 방 화면에서만
-    // 사이드바를 잠시 접고(56), 그래도 모자라면 숨긴다 (사용자 결정 2026-10-29). 홈에서는 늘 사용자가 정한 대로
+    // 사이드바를 잠시 접는다(56): 앱 1180, 플러그인 1100 미만 (사용자 결정 2026-10-29). 홈에서는 늘 사용자가 정한 대로.
+    // 통째로 숨기는 것은 플러그인만 (900~915). 독립 앱은 창이 최소 폭(1024)보다 좁아져도(작은 화면·배율, 창 나란히 놓기)
+    // 접힌 아이콘 줄은 남긴다 (예전에는 이 조건에 플러그인 확인이 없어서 996 미만이면 앱에서도 숨었다)
     const bool roomView = jam != nullptr && jam->isVisible() && ! minimized;
     const int need = core::panel::chrome + core::panel::membersMin + core::panel::defaultWidth (core.isPlugin());
     sidebar->setForcedCollapsed (roomView && getWidth() - Sidebar::openW < need);
-    const bool hideSidebar = roomView && getWidth() - Sidebar::closedW < need;
+    const bool hideSidebar = core.isPlugin() && roomView && getWidth() - Sidebar::closedW < need;
     sidebar->setVisible (! hideSidebar);
     const int sw = hideSidebar ? 0 : sidebar->currentWidth();
     // 사이드바가 옆에 있으면 방 화면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 뺀다. 숨으면(좁은 플러그인 창) 예전 윗줄 (갈 곳이 없어지지 않게)

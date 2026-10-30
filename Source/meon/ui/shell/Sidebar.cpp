@@ -487,7 +487,8 @@ void Sidebar::previewFold (bool open, float e)
 juce::Rectangle<int> Sidebar::devRow (const juce::String& text) const
 {
     for (auto& r : body->rows)
-        if ((r.kind == Body::Kind::nav || r.kind == Body::Kind::room || r.kind == Body::Kind::iconButton) && r.text == text)
+        if ((r.kind == Body::Kind::nav || r.kind == Body::Kind::room || r.kind == Body::Kind::iconButton
+             || r.kind == Body::Kind::friendOn || r.kind == Body::Kind::friendOff) && r.text == text)
             return getLocalArea (body.get(), r.r);
     return {};
 }

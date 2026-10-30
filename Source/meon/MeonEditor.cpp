@@ -683,8 +683,8 @@ void MeonEditor::applyHomePreview()
             if (safe != nullptr && (p.startsWith ("jam:fold=") || p == "jam:chatfill"))
             {
                 // 접기 미리 보기 (jam:fold=chat:0.25 — 채팅 40줄을 채운 뒤 그 패널이 접히는 중 e 에 멈춤),
-                // jam:chatfill — 채팅 300줄을 채운 뒤 채팅·친구·내 오디오·모니터를 1초 간격으로 한 번씩 접었다 펼친다
-                //                (채팅이 많을 때 프레임 확인: 앱 로그의 "접기 애니메이션" 줄)
+                // jam:chatfill — 채팅 300줄을 채운 뒤 채팅·내 오디오·모니터를 1초 간격으로 한 번씩 접었다 펼친다
+                //                (채팅이 많을 때 프레임 확인: 앱 로그의 "접기 애니메이션" 줄. 방 화면 친구 패널은 v2.1 에서 뺐다)
                 juce::Timer::callAfterDelay (800, [safe, p]
                 {
                     if (safe == nullptr || safe->appRoot == nullptr) return;
@@ -696,8 +696,8 @@ void MeonEditor::applyHomePreview()
                         jam->chat().sendText (TXT ("미리 보기 메시지 ") + juce::String (i) + (i % 3 == 0 ? TXT (" · 조금 길게 써서 두 줄로 넘어가는지 보는 문장이에요") : juce::String()));
                     if (p == "jam:chatfill")
                     {
-                        const char* order[] = { "chat", "chat", "friends", "friends", "send", "send", "mon", "mon" };
-                        for (int k = 0; k < 8; ++k)
+                        const char* order[] = { "chat", "chat", "send", "send", "mon", "mon" };
+                        for (int k = 0; k < 6; ++k)
                         {
                             const juce::String panel (order[k]);
                             juce::Timer::callAfterDelay (1000 * (k + 1), [safe, panel]
@@ -712,6 +712,31 @@ void MeonEditor::applyHomePreview()
                         const auto spec = p.fromFirstOccurrenceOf ("jam:fold=", false, false);
                         screen->previewFold (spec.upToFirstOccurrenceOf (":", false, false), spec.fromLastOccurrenceOf (":", false, false).getFloatValue());
                     }
+                });
+            }
+            if (safe != nullptr && (p == "jam:invite" || p == "jam:invite=pending") && safe->appRoot != nullptr)
+            {
+                // 방 안에서 친구 초대 (홈·사이드바 v2.1: 방 화면에 친구 패널이 없어 프로필 창의 "방 초대").
+                // jam:invite — 초대할 수 있는 친구의 프로필 창, jam:invite=pending — "방 초대" 를 누른 뒤 (3초 동안 "취소")
+                juce::Timer::callAfterDelay (800, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    auto* screen = safe->appRoot->getJamScreen();
+                    if (screen == nullptr) return;
+                    for (auto& f : safe->core.store().state().friends)
+                        if (f.canInvite)
+                        {
+                            screen->openProfile (f.user.id);
+                            if (p.endsWith ("pending"))
+                            {
+                                const auto id = f.user.id;
+                                juce::Timer::callAfterDelay (2500, [safe, id]   // 스냅숏(5초) 때 아직 "취소" (3초)
+                                {
+                                    if (safe != nullptr) safe->core.home().invite (id, [] (core::Result<core::InviteSent>) {});
+                                });
+                            }
+                            return;
+                        }
                 });
             }
             if (safe != nullptr && (p == "jam:disc" || p == "jam:discback"))   // 연결 끊김 토스트 (끊긴 채 / 4초 뒤 다시 붙음)

@@ -2,6 +2,7 @@
 #include "../AppRoot.h"
 #include "../screens/HomeScreen.h"
 #include "../screens/JamScreen.h"
+#include "../overlays/JamOverlays.h"
 #include "../../core/api/fake/FakeMeonServer.h"
 #include "../../core/model/RoomFilter.h"
 #include "../../core/model/PanelWidth.h"
@@ -222,6 +223,12 @@ void UiSelfTest::enterNewRoom (bool approval)
     wait (300);
 }
 
+void UiSelfTest::closeToasts()
+{
+    add ([this] { for (auto* t : root.toasts) root.removeToast (t); }, 0);
+    waitUntil (TXT ("토스트 닫힘"), [this] { return root.toasts.isEmpty(); });
+}
+
 void UiSelfTest::minimize()
 {
     // 홈·사이드바 디자인 v2: 방 화면 윗줄의 로비 보기 버튼은 없다. 사이드바 "홈" 을 누르면 방은 그대로 두고 홈으로 (최소화).
@@ -303,7 +310,7 @@ void UiSelfTest::addMinimizeTests()
     add ([this] { type (TXT ("draft 쓰는 중")); });
     add ([this]
     {
-        if (auto* b = firstButton (jam()->friendsCard)) click (*b);   // 친구 패널 접기
+        if (auto* b = firstButton (jam()->monCard)) click (*b);   // 모니터 패널 접기 (v2.1: 방 화면에 친구 패널 없음)
     }, 700);
     add ([this] { jam()->chatViewport.setViewPosition (0, 120); });   // 채팅을 위로 올려 둔다 (맨 아래가 아니면 새 메시지를 따라가지 않는다)
     add ([this, state]
@@ -313,11 +320,13 @@ void UiSelfTest::addMinimizeTests()
         (*state)["room"] = roomId();
         (*state)["text"] = j->chatInput.getText();
         (*state)["scroll"] = j->chatViewport.getViewPositionY();
-        (*state)["friendsOpen"] = j->friendsOpen;
+        (*state)["monOpen"] = j->monOpen;
         (*state)["phase"] = (int) session->getPhase();
         (*state)["msgs"] = (int) session->chat().getMessages().size();
         expect ((*state)["text"].toString() == TXT ("draft 쓰는 중"), TXT ("채팅 입력에 글을 써 둠"));
-        expect (! j->friendsOpen, TXT ("친구 패널을 접어 둠"));
+        expect (! j->monOpen, TXT ("모니터 패널을 접어 둠"));
+        expect (! j->friendsCard.isVisible(), TXT ("방 화면에 친구 패널 없음 (v2.1)"));
+        expect (! j->chatOpen || j->chatCard.getHeight() == j->sideAvail, TXT ("채팅이 반주 위까지 세로 전체 (") + juce::String (j->chatCard.getHeight()) + " / " + juce::String (j->sideAvail) + ")");
         // 셀프 모니터: 끈 채로, 입장 전 듣기는 켠 채로 (최소화한 홈에서 이것으로 바뀌면 안 된다)
         session->setSelfMonitor (false);
         session->setHomeMonitor (true);
@@ -365,7 +374,7 @@ void UiSelfTest::addMinimizeTests()
         expect (j->chatInput.getText() == (*state)["text"].toString(), TXT ("입력 중인 글 그대로"));
         expect (std::abs (j->chatViewport.getViewPositionY() - (int) (*state)["scroll"]) <= 1,
                 TXT ("채팅 스크롤 그대로 (") + (*state)["scroll"].toString() + " -> " + juce::String (j->chatViewport.getViewPositionY()) + ")");
-        expect (j->friendsOpen == (bool) (*state)["friendsOpen"], TXT ("접기 상태 그대로"));
+        expect (j->monOpen == (bool) (*state)["monOpen"], TXT ("접기 상태 그대로"));
         expect ((int) session->chat().getMessages().size() == (int) (*state)["msgs"] + 2, TXT ("최소화 중 받은 채팅이 목록에"));
         expect (session->isSelfMonitorAudible(), TXT ("돌아와도 셀프 모니터 같음 (켬)"));
         session->setSelfMonitor (false);
@@ -494,7 +503,7 @@ void UiSelfTest::addMinimizeTests()
     };
     joinFakeRoom();
     minimize();
-    add ([this] { if (auto* f = core.fakeServer()) f->devKickMe(); }, 0);
+    add ([this] { kickedRooms.add (roomId()); if (auto* f = core.fakeServer()) f->devKickMe(); }, 0);   // 내보내진 방은 다시 못 들어간다 (403 kicked)
     waitUntil (TXT ("최소화 중 내보내짐"), [this] { return ! inRoom(); });
     add ([this]
     {
@@ -676,6 +685,7 @@ void UiSelfTest::addChatInputTests()
     namespace ci = core::chatinput;
     begin (TXT ("7 채팅 입력"));
     enterNewRoom();
+    closeToasts();   // 친구 패널이 빠져 채팅 입력이 아래로 내려왔다. 앞 섹션 토스트 두 개가 쌓이면 입력 칸을 가린다
     // 입력 줄 높이 = 카드 안쪽 아래 − (목록 아래 + 구분선 1)
     auto rowH = [this] { auto* j = jam(); return j->chatCard.contentBounds().getBottom() - (j->chatViewport.getBottom() + 1); };
     auto lastText = [this] { const auto& m = core.jam()->chat().getMessages(); return m.empty() ? juce::String() : m.back().text; };
@@ -984,6 +994,114 @@ void UiSelfTest::addFriendRequestTests()
 // 친구 칸은 친구 추가 (펼친 "친구 +" 와 같은 창). 접고 펴는 폭은 애니메이션 (180ms)
 void UiSelfTest::addSidebarTests()
 {
+    // 방 화면에 들어가도 사이드바는 사용자가 둔 상태 그대로 (펼침/접힘). 창 폭이 좁을 때만 잠시 접힌다
+    // (독립 앱 1180 미만). 독립 앱에서는 사이드바가 통째로 숨지 않는다 (숨김은 좁은 플러그인 창 900~915 만)
+    auto expectRoomSidebar = [this] (bool userCollapsed, const juce::String& how)
+    {
+        const int w = root.getWidth();
+        const bool plugin = core.isPlugin();
+        const int need = core::panel::chrome + core::panel::membersMin + core::panel::defaultWidth (plugin);
+        const bool hidden = plugin && w - Sidebar::closedW < need;
+        const bool narrow = w - Sidebar::openW < need;
+        const int want = hidden ? 0 : ((userCollapsed || narrow) ? Sidebar::closedW : Sidebar::openW);
+        std::cerr << "UITEST INFO room sidebar (" << how << ") window " << w << (plugin ? " plugin" : " app")
+                  << " visible=" << root.sidebar->isVisible() << " width=" << root.sidebar->currentWidth() << " want=" << want << std::endl;
+        expect (root.sidebar->isVisible() == ! hidden, how + TXT (": 사이드바 ") + (hidden ? TXT ("숨김 (좁은 플러그인 창)") : TXT ("보임")));
+        if (! hidden)
+            expect (root.sidebar->currentWidth() == want, how + TXT (": 폭 ") + juce::String (want) + TXT (" (지금 ") + juce::String (root.sidebar->currentWidth()) + ")");
+        if (! hidden && want == Sidebar::closedW)
+            expect (inRoom() && ! root.sidebar->devRow (TXT ("홈")).isEmpty() && ! root.sidebar->devRow (core.store().state().currentRoom->title).isEmpty(),
+                    how + TXT (": 접혀도 아이콘 줄 (홈·방)"));
+        expect (jam() != nullptr && jam()->getX() == (hidden ? 0 : root.sidebar->currentWidth()), how + TXT (": 방 화면은 사이드바 오른쪽"));
+    };
+
+    begin (TXT ("사이드바: 방 화면에서 상태 유지"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    clickSidebar (TXT ("공개 방"));
+    closeToasts();   // 앞 섹션의 "이미 닫힌 방이에요" 토스트가 카드 버튼을 가릴 수 있다
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        for (auto& [room, button] : home().devRoomCards())
+            if (! room.isApproval() && core::rooms::hasRoomFor (room, s.me ? s.me->id : juce::String()) && ! kickedRooms.contains (room.id))
+            {
+                // 카드가 목록 스크롤 밖(좁은 창)이면 마우스로 누를 수 없으므로 버튼을 직접 누른다 (같은 입장 길)
+                const auto c = root.getLocalArea (button, button->getLocalBounds()).getCentre();
+                if (root.getComponentAt (c) == button) click (*button);
+                else button->triggerClick();
+                return;
+            }
+        expect (false, TXT ("바로 입장할 공개 방"));
+    }, 0);
+    waitUntil (TXT ("공개 방에서 바로 입장 → 방 화면"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); }, 6000);
+    wait (600);   // 접히는 애니메이션(180ms)이 끝난 뒤
+    add ([this, expectRoomSidebar] { expectRoomSidebar (false, TXT ("펼친 채 입장")); }, 0);
+    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
+    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (true); }, 0);
+    waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    enterNewRoom();
+    wait (600);
+    add ([this, expectRoomSidebar] { expectRoomSidebar (true, TXT ("접은 채 입장")); }, 0);
+    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
+    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("다시 펼침"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+
+    // 방 화면에 친구 패널이 없으므로(v2.1) 방 안 초대는 프로필 창의 "방 초대" 로 한다.
+    // 친구 패널의 "초대" 와 같은 동작: 누르면 3초 동안 "취소", 그 뒤 "초대됨"
+    begin (TXT ("프로필: 방 초대 (v2.1)"));
+    auto friendId = std::make_shared<juce::String>();
+    enterNewRoom();
+    waitUntil (TXT ("초대할 수 있는 친구 (온라인·방 밖)"), [this, friendId]
+    {
+        for (auto& f : core.store().state().friends)
+            if (f.canInvite) { *friendId = f.user.id; return true; }
+        return false;
+    }, 6000);
+    add ([this, friendId]
+    {
+        auto* j = jam();
+        expect (j != nullptr && ! j->friendsCard.isVisible(), TXT ("방 화면에 친구 패널 없음"));
+        const auto* f = core.store().state().findFriend (*friendId);
+        if (j == nullptr || f == nullptr) return;
+        // 사이드바 친구 줄을 누른다 (좁은 플러그인 창에서 사이드바가 숨으면 같은 길인 openProfile)
+        const auto row = root.sidebar->isVisible() ? root.sidebar->devRow (f->user.nickname.value_or (f->user.username)) : juce::Rectangle<int>();
+        if (! row.isEmpty()) click (*root.sidebar, row.getCentre());
+        else j->openProfile (*friendId);
+    }, 0);
+    auto profileModal = [this] { auto* j = jam(); return j != nullptr ? dynamic_cast<ProfileModal*> (j->modal.get()) : nullptr; };
+    waitUntil (TXT ("프로필 창에 \"방 초대\""), [profileModal] { auto* m = profileModal(); return m != nullptr && m->invite.isVisible(); });
+    add ([this, profileModal]
+    {
+        auto* m = profileModal();
+        if (m == nullptr) return;
+        expect (m->invite.getButtonText() == TXT ("방 초대"), TXT ("버튼 글자 \"방 초대\""));
+        expect (! m->request.isVisible() && ! m->joinRoom.isVisible(), TXT ("아래 버튼은 \"방 초대\" 하나"));
+        click (m->invite);
+    }, 200);
+    add ([this, profileModal, friendId]
+    {
+        auto* m = profileModal();
+        if (m == nullptr) { expect (false, TXT ("프로필 창이 그대로")); return; }
+        using P = core::HomeController::InviteState::Phase;
+        expect (core.home().inviteState (*friendId).phase == P::pending && m->invite.getButtonText() == TXT ("취소"), TXT ("누르면 3초 동안 \"취소\""));
+    });
+    waitUntil (TXT ("3초 뒤 \"초대됨\""), [this, profileModal, friendId]
+    {
+        auto* m = profileModal();
+        using P = core::HomeController::InviteState::Phase;
+        return m != nullptr && core.home().inviteState (*friendId).phase == P::sent && m->invite.getButtonText() == TXT ("초대됨");
+    }, 6000);
+    add ([this] { if (auto* j = jam()) j->closeOverlays(); }, 200);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+
     begin (TXT ("사이드바: 접은 상태 (v2.1)"));
     add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });

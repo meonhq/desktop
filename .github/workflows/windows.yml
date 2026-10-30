@@ -111,6 +111,18 @@ jobs:
           "$T" Aoo   # AOO 소켓: 끊긴 연결에 써도 SIGPIPE 없음(E8), 거부된 연결은 실패(E9)
           "$T" Update   # 업데이트 매니페스트 검증(Ed25519·sha256)과 확인 순서를 이 플랫폼 컴파일러로 빌드한 것으로
 
+      - name: 사이드바 폭 확인 (화면 자가 테스트)
+        # 방 화면 사이드바를 창 폭 1100 / 1280 / 1440 에서 펼친 채·접은 채 들어가 본다 (--uitest=sidebar, 빌드 0 전용: ui/dev/UiSelfTest).
+        # 1180 미만은 접힌 아이콘 줄(56), 그 이상은 사용자가 둔 상태. 독립 앱은 숨지 않는다. 결과는 "UITEST INFO room sidebar" 줄. 빌드를 막지는 않는다
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: |
+          EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
+          for w in 1100 1280 1440; do
+            timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=sidebar --window=0,0,$w,800 > "uitest-$w.log" 2>&1 || true
+            grep -E "^UITEST (INFO room sidebar|FAIL|DONE)" "uitest-$w.log" || { echo "결과 없음 (폭 $w)"; tail -20 "uitest-$w.log"; }
+          done
+
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
         if: env.RELEASE != 'true'
@@ -118,9 +130,13 @@ jobs:
         run: |
           mkdir -p snapshots
           EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
-          for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast jam jam:host settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+          for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast jam jam:host jam:invite=pending settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
             D=3000; [ "$s" = "home:toast" ] && D=6000; case "$s" in jam*|settings*) D=5000;; esac
             timeout 60 "$EXE" --nickname=테스트 --screen=$s --window=0,0,1280,800 --snapshot-delay=$D --snapshot=snapshots/win_${s//:/_}.png || true
+          done
+          # 방 화면 사이드바: 창 폭별 (1180 미만은 접힌 아이콘 줄)
+          for w in 1100 1440; do
+            timeout 60 "$EXE" --nickname=테스트 --screen=jam --window=0,0,$w,800 --snapshot-delay=5000 --snapshot=snapshots/win_jam_w$w.png || true
           done
           ls -la snapshots
 

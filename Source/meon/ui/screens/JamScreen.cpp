@@ -1100,8 +1100,9 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     };
     chatSend.onPress = [this] { sendChat(); };
 
-    // 친구
-    addAndMakeVisible (friendsCard);
+    // 친구: 홈·사이드바 디자인 v2.1 은 방 화면에 친구 패널이 없다 (사이드바 친구 목록, 친구 초대는 프로필 창의 "방 초대").
+    // 패널은 만들되 보이지 않게 둔다 (사용자 결정 2026-10-30)
+    addChildComponent (friendsCard);
     friendsCard.setTitle (TXT ("친구"), true);
     friendsCard.onToggle = [this] (bool o) { friendsOpen = o; toggleFold (foldFriends, o); };
     friendList = std::make_unique<FriendList>();
@@ -1197,6 +1198,7 @@ void JamScreen::jamStatsChanged()
 
 void JamScreen::rebuildFriends()
 {
+    if (! friendsCard.isVisible()) return;   // v2.1: 친구 패널 없음
     auto list = core.store().state().friends;
     auto rank = [] (const core::Friend& f) { return f.status == "online" ? 0 : (f.status == "in_room" ? 1 : 2); };
     std::stable_sort (list.begin(), list.end(), [&] (const core::Friend& a, const core::Friend& b) { return rank (a) < rank (b); });
@@ -1368,29 +1370,15 @@ void JamScreen::resized()
     {
         filePlayer->setBounds (side.removeFromBottom (filePlayer->preferredHeight (side.getWidth())));
         side.removeFromBottom (metric::gap);
+        // v2.1: 친구 패널이 없으므로 채팅이 세로 전체. 접으면 머리만 (48), 움직이는 동안은 e 로 보간
         const int closedH = 48;
-        const int avail = side.getHeight() - metric::gap;
+        const int avail = side.getHeight();
         sideAvail = avail;
-        const float eChat = fold.value (foldChat), eFr = fold.value (foldFriends);
-        core::FoldLayout::Pair hs;
-        if (! vMoving)
-            hs = core::FoldLayout::verticalPair (avail, closedH, chatOpen, friendsOpen);
-        else
-        {
-            // 움직이는 동안: 네 끝 상태(둘 다 열림·하나만 열림 ×2·둘 다 닫힘)를 두 e 로 이중 선형 보간
-            core::FoldLayout::Pair L[2][2];
-            for (int a = 0; a < 2; ++a)
-                for (int b = 0; b < 2; ++b)
-                    L[a][b] = core::FoldLayout::verticalPair (avail, closedH, a == 1, b == 1);
-            hs = core::FoldLayout::blend (L, eChat, eFr, foldFillV);
-        }
-        chatCard.setBounds (side.removeFromTop (hs.first));
-        side.removeFromTop (metric::gap);
-        friendsCard.setBounds (side.removeFromTop (hs.second));
+        const float eChat = fold.value (foldChat);
+        const int chatH = vMoving ? juce::roundToInt ((float) closedH + (float) (avail - closedH) * eChat) : (chatOpen ? avail : closedH);
+        chatCard.setBounds (side.removeFromTop (chatH));
         chatCard.setOpen (chatOpen);
         chatCard.setFoldProgress (eChat);
-        friendsCard.setOpen (friendsOpen);
-        friendsCard.setFoldProgress (eFr);
 
         // 채팅 안: 목록 + 입력 줄 (12·18, 높이 44)
         auto chatContent = [this] (bool visible, float alpha)
@@ -1413,7 +1401,7 @@ void JamScreen::resized()
         else if (fold.isMoving (foldChat))
         {
             // 접히는·펼쳐지는 채팅: 내용은 시작·끝 중 큰 크기로 한 번만 배치하고 카드가 잘라 보인다. 완전히 접히면 숨긴다
-            const juce::Point<int> size (chatCard.getWidth(), juce::jmax (foldChatH, hs.first));
+            const juce::Point<int> size (chatCard.getWidth(), juce::jmax (foldChatH, chatH));
             if (size != laidChat) { laidChat = size; layoutChatContent (size.x, size.y); fitChatView(); }
             chatContent (eChat > 0.0f, eChat);
         }
@@ -1426,27 +1414,6 @@ void JamScreen::resized()
             fitChatView();
         }
 
-        if (! vMoving)
-        {
-            laidFriends = {};
-            friendViewport.setVisible (friendsOpen);
-            friendViewport.setAlpha (1.0f);
-            if (! hMoving) layoutFriendsContent (friendsCard.getWidth(), friendsCard.getHeight());
-        }
-        else if (fold.isMoving (foldFriends))
-        {
-            const juce::Point<int> size (friendsCard.getWidth(), juce::jmax (foldFriendsH, hs.second));
-            if (size != laidFriends) { laidFriends = size; layoutFriendsContent (size.x, size.y); }
-            friendViewport.setVisible (eFr > 0.0f);
-            friendViewport.setAlpha (eFr);
-        }
-        else
-        {
-            laidFriends = {};
-            friendViewport.setVisible (friendsOpen);
-            friendViewport.setAlpha (1.0f);
-            friendViewport.setBounds (friendsCard.contentBounds());   // 목록은 그대로 (끝나면 기존 배치)
-        }
     }
 
     // 왼쪽: 멤버 (위) · 내 오디오 + 모니터 (아래)
@@ -1607,11 +1574,9 @@ void JamScreen::toggleFold (int panel, bool open)
     // 움직이는 동안 내용을 배치할 크기 = 지금 크기와 끝 크기 중 큰 쪽 (이미 움직이는 중이면 그때 정한 크기와도)
     if (panel == foldChat || panel == foldFriends)
     {
-        const bool moving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
-        const auto end = core::FoldLayout::verticalPair (sideAvail, 48, chatOpen, friendsOpen);
-        foldChatH = juce::jmax (moving ? foldChatH : 0, chatCard.getHeight(), end.first);
-        foldFriendsH = juce::jmax (moving ? foldFriendsH : 0, friendsCard.getHeight(), end.second);
-        foldFillV = chatCard.getHeight() + friendsCard.getHeight() == sideAvail && (chatOpen || friendsOpen);
+        if (panel == foldFriends) return;   // v2.1: 방 화면에 친구 패널 없음
+        const bool moving = fold.isMoving (foldChat);
+        foldChatH = juce::jmax (moving ? foldChatH : 0, chatCard.getHeight(), chatOpen ? sideAvail : 48);   // 채팅 혼자 세로 전체
     }
     else
     {
@@ -1627,18 +1592,17 @@ void JamScreen::toggleFold (int panel, bool open)
 void JamScreen::devToggleFold (const juce::String& panel)
 {
     if (panel == "chat")         { chatOpen = ! chatOpen; toggleFold (foldChat, chatOpen); }
-    else if (panel == "friends") { friendsOpen = ! friendsOpen; toggleFold (foldFriends, friendsOpen); }
+    // "friends": v2.1 방 화면에 친구 패널이 없어 아무 일 없음
     else if (panel == "send")    { sendOpen = ! sendOpen; toggleFold (foldSend, sendOpen); }
     else if (panel == "mon")     { monOpen = ! monOpen; toggleFold (foldMon, monOpen); }
 }
 
 void JamScreen::previewFold (const juce::String& panel, float e)
 {
-    const int i = panel == "chat" ? foldChat : panel == "friends" ? foldFriends : panel == "send" ? foldSend : panel == "mon" ? foldMon : -1;
+    const int i = panel == "chat" ? foldChat : panel == "send" ? foldSend : panel == "mon" ? foldMon : -1;   // 친구 패널 없음 (v2.1)
     if (i < 0) return;
     // 열린 상태에서 접기 시작한 것처럼 (내용 크기를 정한 뒤) e 에 멈춘다
     if (i == foldChat) chatOpen = false;
-    if (i == foldFriends) friendsOpen = false;
     if (i == foldSend) sendOpen = false;
     if (i == foldMon) monOpen = false;
     if (e < 0.0f) { fold.snap (i, false); return; }   // 비교용: 애니메이션 없이 접은 화면 (기존 레이아웃)

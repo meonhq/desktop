@@ -378,6 +378,20 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
         joinFriendRoomNow();
     };
     accept.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().acceptFriendRequest (rid, reloader()); };
+    invite.onPress = [this]
+    {
+        auto& home = core.home();
+        const auto id = user.id;
+        using P = core::HomeController::InviteState::Phase;
+        const auto st = home.inviteState (id).phase;
+        if (st == P::pending) home.cancelInvite (id);
+        else if (st == P::none)
+        {
+            std::weak_ptr<bool> weak = alive;
+            home.invite (id, [this, weak] (core::Result<core::InviteSent>) { if (! weak.expired()) refresh(); });   // 실패 토스트는 AppRoot (onInviteFailed)
+        }
+        refresh();
+    };
     decline.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().declineFriendRequest (rid, reloader()); };
 
     core.store().addListener (this);
@@ -418,6 +432,7 @@ core::HomeController::FriendJoin ProfileModal::joinState() const
 
 void ProfileModal::timerCallback()
 {
+    if (invite.isVisible() || canInvite() != invite.isVisible()) { refresh(); return; }   // "N초 뒤 초대가 가요" → "초대됨"
     if (! joinRoom.isVisible()) return;
     using J = core::HomeController::FriendJoin;
     const auto st = joinState();
@@ -493,7 +508,15 @@ juce::String ProfileModal::lastSeenText() const
 
 bool ProfileModal::hasFooter() const
 {
-    return request.isVisible() || joinRoom.isVisible() || accept.isVisible();
+    return request.isVisible() || joinRoom.isVisible() || accept.isVisible() || invite.isVisible();
+}
+
+bool ProfileModal::canInvite() const
+{
+    // 디자인: 친구 · 온라인 · 내가 방에 있음. 서버의 can_invite (친구 목록 항목이 최신, 없으면 프로필)
+    if (! profile || profile->relation != "friend" || ! core.store().state().currentRoom) return false;
+    if (const auto* f = core.store().state().findFriend (user.id)) return f->canInvite;
+    return profile->canInvite;
 }
 
 void ProfileModal::refresh()
@@ -522,14 +545,32 @@ void ProfileModal::refresh()
     // "요청 보냄" 은 눌러도 아무 일이 없으므로 화살표 커서 (모양은 그대로)
     joinRoom.setMouseCursor (js == J::requested ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
     const bool incoming = rel == "request_received" && incomingRequestId().isNotEmpty();
+    const bool inviteOk = canInvite() && ! incoming && ! canJoin;
+    juce::String footNote = note;
+    if (inviteOk)
+    {
+        using P = core::HomeController::InviteState::Phase;
+        const auto st = core.home().inviteState (user.id);
+        invite.setPending (st.phase == P::pending);
+        invite.setDimmed (st.phase == P::sent);
+        invite.setButtonText (st.phase == P::pending ? TXT ("취소") : (st.phase == P::sent ? TXT ("초대됨") : TXT ("방 초대")));
+        invite.setMouseCursor (st.phase == P::sent ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
+        if (st.phase == P::pending)
+        {
+            const auto left = std::max<juce::int64> (1, (st.deliverAtMs - core.scheduler().nowMs() + 999) / 1000);
+            footNote = juce::String (left) + TXT ("초 뒤 초대가 가요");
+        }
+    }
 
     if (incoming)       footer.setButtons ({ &decline, &accept });
     else if (canJoin)   footer.setButtons ({ &joinRoom });
+    else if (inviteOk)  footer.setButtons ({ &invite });
     else if (canRequest) footer.setButtons ({ &request });
     else                footer.setButtons ({});
-    for (auto* b : { &request, &joinRoom, &decline, &accept })
-        b->setVisible ((b == &request && canRequest && ! incoming && ! canJoin) || (b == &joinRoom && canJoin && ! incoming) || ((b == &decline || b == &accept) && incoming));
-    footer.setNote (note, col::inkSub);
+    for (auto* b : { &request, &joinRoom, &decline, &accept, &invite })
+        b->setVisible ((b == &request && canRequest && ! incoming && ! canJoin && ! inviteOk) || (b == &joinRoom && canJoin && ! incoming)
+                       || ((b == &decline || b == &accept) && incoming) || (b == &invite && inviteOk));
+    footer.setNote (footNote, col::inkSub);
     footer.setVisible (hasFooter() || note.isNotEmpty());
 
     const int rows = lastSeenText().isNotEmpty() ? 3 : 2;

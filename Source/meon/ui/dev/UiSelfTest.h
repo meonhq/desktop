@@ -71,6 +71,7 @@ private:
     JamScreen* jam() const;
     bool inRoom() const;
     juce::String roomId() const;
+    juce::StringArray kickedRooms;   // 자가 테스트 중 내보내진 방 (다시 들어갈 수 없다)
     static juce::Button* findButton (juce::Component&, const juce::String& text);
     static juce::Button* firstButton (juce::Component&);
 
@@ -78,6 +79,7 @@ private:
     void enterNewRoom (bool approval = false);
     void minimize();
     void clickSidebar (const juce::String& text);   // 사이드바 줄(메뉴·참여 중 방)을 누른다
+    void closeToasts();   // 앞 섹션의 토스트(오른쪽 아래)를 닫는다. 방 화면 채팅 입력·방 카드를 가릴 수 있다
 
     // 시나리오
     void addLeaveTests();
