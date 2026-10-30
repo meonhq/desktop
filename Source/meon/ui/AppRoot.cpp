@@ -4,6 +4,7 @@
 #include "screens/JamScreen.h"
 #include "overlays/JamOverlays.h"
 #include "../core/model/PanelWidth.h"
+#include "../MeonWindowChrome.h"
 
 namespace meon::ui
 {
@@ -15,7 +16,8 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     sidebar = std::make_unique<Sidebar> (core);
     addAndMakeVisible (*sidebar);
     sidebar->onLayoutChanged = [this] { resized(); };
-    sidebar->onHome = [this] { showPage (Sidebar::Page::home); };
+    sidebar->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
+    sidebar->onHome = [this] { showPage (Sidebar::homeMenu ? Sidebar::Page::home : Sidebar::Page::rooms); };
     sidebar->onRooms = [this] { showPage (Sidebar::Page::rooms); };
     sidebar->onShowRoom = [this] { setMinimized (false); };
     sidebar->onJoinCode = [this]
@@ -44,7 +46,9 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
         juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.home().dismissInvite (id); });
     };
     home = std::make_unique<HomeScreen> (core, update);
-    home->setShell (sidebar->currentWidth(), TXT ("홈"));
+    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
+    home->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
+    home->onOverlayChanged = [this] { syncToggle(); };
     home->onOpenSettingsTab = [this] (int tab) { if (onOpenSettings) onOpenSettings (tab); };
     home->onShowRooms = [this] { showPage (Sidebar::Page::rooms); };
     home->onAcceptInvite = [this] (const juce::String& id) { acceptInvite (id); };
@@ -52,6 +56,9 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     home->onReturnToRoom = [this] { setMinimized (false); };
     addChildComponent (*home);
+    toggle = std::make_unique<SidebarToggle>();
+    toggle->onPress = [this] { sidebar->toggleCollapsed(); syncToggle(); };
+    addChildComponent (*toggle);
     core.store().addListener (this);
     core.connection().addListener (this);
     core.room().onActionFailed = [this] (core::ErrorCode code)
@@ -74,6 +81,11 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 
 AppRoot::~AppRoot()
 {
+    // 앱 화면이 사라지면(로그아웃) 맥 창의 제목 줄을 되돌린다 (로그인 화면은 보통 창)
+    if (chromeInstalled)
+        meon::chrome::remove (getPeer() != nullptr ? getPeer()->getNativeHandle() : nullptr);
+    if (home != nullptr) home->onOverlayChanged = nullptr;
+    if (auto* screen = getJamScreen()) screen->onOverlayChanged = nullptr;
     core.store().removeListener (this);
     core.connection().removeListener (this);
     core.room().onActionFailed = nullptr;
@@ -90,6 +102,76 @@ AppRoot::~AppRoot()
 void AppRoot::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
+}
+
+void AppRoot::paintOverChildren (juce::Graphics& g)
+{
+    // 개발용 (--chrome=mac, 리눅스·윈도우에서 맥 창 모드 미리 보기): 디자인의 신호등 자리 (12px, 왼쪽 20, 위 20, 사이 8)
+    if (! hasForcedChrome || forcedChrome != Sidebar::Chrome::macWindow) return;
+    const juce::uint32 fills[] = { 0xFFFF5F57, 0xFFFEBC2E, 0xFF28C840 }, rims[] = { 0xFFE2463F, 0xFFE1A116, 0xFF1AAB29 };
+    for (int i = 0; i < 3; ++i)
+    {
+        const juce::Rectangle<float> c (20.0f + 20.0f * (float) i, 20.0f, 12.0f, 12.0f);
+        g.setColour (juce::Colour (fills[i]));
+        g.fillEllipse (c);
+        g.setColour (juce::Colour (rims[i]));
+        g.drawEllipse (c.reduced (0.25f), 0.5f);
+    }
+}
+
+void AppRoot::parentHierarchyChanged()
+{
+    // 창에 붙은 뒤 (맥 독립 앱: 제목 줄을 없앤다). 붙는 중에는 창 크기가 바뀌므로 다음 메시지에서
+    juce::Component::SafePointer<AppRoot> safe (this);
+    juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->ensureWindowChrome(); });
+}
+
+void AppRoot::ensureWindowChrome()
+{
+    if (chromeTried || core.isPlugin() || hasForcedChrome) return;
+    auto* peer = getPeer();
+    if (peer == nullptr) return;
+    chromeTried = true;
+    juce::Component::SafePointer<AppRoot> safe (this);
+    chromeInstalled = meon::chrome::install (peer->getNativeHandle(), [safe] { if (safe != nullptr) { safe->resized(); safe->repaint(); } });
+    resized();
+    repaint();
+}
+
+Sidebar::Chrome AppRoot::chromeMode() const
+{
+    if (hasForcedChrome) return forcedChrome;
+    if (core.isPlugin()) return Sidebar::Chrome::legacy;   // 플러그인은 이번에 바꾸지 않는다
+    // 맥 독립 앱 창 모드: 신호등이 있다. 전체 화면이면 신호등이 사라지므로 디자인 fullscreen 켜짐 배치.
+    // 윈도우·리눅스는 제목 줄을 그대로 두고 사이드바 윗부분은 신호등이 없는 배치 (사용자 결정 2026-10-30)
+    if (chromeInstalled)
+        if (auto* peer = getPeer(); peer != nullptr && ! peer->isFullScreen())
+            return Sidebar::Chrome::macWindow;
+    return Sidebar::Chrome::flat;
+}
+
+void AppRoot::titleBarMouseDown()
+{
+    if (chromeInstalled && chromeMode() == Sidebar::Chrome::macWindow)
+        if (auto* peer = getPeer())
+            meon::chrome::titleBarMouseDown (peer->getNativeHandle());
+}
+
+void AppRoot::syncToggle()
+{
+    if (toggle == nullptr || home == nullptr || sidebar == nullptr) return;
+    const auto ta = sidebar->toggleArea();
+    const bool show = sidebar->isVisible() && ! ta.isEmpty();
+    toggle->setVisible (show);
+    if (! show) return;
+    toggle->setBounds (ta);
+    toggle->setOpen (! sidebar->isCollapsed());
+    // 모달 덮개 아래 (홈 모달은 창 전체, 방 화면 모달은 방 화면만 덮는다)
+    auto* screen = getJamScreen();
+    const bool covered = roomClosed != nullptr
+                      || (home->isVisible() && home->dimsWindow())
+                      || (screen != nullptr && screen->isVisible() && screen->dimsScreen() && screen->getBounds().contains (ta));
+    toggle->setCovered (covered);
 }
 
 //==============================================================================
@@ -136,7 +218,7 @@ void AppRoot::syncSidebar()
 {
     const bool inRoomView = core.store().state().currentRoom && ! minimized;
     sidebar->setPage (inRoomView ? Sidebar::Page::room : page);
-    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
+    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, sidebar->headerInset());
 }
 
 void AppRoot::showPage (Sidebar::Page p)
@@ -187,8 +269,11 @@ void AppRoot::updateScreen()
                 juce::Component::SafePointer<AppRoot> safe (this);
                 juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->setMinimized (true); });
             };
+            screen->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
+            screen->onOverlayChanged = [this] { syncToggle(); };
             jam = std::move (screen);
             addAndMakeVisible (*jam);
+            toggle->toFront (false);   // 접기 버튼은 방 화면 위 (토스트·겹침은 그 뒤에 다시 앞으로)
             minimized = false;   // 새로 들어간 방은 합주 화면부터
         }
         // 다른 기기에서 들어간 방으로 옮겨져도(movedToOtherRoom) 최소화 상태는 그대로 둔다 (막대가 새 방을 보여 준다)
@@ -496,6 +581,7 @@ void AppRoot::resized()
     // 사이드바를 잠시 접는다(56): 앱 1180, 플러그인 1100 미만 (사용자 결정 2026-10-29). 홈에서는 늘 사용자가 정한 대로.
     // 통째로 숨기는 것은 플러그인만 (900~915). 독립 앱은 창이 최소 폭(1024)보다 좁아져도(작은 화면·배율, 창 나란히 놓기)
     // 접힌 아이콘 줄은 남긴다 (예전에는 이 조건에 플러그인 확인이 없어서 996 미만이면 앱에서도 숨었다)
+    sidebar->setChrome (chromeMode());
     const bool roomView = jam != nullptr && jam->isVisible() && ! minimized;
     const int need = core::panel::chrome + core::panel::membersMin + core::panel::defaultWidth (core.isPlugin());
     sidebar->setForcedCollapsed (roomView && getWidth() - Sidebar::openW < need);
@@ -503,9 +589,11 @@ void AppRoot::resized()
     sidebar->setVisible (! hideSidebar);
     const int sw = hideSidebar ? 0 : sidebar->currentWidth();
     // 사이드바가 옆에 있으면 방 화면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 뺀다. 숨으면(좁은 플러그인 창) 예전 윗줄 (갈 곳이 없어지지 않게)
-    if (auto* screen = getJamScreen()) screen->setSidebarShown (! hideSidebar);
+    // 본문 제목 줄 왼쪽 여백 (디자인 hdPL): 맥 창 모드에서 사이드바를 접으면 72 (신호등·접기 버튼 자리), 접는 동안 같이 움직인다
+    const int titleInset = hideSidebar ? metric::padX : sidebar->headerInset();
+    if (auto* screen = getJamScreen()) { screen->setSidebarShown (! hideSidebar); screen->setHeaderInset (titleInset); }
     sidebar->setBounds (0, 0, juce::jmax (sw, Sidebar::closedW), getHeight());
-    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
+    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, titleInset);
     home->setBounds (getLocalBounds());
     if (jam != nullptr) jam->setBounds (getLocalBounds().withTrimmedLeft (sw));
     if (profileMenu != nullptr)
@@ -516,6 +604,7 @@ void AppRoot::resized()
     if (roomClosed != nullptr) { roomClosed->setBounds (getLocalBounds()); roomClosed->toFront (false); }
     if (fail != nullptr)
         fail->setBounds (juce::Rectangle<int> (380, fail->getPreferredHeight()).withCentre (getLocalBounds().getCentre()));
+    syncToggle();
     layoutToasts();
 }
 

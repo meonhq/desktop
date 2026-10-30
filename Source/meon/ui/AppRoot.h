@@ -38,6 +38,12 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;   // 개발용 미리 보기의 가짜 신호등
+    void parentHierarchyChanged() override;
+    /** 개발용 (--chrome=mac·flat·plugin): 창 윗부분 배치를 정한다. mac 은 신호등 자리에 가짜 신호등을 그린다 */
+    void devForceChrome (Sidebar::Chrome c) { forcedChrome = c; hasForcedChrome = true; resized(); repaint(); }
+    void devResetChrome() { hasForcedChrome = false; resized(); repaint(); }
+    Sidebar::Chrome chromeMode() const;
     /** 에디터가 넘기는 단축키 (글자 입력 중이 아닐 때). Esc 는 맨 위 겹침부터 닫는다 */
     bool handleShortcut (const juce::KeyPress&);
 
@@ -49,7 +55,16 @@ private:
     // 합주 화면은 사이드바 오른쪽에만 둔다 (방 화면 안은 그대로)
     std::unique_ptr<Sidebar> sidebar;
     std::unique_ptr<ProfileMenu> profileMenu;
-    Sidebar::Page page = Sidebar::Page::home;   // 방 밖(또는 최소화)에서 보는 쪽: 홈 / 공개 방
+    // 사이드바 접기 버튼: 창 기준 자리 (맥 창 모드에서는 접혀도 신호등 오른쪽 84). 사이드바·본문 위, 토스트·겹침 아래
+    std::unique_ptr<SidebarToggle> toggle;
+    void syncToggle();
+    // 맥 독립 앱: 제목 줄 없이 내용이 창 맨 위까지 (MeonWindowChrome). 로그인 뒤 앱 화면에서만 (로그아웃하면 되돌린다)
+    bool chromeTried = false, chromeInstalled = false;
+    bool hasForcedChrome = false;
+    Sidebar::Chrome forcedChrome = Sidebar::Chrome::flat;
+    void ensureWindowChrome();
+    void titleBarMouseDown();
+    Sidebar::Page page = Sidebar::homeMenu ? Sidebar::Page::home : Sidebar::Page::rooms;   // 방 밖(또는 최소화)에서 보는 쪽: 공개 방 (홈은 꺼 둠)
     void syncSidebar();
     void showPage (Sidebar::Page);
     void openProfileMenu();

@@ -232,13 +232,13 @@ void UiSelfTest::closeToasts()
 
 void UiSelfTest::minimize()
 {
-    // 홈·사이드바 디자인 v2: 방 화면 윗줄의 로비 보기 버튼은 없다. 사이드바 "홈" 을 누르면 방은 그대로 두고 홈으로 (최소화).
-    // 창이 좁아 방 화면에서 사이드바가 숨으면(플러그인 900) 예전 윗줄의 로비 보기
+    // 홈·사이드바 디자인 v2: 방 화면 윗줄의 로비 보기 버튼은 없다. 사이드바 "공개 방" 을 누르면 방은 그대로 두고 공개 방으로 (최소화.
+    // v2.1 최신: 메뉴에 홈이 없다). 창이 좁아 방 화면에서 사이드바가 숨으면(플러그인 900) 예전 윗줄의 로비 보기
     add ([this]
     {
         if (auto* j = jam(); j != nullptr && j->lobby.isVisible()) { click (j->lobby); return; }
-        const auto r = root.sidebar->devRow (TXT ("홈"));
-        expect (root.sidebar->isVisible() && ! r.isEmpty(), TXT ("사이드바 \"홈\""));
+        const auto r = root.sidebar->devRow (TXT ("공개 방"));
+        expect (root.sidebar->isVisible() && ! r.isEmpty(), TXT ("사이드바 \"공개 방\""));
         click (*root.sidebar, r.getCentre());
     }, 0);
     // 홈·사이드바 디자인: 최소화 막대 없이 사이드바 "참여 중" 항목이 방을 보여 준다
@@ -436,15 +436,26 @@ void UiSelfTest::addMinimizeTests()
 
     begin (TXT ("5 최소화: 친구 참여·코드로 입장"));
     minimize();
-    clickSidebar (TXT ("홈"));
     add ([this]
     {
-        // 홈 "합주 중인 친구" 카드의 참여·입장 요청 (승인 방에 있는 친구는 "입장 요청")
-        auto* b = findButton (home(), TXT ("입장 요청"));
-        if (b == nullptr) b = findButton (home(), TXT ("참여"));
-        expect (b != nullptr, TXT ("합주 중인 친구에 참여·입장 요청 버튼"));
-        if (b != nullptr) click (*b);
-    }, 300);
+        // 다른 방에서 합주 중인 친구: 사이드바 친구 줄 → 프로필 창의 참여·요청 (홈의 "합주 중인 친구" 카드는 홈을 꺼 둬서 없다)
+        const auto& s = core.store().state();
+        for (auto& f : s.friends)
+            if (f.status == "in_room" && f.room && (! s.currentRoom || f.room->id != s.currentRoom->id))
+            {
+                const auto r = root.sidebar->devRow (f.user.nickname.value_or (f.user.username));
+                if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+                else home().openProfile (f.user);
+                return;
+            }
+        expect (false, TXT ("다른 방에서 합주 중인 친구"));
+    }, 0);
+    waitUntil (TXT ("프로필 창에 참여·요청"), [this]
+    {
+        auto* m = dynamic_cast<ProfileModal*> (home().modal.get());
+        return m != nullptr && m->joinRoom.isVisible();
+    });
+    add ([this] { if (auto* m = dynamic_cast<ProfileModal*> (home().modal.get())) click (m->joinRoom); }, 300);
     add ([this]
     {
         expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 들어가기")) != nullptr, TXT ("친구 참여 → 확인 모달"));
@@ -1011,8 +1022,8 @@ void UiSelfTest::addRoomSidebarTests()
         if (! hidden)
             expect (root.sidebar->currentWidth() == want, how + TXT (": 폭 ") + juce::String (want) + TXT (" (지금 ") + juce::String (root.sidebar->currentWidth()) + ")");
         if (! hidden && want == Sidebar::closedW)
-            expect (inRoom() && ! root.sidebar->devRow (TXT ("홈")).isEmpty() && ! root.sidebar->devRow (core.store().state().currentRoom->title).isEmpty(),
-                    how + TXT (": 접혀도 아이콘 줄 (홈·방)"));
+            expect (inRoom() && ! root.sidebar->devRow (TXT ("공개 방")).isEmpty() && ! root.sidebar->devRow (core.store().state().currentRoom->title).isEmpty(),
+                    how + TXT (": 접혀도 아이콘 줄 (공개 방·방)"));
         expect (jam() != nullptr && jam()->getX() == (hidden ? 0 : root.sidebar->currentWidth()), how + TXT (": 방 화면은 사이드바 오른쪽"));
     };
 
@@ -1099,6 +1110,138 @@ void UiSelfTest::addSidebarTests()
     add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
 
+    // v2.1 최신: 창 윗부분 배치 (chromeVals A안). 맥 창 모드 = 신호등 오른쪽 접기 버튼 84·로고 아래 줄(32)·접히면 제목 줄 왼쪽 72,
+    // 신호등 없음(맥 전체 화면·윈도우·리눅스) = 접기 버튼 12·로고 줄 없음·제목 줄 왼쪽 18. 접는 동안 같이 움직인다
+    begin (TXT ("사이드바: 창 배치 (v2.1 최신)"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    auto chromeCheck = [this] (const juce::String& how, int toggleX, int bodyTop, int titleInset)
+    {
+        auto* sb = root.sidebar.get();
+        const auto ta = root.toggle->getBounds();
+        expect (root.toggle->isVisible() && ta == juce::Rectangle<int> (toggleX, 10, 32, 32),
+                how + TXT (": 접기 버튼 (") + juce::String (toggleX) + TXT (", 10) (지금 ") + ta.toString() + ")");
+        expect (sb->viewport.getY() == bodyTop, how + TXT (": 메뉴 시작 ") + juce::String (bodyTop) + TXT (" (지금 ") + juce::String (sb->viewport.getY()) + ")");
+        expect (sb->headerInset() == titleInset && home().titleInset == titleInset,
+                how + TXT (": 제목 줄 왼쪽 ") + juce::String (titleInset) + TXT (" (지금 ") + juce::String (home().titleInset) + ")");
+        expect (sb->devRow (TXT ("홈")).isEmpty(), how + TXT (": 메뉴에 홈 없음"));
+    };
+    add ([this, chromeCheck]
+    {
+       #if JUCE_MAC
+        const auto native = Sidebar::Chrome::macWindow;   // 맥 독립 앱 창 모드 (전체 화면이 아니면)
+       #else
+        const auto native = Sidebar::Chrome::flat;        // 윈도우·리눅스: 제목 줄은 그대로, 신호등 없는 배치
+       #endif
+        expect (root.chromeMode() == (core.isPlugin() ? Sidebar::Chrome::legacy : native), TXT ("이 플랫폼의 창 배치 (플러그인은 예전 배치)"));
+        root.devForceChrome (Sidebar::Chrome::macWindow);
+        chromeCheck (TXT ("맥 창 모드 펼침"), 84, 52 + 32, 18);
+        root.sidebar->setCollapsed (true);
+    }, 0);
+    add ([this]
+    {
+        // 접는 중: 로고 줄·제목 줄 여백이 끝 값 사이이고, 마지막 프레임의 폭과 같은 진행값으로 움직인다
+        auto* sb = root.sidebar.get();
+        const float e = (float) (sb->getWidth() - Sidebar::closedW) / (float) (Sidebar::openW - Sidebar::closedW);   // 마지막 프레임
+        const int logoRow = sb->viewport.getY() - 52, inset = home().titleInset;
+        expect (e > 0.02f && e < 0.98f, TXT ("접는 중 (진행값 ") + juce::String (e, 2) + ")");
+        expect (std::abs (logoRow - juce::roundToInt (32.0f * e)) <= 1 && std::abs (inset - juce::roundToInt (18.0f + 54.0f * (1.0f - e))) <= 1,
+                TXT ("접는 중: 폭 ") + juce::String (sb->getWidth()) + TXT (", 로고 줄 ") + juce::String (logoRow) + TXT (", 제목 줄 왼쪽 ") + juce::String (inset));
+    }, 60);
+    waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    add ([this, chromeCheck]
+    {
+        chromeCheck (TXT ("맥 창 모드 접힘"), 84, 52, 72);
+        root.devForceChrome (Sidebar::Chrome::flat);
+        chromeCheck (TXT ("신호등 없음 접힘"), 12, 52, 18);
+        root.sidebar->setCollapsed (false);
+    }, 0);
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    add ([this, chromeCheck]
+    {
+        chromeCheck (TXT ("신호등 없음 펼침"), 12, 52, 18);
+        root.devResetChrome();
+    }, 0);
+
+    // 참여 중·친구 섹션 접기 (디자인: 내용 높이 grid-template-rows 1fr ↔ 0fr, 화살표 0° ↔ -90°, 180ms 같은 곡선)
+    begin (TXT ("사이드바: 섹션 접기 애니메이션"));
+    add ([this]
+    {
+        auto* sb = root.sidebar.get();
+        const auto f = sb->devSection ("friends");
+        expect (f.full > 0 && f.visible == f.full && std::abs (f.angle) < 0.001f, TXT ("친구: 펼침 (") + juce::String (f.visible) + "/" + juce::String (f.full) + ")");
+        // 친구 머리말 누름
+        const auto h = sb->devSectionHeader (TXT ("친구"));
+        expect (! h.isEmpty(), TXT ("친구 머리말"));
+        if (! h.isEmpty()) click (*sb, h.getPosition().translated (12, 14));
+    }, 0);
+    // 접는 중 (180ms): 높이와 화살표가 끝 값 사이 (같은 진행값). 프레임 사이에서 한 번은 보인다
+    waitUntil (TXT ("접는 중: 높이·화살표가 끝 값 사이"), [this]
+    {
+        const auto f = root.sidebar->devSection ("friends");
+        const float e = (float) f.visible / (float) juce::jmax (1, f.full);
+        const float a = -juce::MathConstants<float>::halfPi * (1.0f - e);
+        return f.visible > 0 && f.visible < f.full && f.angle < -0.0001f && f.angle > -juce::MathConstants<float>::halfPi + 0.0001f
+            && std::abs (f.angle - a) < 0.05f;
+    }, 1000);
+    wait (400);
+    add ([this]
+    {
+        const auto f = root.sidebar->devSection ("friends");
+        expect (f.visible == 0 && std::abs (f.angle + juce::MathConstants<float>::halfPi) < 0.001f, TXT ("접힘: 높이 0, 화살표 -90°"));
+        if (const auto h = root.sidebar->devSectionHeader (TXT ("친구")); ! h.isEmpty()) click (*root.sidebar, h.getPosition().translated (12, 14));
+    }, 400);
+    add ([this]
+    {
+        const auto f = root.sidebar->devSection ("friends");
+        expect (f.visible == f.full && std::abs (f.angle) < 0.001f, TXT ("다시 펼침"));
+        const auto r = root.sidebar->devSection ("rooms");
+        expect (r.visible == r.full, TXT ("참여 중: 펼침"));
+    });
+
+    // 방에 있을 때 사이드바 친구 줄 "초대" (방 화면에서 뺀 친구 패널의 초대를 대신한다. 디자인 screen=방)
+    begin (TXT ("사이드바: 친구 줄 초대 (v2.1 최신)"));
+    auto invitee = std::make_shared<juce::String>();
+    enterNewRoom();
+    waitUntil (TXT ("초대할 수 있는 친구 (온라인·방 밖)"), [this, invitee]
+    {
+        for (auto& f : core.store().state().friends)
+            if (f.canInvite && f.status == "online" && core.home().inviteState (f.user.id).phase == core::HomeController::InviteState::Phase::none)
+            { *invitee = f.user.id; return true; }
+        return false;
+    }, 6000);
+    add ([this, invitee]
+    {
+        auto* sb = root.sidebar.get();
+        auto* b = sb->devInviteButton (*invitee);
+        const bool sidebarOpen = sb->isVisible() && ! sb->isCollapsed();
+        if (! sidebarOpen) { expect (b == nullptr || ! b->isVisible(), TXT ("접힌 사이드바에는 초대 버튼 없음")); return; }
+        expect (b != nullptr && b->isVisible() && b->getButtonText() == TXT ("초대"), TXT ("온라인 친구 줄 오른쪽 \"초대\""));
+        // 합주 중인 친구(같은 방·다른 방)는 버튼 없음
+        for (auto& f : core.store().state().friends)
+            if (f.status == "in_room")
+                expect (sb->devInviteButton (f.user.id) == nullptr, TXT ("합주 중인 친구는 초대 버튼 없음 (") + f.user.nickname.value_or (f.user.username) + ")");
+        if (b != nullptr) click (*b);
+    }, 200);
+    add ([this, invitee]
+    {
+        auto* b = root.sidebar->devInviteButton (*invitee);
+        if (b == nullptr) return;
+        using P = core::HomeController::InviteState::Phase;
+        expect (core.home().inviteState (*invitee).phase == P::pending && b->getButtonText() == TXT ("취소") && b->getTooltip().contains (TXT ("초 뒤 초대가 가요")),
+                TXT ("누르면 3초 동안 \"취소\" (") + b->getTooltip() + ")");
+    }, 300);
+    waitUntil (TXT ("3초 뒤 \"초대됨\""), [this, invitee]
+    {
+        auto* b = root.sidebar->devInviteButton (*invitee);
+        using P = core::HomeController::InviteState::Phase;
+        return b == nullptr || (core.home().inviteState (*invitee).phase == P::sent && b->getButtonText() == TXT ("초대됨"));
+    }, 6000);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+
     begin (TXT ("사이드바: 접은 상태 (v2.1)"));
     add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
@@ -1107,10 +1250,11 @@ void UiSelfTest::addSidebarTests()
     add ([this]
     {
         auto* sb = root.sidebar.get();
-        const auto home_ = sb->devRow (TXT ("홈")), rooms = sb->devRow (TXT ("공개 방")), code = sb->devRow (TXT ("코드로 입장"));
+        const auto rooms = sb->devRow (TXT ("공개 방")), code = sb->devRow (TXT ("코드로 입장"));
         const auto make = sb->devRow (TXT ("방 만들기")), add_ = sb->devRow (TXT ("친구 추가"));
-        expect (! home_.isEmpty() && ! make.isEmpty() && ! add_.isEmpty(), TXT ("아이콘: 홈·공개 방·코드로 입장·방 만들기·친구 추가"));
-        expect (home_.getY() < rooms.getY() && rooms.getY() < code.getY() && code.getY() < make.getY() && make.getY() < add_.getY(), TXT ("순서: 메뉴 → 방 칸 → 친구 추가"));
+        expect (sb->devRow (TXT ("홈")).isEmpty(), TXT ("메뉴에 홈 없음 (v2.1 최신 homeMenu 숨김)"));
+        expect (! rooms.isEmpty() && ! make.isEmpty() && ! add_.isEmpty(), TXT ("아이콘: 공개 방·코드로 입장·방 만들기·친구 추가"));
+        expect (rooms.getY() < code.getY() && code.getY() < make.getY() && make.getY() < add_.getY(), TXT ("순서: 메뉴 → 방 칸 → 친구 추가"));
         expect (code.getBottom() + 2 + 10 + 9 == make.getY() && make.getBottom() + 2 + 10 + 9 == add_.getY(), TXT ("간격: 구분선 위 -2, 아래 8 (v2.1)"));
         click (*sb, make.getCentre());
     });
@@ -1138,14 +1282,14 @@ void UiSelfTest::addSidebarTests()
     add ([this]
     {
         expect (core.store().state().amHost(), TXT ("방장"));
-        // 방은 그대로, 홈으로 (좁은 플러그인 창은 방 화면에서 사이드바가 숨으므로 예전 로비 보기)
-        if (root.sidebar->isVisible()) click (*root.sidebar, root.sidebar->devRow (TXT ("홈")).getCentre());
+        // 방은 그대로, 공개 방으로 (좁은 플러그인 창은 방 화면에서 사이드바가 숨으므로 예전 로비 보기)
+        if (root.sidebar->isVisible()) click (*root.sidebar, root.sidebar->devRow (TXT ("공개 방")).getCentre());
         else click (jam()->lobby);
     });
     add ([this]
     {
         const auto& s = core.store().state();
-        expect (root.isMinimized(), TXT ("홈 아이콘: 방은 그대로 홈으로"));
+        expect (root.isMinimized(), TXT ("공개 방 아이콘: 방은 그대로 공개 방으로"));
         click (*root.sidebar, root.sidebar->devRow (s.currentRoom->title).getCentre());
     }, 300);
     waitUntil (TXT ("방 아이콘 → 방 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });

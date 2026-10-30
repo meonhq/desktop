@@ -995,6 +995,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
 
     // 헤더
     addAndMakeVisible (roomTitle);
+    roomTitle.addMouseListener (this, false);   // 방 이름을 잡아도 창 끌기 (맥 창 모드)
     privateTag = std::make_unique<Tag> (TXT ("비공개"));
     addChildComponent (*privateTag);
     codeBox = std::make_unique<CodeBox>();
@@ -1128,6 +1129,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
 
 JamScreen::~JamScreen()
 {
+    onOverlayChanged = nullptr;   // 아래에서 겹침을 지우는 동안 AppRoot 를 부르지 않는다
     stopTimer();
     jam.chat().removeListener (this);
     jam.removeListener (this);
@@ -1288,6 +1290,22 @@ void JamScreen::timerCallback()
     if (jam.hasFile()) filePlayer->refresh();
 }
 
+void JamScreen::setHeaderInset (int px)
+{
+    if (px == headerInset) return;
+    headerInset = px;
+    resized();
+}
+
+void JamScreen::mouseDown (const juce::MouseEvent& e)
+{
+    // 윗줄의 빈 곳이나 방 이름 (버튼은 각자 받는다)
+    if (e.eventComponent != this && e.eventComponent != &roomTitle) return;
+    const auto p = e.getEventRelativeTo (this).getPosition();
+    if (sidebarShown && modal == nullptr && p.y < headerLine() && onTitleBarMouseDown)
+        onTitleBarMouseDown();
+}
+
 void JamScreen::setSidebarShown (bool b)
 {
     if (b == sidebarShown) return;
@@ -1344,7 +1362,7 @@ void JamScreen::resized()
             const int cw = codeBox->idealWidth();
             codeBox->setBounds (h.removeFromRight (cw).withSizeKeepingCentre (cw, metric::buttonH));
         }
-        const int tx = sidebarShown ? metric::padX : (int) (metric::padX + logoW + 18.0f);   // 디자인: 방 이름은 왼쪽 18
+        const int tx = sidebarShown ? headerInset : (int) (metric::padX + logoW + 18.0f);   // 디자인: 방 이름은 왼쪽 18 (맥 창 모드에서 사이드바를 접으면 72)
         const int tagW = (privateTag->isVisible() ? privateTag->getIdealWidth() + 6 : 0) + (gear.isVisible() ? 24 + 6 : 0);
         const int titleMax = juce::jmax (40, h.getRight() - 18 - tx - tagW);
         const int tw = juce::jmin (titleMax, roomTitle.getIdealWidth() + 2);

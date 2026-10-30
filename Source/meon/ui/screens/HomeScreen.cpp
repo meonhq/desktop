@@ -544,6 +544,7 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
 
 HomeScreen::~HomeScreen()
 {
+    onOverlayChanged = nullptr;   // 아래에서 겹침을 지우는 동안 AppRoot 를 부르지 않는다
     *alive = false;
     core.store().removeListener (this);
     confirm.reset();
@@ -797,9 +798,9 @@ void HomeScreen::sendFriendRequest()
 //==============================================================================
 int HomeScreen::headerLine() const { return shell ? 51 : metric::headerH; }
 
-void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePageShown)
+void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePageShown, int titlePad)
 {
-    const bool changed = ! shell || leftInset != shellInset || title != pageTitle || homePageShown != shellHome;
+    const bool changed = ! shell || leftInset != shellInset || title != pageTitle || homePageShown != shellHome || titlePad != titleInset;
     if (! shell)
     {
         // 공개 방 쪽 (디자인): 카드 없이 쪽 머리말에 필터·방 만들기, 그 아래 방 목록. 코드로 입장은 사이드바 메뉴에 있다
@@ -818,9 +819,17 @@ void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePa
     shell = true;
     shellHome = homePageShown;
     shellInset = leftInset;
+    titleInset = titlePad;
     pageTitle = title;
     setOpaque (false);   // 왼쪽 사이드바 자리는 비워 둔다
     if (changed && getWidth() > 0) { resized(); repaint(); }
+}
+
+void HomeScreen::mouseDown (const juce::MouseEvent& e)
+{
+    // 쪽 제목 줄의 빈 곳 (맥 창 모드: 끌면 창이 옮겨지고 더블클릭은 시스템 설정대로. AppRoot 가 모드를 본다)
+    if (shell && ! hasOverlay() && e.eventComponent == this && e.y < headerLine() && e.x >= shellInset && onTitleBarMouseDown)
+        onTitleBarMouseDown();
 }
 
 bool HomeScreen::hitTest (int x, int y)
@@ -1174,10 +1183,10 @@ void HomeScreen::paint (juce::Graphics& g)
     g.fillRect (x0, canvasTop, getWidth() - x0, getHeight() - canvasTop);
     if (shell)
     {
-        // 쪽 제목 (디자인: 52 높이, 600 16px, 왼쪽 18)
+        // 쪽 제목 (디자인: 52 높이, 600 16px, 왼쪽 18. 맥 창 모드에서 사이드바를 접으면 72: 신호등·접기 버튼 자리)
         g.setColour (col::ink);
         g.setFont (font (600, 16.0f));
-        g.drawText (pageTitle, x0 + metric::padX, 0, getWidth() - x0 - metric::padX * 2, headerLine(), juce::Justification::centredLeft, true);
+        g.drawText (pageTitle, x0 + titleInset, 0, getWidth() - x0 - titleInset - metric::padX, headerLine(), juce::Justification::centredLeft, true);
     }
     else
     {
@@ -1286,7 +1295,7 @@ void HomeScreen::resized()
         else
         {
             const int titleW = (int) std::ceil (textWidth (font (600, 16.0f), pageTitle));
-            filterButton->setBounds (shellInset + metric::padX + titleW + 6, (headerLine() - 24) / 2, 24, 24);
+            filterButton->setBounds (shellInset + titleInset + titleW + 6, (headerLine() - 24) / 2, 24, 24);
             const int cw = createRoom.getIdealWidth();
             createRoom.setBounds (getWidth() - metric::padX - cw, (headerLine() - metric::buttonH) / 2, cw, metric::buttonH);
             roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작

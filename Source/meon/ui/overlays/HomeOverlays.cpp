@@ -328,7 +328,7 @@ CreateRoomModal::CreateRoomModal (core::MeonCore& c) : Modal (TXT ("새 합주�
 int CreateRoomModal::bodyHeight() const
 {
     const int w = 460 - 36;
-    const auto visNote = isPublic() ? TXT ("홈의 공개 방 목록에 보이고 누구나 들어올 수 있어요")
+    const auto visNote = isPublic() ? TXT ("공개 방 목록에 보이고 누구나 들어올 수 있어요")
                                     : TXT ("목록에 보이지 않아요. 방을 만들면 나오는 입장 코드로만 들어올 수 있어요");
     int h = 18 + (15 + 6 + 32) + 18 + (15 + 6 + 55) + 18 + (15 + 6 + 32 + 6 + hintHeight (visNote, w)) + 18;
     if (isPublic()) h += (15 + 6 + 32 + 6 + 18) + 18;
@@ -361,7 +361,7 @@ void CreateRoomModal::Body::paint (juce::Graphics& g)
     y += 15 + 6 + 55 + 18;
     drawLabel (g, TXT ("공개 설정"), { metric::padX, y, w, 15 });
     y += 15 + 6 + 32 + 6;
-    const auto visNote = o.isPublic() ? TXT ("홈의 공개 방 목록에 보이고 누구나 들어올 수 있어요")
+    const auto visNote = o.isPublic() ? TXT ("공개 방 목록에 보이고 누구나 들어올 수 있어요")
                                       : TXT ("목록에 보이지 않아요. 방을 만들면 나오는 입장 코드로만 들어올 수 있어요");
     const int vh = hintHeight (visNote, w);
     drawHint (g, visNote, { metric::padX, y, w, vh });
@@ -388,7 +388,7 @@ void CreateRoomModal::Body::resized()
     o.desc.setBounds (metric::padX, y, w, 55);
     y += 55 + 18 + 15 + 6;
     o.visibility.setBounds (metric::padX, y, w, 32);
-    const auto visNote = o.isPublic() ? TXT ("홈의 공개 방 목록에 보이고 누구나 들어올 수 있어요")
+    const auto visNote = o.isPublic() ? TXT ("공개 방 목록에 보이고 누구나 들어올 수 있어요")
                                       : TXT ("목록에 보이지 않아요. 방을 만들면 나오는 입장 코드로만 들어올 수 있어요");
     y += 32 + 6 + hintHeight (visNote, w) + 18;
     if (o.isPublic())

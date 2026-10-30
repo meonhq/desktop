@@ -11,7 +11,7 @@ namespace
     const juce::Colour sideBg     { 0xFFFFFFFFu };   // v2: #FFFFFF (예전 #FCFCFC)
     const juce::Colour activeBg   { 0xFFEFEFEFu };   // 선택된 메뉴·방
     const juce::Colour buttonHover { 0xFFF0F0F0u };  // 접기·+ 버튼 호버
-    constexpr int headerH = 52, profileH = 1 + 9 + 40 + 9, padX = 9, padY = 12, sectionGap = 12, rowGap = 2;
+    constexpr int profileH = 1 + 9 + 40 + 9, padX = 9, padY = 12, sectionGap = 12, rowGap = 2;
 
     juce::String nameOf (const core::UserPublic& u) { return u.nickname.value_or (u.username); }
 
@@ -47,6 +47,10 @@ struct Sidebar::Body : public juce::Component
         juce::String part;
         juce::Rectangle<int> plusR;
         std::function<void()> act, plusAct;
+        float angle = 0.0f;               // 머리말 화살표 (펼침 0, 접힘 -90°): 섹션 높이와 같이 움직인다
+        bool clipped = false;             // 접는 섹션 안: clip 밖은 그리지도 받지도 않는다
+        juce::Rectangle<int> clip;
+        int trimRight = 0;                // 오른쪽 "초대" 버튼 자리 (이름이 그 앞에서 줄어든다)
     };
     std::vector<Row> rows;
     int hotRow = -1;
@@ -55,12 +59,31 @@ struct Sidebar::Body : public juce::Component
 
     Sidebar& owner;
     struct InviteButtons { std::unique_ptr<Button> no, ok; };
-    std::map<juce::String, InviteButtons> inviteButtons;
+    std::map<juce::String, InviteButtons> inviteButtons;              // 받은 초대 카드 (거절·수락)
+    std::map<juce::String, std::unique_ptr<Button>> friendInvites;    // 친구 줄 "초대" (방에 있을 때, 온라인 친구)
+    SectionInfo secRooms, secFriends, secOffline;
+
+    /** 접는 섹션 (디자인 grid-template-rows 1fr ↔ 0fr): 내용은 제자리, 보이는 높이 = 다 펼친 높이 × 진행값. 그 밖은 잘린다 */
+    int clipSection (size_t first, int top, int full, int panel, SectionInfo& info)
+    {
+        const float e = owner.fold.value (panel);
+        const int vis = juce::jlimit (0, juce::jmax (0, full), juce::roundToInt ((float) full * e));
+        const juce::Rectangle<int> c (0, top, juce::jmax (1, getWidth() > 0 ? getWidth() : owner.currentWidth()), vis);
+        for (size_t i = first; i < rows.size(); ++i)
+        {
+            auto& r = rows[i];
+            r.clip = r.clipped ? r.clip.getIntersection (c) : c;
+            r.clipped = true;
+        }
+        info = { vis, full, -juce::MathConstants<float>::halfPi * (1.0f - e) };
+        return vis;
+    }
 
     void rebuild()
     {
         rows.clear();
-        juce::StringArray liveInvites;
+        juce::StringArray liveInvites, liveFriendInvites;
+        std::vector<std::pair<juce::Component*, size_t>> clippedButtons;   // 섹션 밖으로 잘리면 숨긴다
         const auto& s = owner.core.store().state();
         const bool open = ! owner.shut();
         const int w = getWidth() > 0 ? getWidth() : owner.currentWidth();
@@ -68,8 +91,7 @@ struct Sidebar::Body : public juce::Component
         int y = padY;
         auto add = [&] (Row r) { rows.push_back (std::move (r)); };
 
-        // 메뉴
-        if (open) { add ({ Kind::label, { x, y, rw, 28 }, TXT ("메뉴") }); y += 28 + rowGap; }
+        // 메뉴 (v2.1: "메뉴" 머리말 없음. 홈은 homeMenu 일 때만)
         auto nav = [&] (icons::Id id, const juce::String& t, bool active, std::function<void()> act)
         {
             Row r { Kind::nav, { x, y, rw, 32 }, t };
@@ -77,7 +99,8 @@ struct Sidebar::Body : public juce::Component
             add (std::move (r));
             y += 32 + rowGap;
         };
-        nav (icons::Id::navHome, TXT ("홈"), owner.page == Page::home, [this] { if (owner.onHome) owner.onHome(); });
+        if (homeMenu)
+            nav (icons::Id::navHome, TXT ("홈"), owner.page == Page::home, [this] { if (owner.onHome) owner.onHome(); });
         nav (icons::Id::navRooms, TXT ("공개 방"), owner.page == Page::rooms, [this] { if (owner.onRooms) owner.onRooms(); });
         nav (icons::Id::navHash, TXT ("코드로 입장"), false, [this] { if (owner.onJoinCode) owner.onJoinCode(); });
         y += sectionGap - rowGap;
@@ -88,7 +111,8 @@ struct Sidebar::Body : public juce::Component
         {
             Row h { Kind::header, { x, y, rw, 28 }, TXT ("참여 중") };
             h.open = roomsOpen;
-            h.act = [this] { roomsOpen = ! roomsOpen; rebuildAndLayout(); };
+            h.angle = -juce::MathConstants<float>::halfPi * (1.0f - owner.fold.value (owner.foldRooms));
+            h.act = [this] { roomsOpen = ! roomsOpen; owner.syncSections(); rebuildAndLayout(); };
             if (! joined)
             {
                 h.plus = true;
@@ -104,8 +128,9 @@ struct Sidebar::Body : public juce::Component
             add ({ Kind::separator, { x + 9, y - 2, rw - 18, 1 } });
             y += -2 + 1 + 8 + rowGap;
         }
-        if (! open || roomsOpen)
         {
+            const int top = y;
+            const size_t first = rows.size();
             if (joined)
             {
                 const auto& room = *s.currentRoom;
@@ -113,7 +138,8 @@ struct Sidebar::Body : public juce::Component
                 Row r { Kind::room, { x, y, rw, 32 }, room.title, juce::String (count) + "/" + juce::String (room.capacity) };
                 r.icon = icons::Id::door;
                 r.active = owner.page == Page::room;
-                r.dot = s.amHost() && ! s.joinRequests.empty();   // 입장 요청이 오면 방 아이콘에 점
+                // 입장 요청이 오면 방 아이콘에 점 (v2.1 최신: 그 방 화면을 보고 있으면 점 없음. 방 화면 윗줄 사람 아이콘에 있다)
+                r.dot = s.amHost() && ! s.joinRequests.empty() && ! r.active;
                 r.act = [this] { if (owner.onShowRoom) owner.onShowRoom(); };
                 add (std::move (r));
                 y += 32 + rowGap;
@@ -132,8 +158,9 @@ struct Sidebar::Body : public juce::Component
                 add (std::move (b));
                 y += 32 + rowGap;
             }
+            y = top + clipSection (first, top, y - rowGap - top, owner.foldRooms, secRooms);
         }
-        y += sectionGap - rowGap;
+        y += sectionGap;
 
         // 친구: 합주 중 → 온라인 → (접힌) 오프라인
         std::vector<const core::Friend*> on, off;
@@ -144,7 +171,8 @@ struct Sidebar::Body : public juce::Component
         {
             Row h { Kind::header, { x, y, rw, 28 }, TXT ("친구"), juce::String ((int) s.friends.size()) };
             h.open = friendsOpen;   // v2: 친구 요청 점은 여기가 아니라 내 프로필 아바타에
-            h.act = [this] { friendsOpen = ! friendsOpen; rebuildAndLayout(); };
+            h.angle = -juce::MathConstants<float>::halfPi * (1.0f - owner.fold.value (owner.foldFriends));
+            h.act = [this] { friendsOpen = ! friendsOpen; owner.syncSections(); rebuildAndLayout(); };
             h.plus = true;
             h.plusR = { x + rw - 6 - 22, y + 3, 22, 22 };
             h.plusAct = [this] { if (owner.onAddFriend) owner.onAddFriend(); };
@@ -162,34 +190,40 @@ struct Sidebar::Body : public juce::Component
             add (std::move (b));
             y += 32 + rowGap;
         }
-        if (open && friendsOpen)
+        bool anyPending = false;
         {
-            // 받은 초대: 친구 목록 위 카드 (홈·사이드바 디자인)
-            for (auto& inv : s.invites)
+            // 친구 목록 (디자인: 접힌 사이드바에서는 높이 0 으로 접힌다. 접는 동안은 줄이 남아 잘려 보인다)
+            const int top = y;
+            const size_t first = rows.size();
+            if (open)
             {
-                const int h = 1 + 9 + 34 + 9 + metric::smallH + 9 + 1;   // 82
-                Row r { Kind::invite, { x, y, rw, h }, inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title };
-                r.part = inv.from.part.value_or ("other");
-                add (std::move (r));
-                liveInvites.add (inv.id);
-                auto& b = inviteButtons[inv.id];
-                if (b.ok == nullptr)
+                // 받은 초대: 친구 목록 위 카드 (홈·사이드바 디자인)
+                for (auto& inv : s.invites)
                 {
-                    b.no = std::make_unique<Button> (Button::Kind::small, TXT ("거절"));
-                    b.ok = std::make_unique<Button> (Button::Kind::smallPrimary, TXT ("수락"));
-                    const auto id = inv.id;
-                    b.no->onPress = [this, id] { if (owner.onDeclineInvite) owner.onDeclineInvite (id); };
-                    b.ok->onPress = [this, id] { if (owner.onAcceptInvite) owner.onAcceptInvite (id); };
-                    addAndMakeVisible (*b.no);
-                    addAndMakeVisible (*b.ok);
+                    const int h = 1 + 9 + 34 + 9 + metric::smallH + 9 + 1;   // 82
+                    Row r { Kind::invite, { x, y, rw, h }, inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title };
+                    r.part = inv.from.part.value_or ("other");
+                    add (std::move (r));
+                    liveInvites.add (inv.id);
+                    auto& b = inviteButtons[inv.id];
+                    if (b.ok == nullptr)
+                    {
+                        b.no = std::make_unique<Button> (Button::Kind::small, TXT ("거절"));
+                        b.ok = std::make_unique<Button> (Button::Kind::smallPrimary, TXT ("수락"));
+                        const auto id = inv.id;
+                        b.no->onPress = [this, id] { if (owner.onDeclineInvite) owner.onDeclineInvite (id); };
+                        b.ok->onPress = [this, id] { if (owner.onAcceptInvite) owner.onAcceptInvite (id); };
+                        addChildComponent (*b.no);
+                        addChildComponent (*b.ok);
+                    }
+                    const int by = y + 1 + 9 + 34 + 9;
+                    const int ow = b.ok->getIdealWidth(), nw = b.no->getIdealWidth();
+                    b.ok->setBounds (x + rw - 10 - ow, by, ow, metric::smallH);
+                    b.no->setBounds (x + rw - 10 - ow - 6 - nw, by, nw, metric::smallH);
+                    clippedButtons.push_back ({ b.ok.get(), rows.size() - 1 });
+                    clippedButtons.push_back ({ b.no.get(), rows.size() - 1 });
+                    y += h + 4 + rowGap;
                 }
-                const int by = y + 1 + 9 + 34 + 9;
-                const int ow = b.ok->getIdealWidth(), nw = b.no->getIdealWidth();
-                b.ok->setBounds (x + rw - 10 - ow, by, ow, metric::smallH);
-                b.no->setBounds (x + rw - 10 - ow - 6 - nw, by, nw, metric::smallH);
-                b.ok->setVisible (true);
-                b.no->setVisible (true);
-                y += h + 4 + rowGap;
             }
             const juce::String myRoom = joined ? s.currentRoom->id : juce::String();
             for (auto* f : on)
@@ -201,17 +235,67 @@ struct Sidebar::Body : public juce::Component
                 if (jam && ! here) r.sub = TXT ("합주 중");
                 const auto user = f->user;
                 r.act = [this, user] { if (owner.onOpenFriend) owner.onOpenFriend (user); };
+                // 방에 있을 때 온라인(다른 방에서 합주 중이 아닌) 친구: 줄 오른쪽 "초대" (방 화면에서 뺀 친구 패널의 초대).
+                // 누르면 3초 동안 "취소", 그 뒤 "초대됨" (디자인 screen=방). 서버가 초대할 수 있다고 한 친구만 (can_invite)
+                if (open && joined && f->status == "online" && f->canInvite)
+                {
+                    const auto id = f->user.id;
+                    liveFriendInvites.add (id);
+                    auto& b = friendInvites[id];
+                    if (b == nullptr)
+                    {
+                        b = std::make_unique<Button> (Button::Kind::small, TXT ("초대"));
+                        b->onPress = [this, id]
+                        {
+                            auto& home = owner.core.home();
+                            using P = core::HomeController::InviteState::Phase;
+                            const auto st = home.inviteState (id).phase;
+                            if (st == P::pending) home.cancelInvite (id);
+                            else if (st == P::none)
+                            {
+                                juce::Component::SafePointer<Sidebar> safe (&owner);
+                                home.invite (id, [safe] (core::Result<core::InviteSent>) { if (safe != nullptr) safe->timerCallback(); });   // 실패 토스트는 AppRoot
+                            }
+                            juce::Component::SafePointer<Sidebar> safe (&owner);
+                            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->timerCallback(); });
+                        };
+                        addChildComponent (*b);
+                    }
+                    using P = core::HomeController::InviteState::Phase;
+                    const auto st = owner.core.home().inviteState (id);
+                    b->setPending (st.phase == P::pending);
+                    b->setDimmed (st.phase == P::sent);
+                    b->setButtonText (st.phase == P::pending ? TXT ("취소") : (st.phase == P::sent ? TXT ("초대됨") : TXT ("초대")));
+                    if (st.phase == P::pending)
+                    {
+                        anyPending = true;
+                        const auto left = std::max<juce::int64> (1, (st.deliverAtMs - owner.core.scheduler().nowMs() + 999) / 1000);
+                        b->setTooltip (juce::String (left) + TXT ("초 뒤 초대가 가요"));
+                    }
+                    else
+                        b->setTooltip (st.phase == P::sent ? juce::String() : TXT ("방에 초대"));
+                    const int bw = b->getIdealWidth();
+                    b->setBounds (x + rw - 9 - bw, y + (32 - metric::smallH) / 2, bw, metric::smallH);
+                    r.trimRight = bw + 9;
+                    r.sub = {};
+                    clippedButtons.push_back ({ b.get(), rows.size() });
+                }
                 add (std::move (r));
                 y += 32 + rowGap;
             }
-            y += 4 - rowGap;
-            Row oh { Kind::offHeader, { x, y + rowGap, rw, 28 }, TXT ("오프라인"), juce::String ((int) off.size()) };
-            oh.open = offlineOpen;
-            oh.act = [this] { offlineOpen = ! offlineOpen; rebuildAndLayout(); };
-            add (std::move (oh));
-            y += rowGap + 28 + rowGap;
-            if (offlineOpen)
+            if (open)
             {
+                y += 4;   // 오프라인 머리말 margin-top 4
+                Row oh { Kind::offHeader, { x, y, rw, 28 }, TXT ("오프라인"), juce::String ((int) off.size()) };
+                oh.open = offlineOpen;
+                oh.angle = -juce::MathConstants<float>::halfPi * (1.0f - owner.fold.value (owner.foldOffline));
+                oh.act = [this] { offlineOpen = ! offlineOpen; owner.syncSections(); rebuildAndLayout(); };
+                add (std::move (oh));
+                y += 28 + rowGap;
+            }
+            {
+                const int otop = y;
+                const size_t ofirst = rows.size();
                 for (auto* f : off)
                 {
                     Row r { Kind::friendOff, { x, y, rw, 32 }, nameOf (f->user) };
@@ -221,16 +305,33 @@ struct Sidebar::Body : public juce::Component
                     add (std::move (r));
                     y += 32 + rowGap;
                 }
+                const int ofull = off.empty() ? 0 : y - rowGap - otop;
+                y = otop + clipSection (ofirst, otop, ofull, owner.foldOffline, secOffline);
             }
+            y = top + clipSection (first, top, y - top, owner.foldFriends, secFriends);
         }
-        // 사라진 초대의 버튼은 지우고, 접혔으면 숨긴다
+
+        // 사라진 초대·친구의 버튼은 지우고, 섹션 밖으로 잘리면 숨긴다 (움직이는 동안 반쯤 걸친 버튼도 숨긴다)
         for (auto it = inviteButtons.begin(); it != inviteButtons.end();)
         {
             if (! liveInvites.contains (it->first)) { it = inviteButtons.erase (it); continue; }
+            it->second.no->setVisible (false);
+            it->second.ok->setVisible (false);
             ++it;
         }
-        if (! (open && friendsOpen))
-            for (auto& kv : inviteButtons) { kv.second.no->setVisible (false); kv.second.ok->setVisible (false); }
+        for (auto it = friendInvites.begin(); it != friendInvites.end();)
+        {
+            if (! liveFriendInvites.contains (it->first)) { it = friendInvites.erase (it); continue; }
+            it->second->setVisible (false);
+            ++it;
+        }
+        for (auto& [c, rowIndex] : clippedButtons)
+        {
+            const auto& row = rows[rowIndex];
+            c->setVisible (! row.clipped || row.clip.contains (c->getBounds()));
+        }
+        if (anyPending) { if (! owner.isTimerRunning()) owner.startTimer (250); }
+        else owner.stopTimer();
         preferredH = y + padY;
     }
 
@@ -252,6 +353,9 @@ struct Sidebar::Body : public juce::Component
         for (int i = 0; i < (int) rows.size(); ++i)
         {
             const auto& r = rows[(size_t) i];
+            if (r.clipped && r.clip.getIntersection (r.r).isEmpty()) continue;
+            juce::Graphics::ScopedSaveState ss (g);
+            if (r.clipped) g.reduceClipRegion (r.clip);
             const auto rf = r.r.toFloat();
             const bool hot = i == hotRow && ! hotPlus;
             switch (r.kind)
@@ -316,9 +420,8 @@ struct Sidebar::Body : public juce::Component
                         tx += 6.0f + 1.0f;
                     }
                     tx += 3.0f;
-                    // 접힘 화살표 14 (24 그리드 선 1.6): 펼침 아래(0), 접힘 오른쪽(-90°)
-                    icons::draw (g, icons::Id::chevronDown24, { tx, cy - 7.0f, 14.0f, 14.0f }, ink,
-                                 r.open ? 0.0f : -juce::MathConstants<float>::halfPi);
+                    // 접힘 화살표 14 (24 그리드 선 1.6): 펼침 아래(0), 접힘 오른쪽(-90°). 섹션 높이와 같은 시간·곡선으로 돈다
+                    icons::draw (g, icons::Id::chevronDown24, { tx, cy - 7.0f, 14.0f, 14.0f }, ink, r.angle);
                     if (r.plus)
                     {
                         const bool ph = i == hotRow && hotPlus;
@@ -360,7 +463,7 @@ struct Sidebar::Body : public juce::Component
                     const bool off = r.kind == Kind::friendOff;
                     const auto av = juce::Rectangle<float> (rf.getX() + 9.0f, rf.getCentreY() - 10.0f, 20.0f, 20.0f);
                     {
-                        juce::Graphics::ScopedSaveState ss (g);
+                        juce::Graphics::ScopedSaveState s2 (g);
                         if (off) g.beginTransparencyLayer (0.6f);
                         Avatar::paintCircle (g, av, r.part, 12.0f, off ? col::inkSub : col::ink, true);
                         if (off) g.endTransparencyLayer();
@@ -375,6 +478,7 @@ struct Sidebar::Body : public juce::Component
                         g.fillEllipse (d.reduced (1.5f));
                     }
                     auto t = r.r.withTrimmedLeft (9 + 20 + 9).withTrimmedRight (9);
+                    if (r.trimRight > 0) t = t.withTrimmedRight (r.trimRight);
                     if (r.sub.isNotEmpty())
                     {
                         const auto sf = font (400, 12.0f);
@@ -399,6 +503,7 @@ struct Sidebar::Body : public juce::Component
         for (int i = 0; i < (int) rows.size(); ++i)
         {
             const auto& r = rows[(size_t) i];
+            if (r.clipped && ! r.clip.contains (p)) continue;
             if (r.plus && r.plusR.contains (p)) { onPlus = true; return i; }
             if (! r.act) continue;
             if (r.kind == Kind::header || r.kind == Kind::offHeader)
@@ -447,6 +552,7 @@ Sidebar::Sidebar (core::MeonCore& c) : core (c)
 
 Sidebar::~Sidebar()
 {
+    stopTimer();
     core.store().removeListener (this);
 }
 
@@ -455,13 +561,35 @@ int Sidebar::currentWidth() const
     return juce::roundToInt ((float) closedW + (float) (openW - closedW) * fold.value (foldPanel));
 }
 
+void Sidebar::foldFrame()
+{
+    // 폭·제목 줄 여백이 바뀌면 AppRoot 가 다시 배치한다 (섹션만 움직일 때는 사이드바 안만)
+    const float e = openProgress();
+    if (! laying && onLayoutChanged && e != notifiedE)
+    {
+        notifiedE = e;
+        onLayoutChanged();
+    }
+    resized();
+    repaint();
+}
+
+void Sidebar::syncSections()
+{
+    // 디자인: 참여 중 = (펼친 사이드바 && 접은 섹션) 일 때만 0fr, 친구 = 펼친 사이드바 && 펼친 섹션, 오프라인 = 펼친 사이드바 && 펼친 섹션
+    fold.setOpen (foldRooms, shut() || body->roomsOpen);
+    fold.setOpen (foldFriends, ! shut() && body->friendsOpen);
+    fold.setOpen (foldOffline, ! shut() && body->offlineOpen);
+}
+
 void Sidebar::setCollapsed (bool b)
 {
     if (b == collapsed) return;
     collapsed = b;
     body->hotRow = -1;
-    // 배치(펼친 줄·접힌 줄)는 바로 바뀌고, 폭과 글자 불투명도만 움직인다 (디자인: open 은 바로, width·opacity 는 transition)
+    // 배치(펼친 줄·접힌 줄)는 바로 바뀌고, 폭·글자 불투명도·섹션 높이가 움직인다 (디자인: open 은 바로, width·opacity·rows 는 transition)
     fold.setOpen (foldPanel, ! shut());   // 프레임마다 onLayoutChanged → AppRoot::resized
+    syncSections();
 }
 
 void Sidebar::setForcedCollapsed (bool b)
@@ -473,12 +601,25 @@ void Sidebar::setForcedCollapsed (bool b)
     hot = 0;
     const juce::ScopedValueSetter<bool> guard (laying, true);
     fold.setOpen (foldPanel, ! shut());
+    syncSections();
+}
+
+void Sidebar::setChrome (Chrome c)
+{
+    if (c == chrome) return;
+    chrome = c;
+    resized();
+    repaint();
 }
 
 void Sidebar::previewFold (bool open, float e)
 {
     collapsed = ! open;
     fold.freeze (foldPanel, open, e);
+    // 사이드바와 같이 움직이는 섹션 (목표가 바뀌는 것만): 같은 진행값에 멈춘다
+    if (! body->roomsOpen) fold.freeze (foldRooms, ! open, 1.0f - e); else fold.snap (foldRooms, true);
+    if (body->friendsOpen) fold.freeze (foldFriends, open, e); else fold.snap (foldFriends, false);
+    if (body->offlineOpen) fold.freeze (foldOffline, open, e); else fold.snap (foldOffline, false);
     if (onLayoutChanged) onLayoutChanged();
     resized();
     repaint();
@@ -488,7 +629,29 @@ juce::Rectangle<int> Sidebar::devRow (const juce::String& text) const
 {
     for (auto& r : body->rows)
         if ((r.kind == Body::Kind::nav || r.kind == Body::Kind::room || r.kind == Body::Kind::iconButton
-             || r.kind == Body::Kind::friendOn || r.kind == Body::Kind::friendOff) && r.text == text)
+             || r.kind == Body::Kind::friendOn || r.kind == Body::Kind::friendOff) && r.text == text
+            && ! (r.clipped && ! r.clip.contains (r.r)))
+            return getLocalArea (body.get(), r.r);
+    return {};
+}
+
+Button* Sidebar::devInviteButton (const juce::String& userId) const
+{
+    auto it = body->friendInvites.find (userId);
+    return it != body->friendInvites.end() ? it->second.get() : nullptr;
+}
+
+Sidebar::SectionInfo Sidebar::devSection (const juce::String& name) const
+{
+    if (name == "rooms") return body->secRooms;
+    if (name == "friends") return body->secFriends;
+    return body->secOffline;
+}
+
+juce::Rectangle<int> Sidebar::devSectionHeader (const juce::String& text) const
+{
+    for (auto& r : body->rows)
+        if ((r.kind == Body::Kind::header || r.kind == Body::Kind::offHeader) && r.text == text)
             return getLocalArea (body.get(), r.r);
     return {};
 }
@@ -522,10 +685,36 @@ void Sidebar::stateChanged (core::StateKey k)
     }
 }
 
-juce::Rectangle<int> Sidebar::toggleBounds() const
+void Sidebar::timerCallback()
+{
+    // 초대 "취소" 3초 → "초대됨", 남은 초 (디자인: 250ms 마다)
+    body->rebuild();
+    body->repaint();
+}
+
+juce::Rectangle<int> Sidebar::toggleArea() const
 {
     if (forced) return {};   // 잠시 접힌 동안은 펼칠 자리가 없다
+    switch (chrome)
+    {
+        case Chrome::macWindow: return { 84, 10, 32, 32 };   // 신호등(20~72) 오른쪽 (디자인 toggleL 84, 펼침·접힘 같음)
+        case Chrome::flat:      return { 12, 10, 32, 32 };   // 디자인 fullscreen 켜짐: toggleL 12
+        case Chrome::legacy:    break;
+    }
     return shut() ? juce::Rectangle<int> (12, 10, 32, 32) : juce::Rectangle<int> (getWidth() - 1 - 12 - 32, 10, 32, 32);   // 오른쪽 선 1 안쪽에서 12
+}
+
+int Sidebar::headerInset() const
+{
+    // 디자인 hdPL: 맥 창 모드에서 접히면 72 (신호등·접기 버튼이 본문 제목 줄 위로 온다), 그 밖은 18
+    if (chrome != Chrome::macWindow) return metric::padX;
+    return juce::roundToInt (18.0f + (72.0f - 18.0f) * (1.0f - openProgress()));
+}
+
+int Sidebar::logoRowH() const
+{
+    // 디자인 logoRowH: 맥 창 모드 + 펼침이면 32 (로고가 신호등 아래 줄), 접히면 0. 같은 시간·곡선으로 줄어든다
+    return chrome == Chrome::macWindow ? juce::roundToInt (32.0f * openProgress()) : 0;
 }
 
 juce::Rectangle<int> Sidebar::profileBounds() const
@@ -536,7 +725,7 @@ juce::Rectangle<int> Sidebar::profileBounds() const
 void Sidebar::resized()
 {
     auto area = getLocalBounds().withTrimmedRight (1);
-    area.removeFromTop (headerH);
+    area.removeFromTop (headerH + logoRowH());
     area.removeFromBottom (profileH);
     viewport.setBounds (area);
     body->setSize (area.getWidth(), 10);
@@ -548,18 +737,13 @@ void Sidebar::paint (juce::Graphics& g)
 {
     g.fillAll (sideBg);
     g.setColour (col::line);
-    g.fillRect (getWidth() - 1, 0, 1, getHeight());
-    g.fillRect (0, headerH - 1, getWidth() - 1, 1);
+    // 오른쪽 선: 맥 창 모드에서 접히면 52 부터 (맨 윗줄이 본문 제목 줄과 이어진다, 디자인 divTop)
+    const int divTop = chrome == Chrome::macWindow && shut() ? headerH : 0;
+    g.fillRect (getWidth() - 1, divTop, 1, getHeight() - divTop);
+    // 맨 윗줄 아래 선: 플러그인은 늘, 그 밖은 접혔을 때만 (펼치면 로고·메뉴와 이어진다, 디자인 topLine)
+    if (chrome == Chrome::legacy || shut())
+        g.fillRect (0, headerH - 1, divTop > 0 ? getWidth() : getWidth() - 1, 1);
     g.fillRect (0, getHeight() - profileH, getWidth() - 1, 1);
-
-    // 머리말: 로고 (펼쳤을 때만) + 접기 버튼
-    if (! shut())
-        meon::drawLogo (g, juce::Rectangle<float> (18.0f, 14.0f, 140.0f, 24.0f), 24.0f, col::ink, juce::Justification::centredLeft);
-    if (const auto tb = toggleBounds().toFloat(); ! tb.isEmpty())
-    {
-        if (hot == 1) { g.setColour (buttonHover); g.fillRoundedRectangle (tb, 6.0f); }
-        drawIcon (g, icons::Id::sidebar, tb, 18.0f, hot == 1 ? col::ink : col::inkSub);
-    }
 
     // 내 프로필 줄
     const auto pb = profileBounds().toFloat();
@@ -594,9 +778,27 @@ void Sidebar::paint (juce::Graphics& g)
     }
 }
 
+void Sidebar::paintOverChildren (juce::Graphics& g)
+{
+    // 로고 (높이 24). 디자인 A안: 맥 창 모드 (18, 56) 신호등 아래 줄, 신호등 없음 (56, 14) 접기 버튼 오른쪽. 접는 동안 흐려진다 (labelOp).
+    // 디자인처럼 메뉴 위에 그린다 (접는 동안 메뉴가 로고 줄로 올라온다)
+    juce::Point<float> at { 18.0f, 14.0f };
+    float alpha = labelAlpha();
+    switch (chrome)
+    {
+        case Chrome::macWindow: at = { 18.0f, 56.0f }; break;
+        case Chrome::flat:      at = { 56.0f, 14.0f }; break;
+        case Chrome::legacy:    alpha = shut() ? 0.0f : 1.0f; break;   // 플러그인: 예전대로 펼쳤을 때만 바로
+    }
+    if (alpha <= 0.001f) return;
+    juce::Graphics::ScopedSaveState ss (g);
+    g.reduceClipRegion (0, 0, getWidth() - 1, getHeight());
+    meon::drawLogo (g, juce::Rectangle<float> (at.x, at.y, 140.0f, 24.0f), 24.0f, col::ink.withMultipliedAlpha (alpha), juce::Justification::centredLeft);
+}
+
 void Sidebar::mouseMove (const juce::MouseEvent& e)
 {
-    const int h = toggleBounds().contains (e.getPosition()) ? 1 : (profileBounds().contains (e.getPosition()) ? 2 : 0);
+    const int h = profileBounds().contains (e.getPosition()) ? 2 : 0;
     if (h != hot) { hot = h; repaint(); }
     setMouseCursor (h != 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
@@ -606,16 +808,58 @@ void Sidebar::mouseExit (const juce::MouseEvent&)
     if (hot != 0) { hot = 0; repaint(); }
 }
 
+void Sidebar::mouseDown (const juce::MouseEvent& e)
+{
+    // 맨 윗줄 (맥 창 모드: 끌면 창이 옮겨지고 더블클릭은 시스템 설정대로. AppRoot 가 모드를 본다)
+    if (e.y < headerH && onTitleBarMouseDown) onTitleBarMouseDown();
+}
+
 void Sidebar::mouseUp (const juce::MouseEvent& e)
 {
     if (! e.mouseWasClicked()) return;
-    if (toggleBounds().contains (e.getPosition()))
-    {
-        juce::Component::SafePointer<Sidebar> safe (this);
-        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->setCollapsed (! safe->collapsed); });
-    }
-    else if (profileBounds().contains (e.getPosition()) && onProfileMenu)
+    if (profileBounds().contains (e.getPosition()) && onProfileMenu)
         onProfileMenu();
+}
+
+//==============================================================================
+SidebarToggle::SidebarToggle()
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setOpen (true);
+}
+
+void SidebarToggle::setOpen (bool open)
+{
+    setTooltip (open ? TXT ("사이드바 접기") : TXT ("사이드바 펼치기"));
+}
+
+void SidebarToggle::setCovered (bool c)
+{
+    if (c == covered) return;
+    covered = c;
+    // 덮개 아래면 누름은 덮개(모달 바깥 누름)로 간다
+    setInterceptsMouseClicks (! c, false);
+    if (c) hot = false;
+    repaint();
+}
+
+void SidebarToggle::paint (juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat();
+    if (hot && ! covered) { g.setColour (buttonHover); g.fillRoundedRectangle (r, 6.0f); }
+    // 덮개 아래: 아래 판은 이미 덮개 색이 칠해져 있다. 아이콘만 덮개를 겹친 색으로
+    auto ink = hot ? col::ink : col::inkSub;
+    if (covered) ink = ink.overlaidWith (col::overlay);
+    drawIcon (g, icons::Id::sidebar, r, 18.0f, ink);
+}
+
+void SidebarToggle::mouseEnter (const juce::MouseEvent&) { if (! covered) { hot = true; repaint(); } }
+void SidebarToggle::mouseExit (const juce::MouseEvent&)  { if (hot) { hot = false; repaint(); } }
+
+void SidebarToggle::mouseUp (const juce::MouseEvent& e)
+{
+    if (! e.mouseWasClicked() || covered || ! onPress) return;
+    juce::MessageManager::callAsync (onPress);
 }
 
 //==============================================================================

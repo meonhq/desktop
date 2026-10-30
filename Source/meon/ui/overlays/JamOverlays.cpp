@@ -56,7 +56,7 @@ RoomSettingsModal::RoomSettingsModal (core::MeonCore& c) : Modal (TXT ("방 설�
 
 juce::String RoomSettingsModal::visNote() const
 {
-    if (isPublic()) return TXT ("홈의 공개 방 목록에 보이고 누구나 찾아 들어올 수 있어요");
+    if (isPublic()) return TXT ("공개 방 목록에 보이고 누구나 찾아 들어올 수 있어요");
     if (room.inviteCode) return TXT ("목록에서 사라져요. 입장 코드 ") + *room.inviteCode + TXT ("로만 들어올 수 있어요");
     return TXT ("목록에서 사라져요. 저장하면 나오는 입장 코드로만 들어올 수 있어요");
 }
