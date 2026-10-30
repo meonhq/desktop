@@ -29,6 +29,7 @@ void UiSelfTest::start()
     if (want ("chat"))     addChatInputTests();
     if (want ("aoodrop"))  addAooDropTests();
     if (want ("rooms"))    addRoomListTests();
+    if (want ("sidebar") || which == "roomsidebar") addRoomSidebarTests();   // roomsidebar: 이 구역만 (CI 창 폭별 확인)
     if (want ("sidebar"))  addSidebarTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
@@ -992,7 +993,7 @@ void UiSelfTest::addFriendRequestTests()
 //==============================================================================
 // 홈·사이드바 디자인 v2.1: 접은 사이드바의 아이콘 순서와 동작. 방 칸은 방이 없으면 방 만들기, 있으면 그 방 (입장 요청 점).
 // 친구 칸은 친구 추가 (펼친 "친구 +" 와 같은 창). 접고 펴는 폭은 애니메이션 (180ms)
-void UiSelfTest::addSidebarTests()
+void UiSelfTest::addRoomSidebarTests()
 {
     // 방 화면에 들어가도 사이드바는 사용자가 둔 상태 그대로 (펼침/접힘). 창 폭이 좁을 때만 잠시 접힌다
     // (독립 앱 1180 미만). 독립 앱에서는 사이드바가 통째로 숨지 않는다 (숨김은 좁은 플러그인 창 900~915 만)
@@ -1020,39 +1021,35 @@ void UiSelfTest::addSidebarTests()
     waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
     add ([this] { root.sidebar->setCollapsed (false); }, 0);
     waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
-    clickSidebar (TXT ("공개 방"));
-    closeToasts();   // 앞 섹션의 "이미 닫힌 방이에요" 토스트가 카드 버튼을 가릴 수 있다
-    add ([this]
+    // 마우스 대신 공개 방 카드의 "바로 입장" 과 같은 기능을 부른다 (HomeScreen::enterRoom → joinRoom). macOS 러너에서는
+    // 가짜 마우스 클릭이 먹지 않는 곳이 있어, 창 폭별 확인(CI)이 클릭에 기대지 않게 한다. 카드 클릭은 방 목록 시험이 본다
+    auto joinable = [this]
     {
         const auto& s = core.store().state();
-        for (auto& [room, button] : home().devRoomCards())
-            if (! room.isApproval() && core::rooms::hasRoomFor (room, s.me ? s.me->id : juce::String()) && ! kickedRooms.contains (room.id))
-            {
-                // 카드가 목록 스크롤 밖(좁은 창)이면 마우스로 누를 수 없으므로 버튼을 직접 누른다 (같은 입장 길)
-                const auto c = root.getLocalArea (button, button->getLocalBounds()).getCentre();
-                if (root.getComponentAt (c) == button) click (*button);
-                else button->triggerClick();
-                return;
-            }
-        expect (false, TXT ("바로 입장할 공개 방"));
-    }, 0);
+        for (auto& r : s.publicRooms)
+            if (! r.isApproval() && core::rooms::hasRoomFor (r, s.me ? s.me->id : juce::String()) && ! kickedRooms.contains (r.id)) return r.id;
+        return juce::String();
+    };
+    waitUntil (TXT ("바로 입장할 공개 방"), [joinable] { return joinable().isNotEmpty(); });
+    add ([this, joinable] { const auto id = joinable(); if (id.isNotEmpty()) core.home().joinRoom (id, [] (core::Result<core::JoinResult>) {}); }, 0);
     waitUntil (TXT ("공개 방에서 바로 입장 → 방 화면"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); }, 6000);
     wait (600);   // 접히는 애니메이션(180ms)이 끝난 뒤
     add ([this, expectRoomSidebar] { expectRoomSidebar (false, TXT ("펼친 채 입장")); }, 0);
-    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
-    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
     add ([this] { root.sidebar->setCollapsed (true); }, 0);
     waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
     enterNewRoom();
     wait (600);
     add ([this, expectRoomSidebar] { expectRoomSidebar (true, TXT ("접은 채 입장")); }, 0);
-    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
-    add ([this] { if (auto* j = jam()) click (j->leave); }, 0);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
     add ([this] { root.sidebar->setCollapsed (false); }, 0);
     waitUntil (TXT ("다시 펼침"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+}
 
+void UiSelfTest::addSidebarTests()
+{
     // 방 화면에 친구 패널이 없으므로(v2.1) 방 안 초대는 프로필 창의 "방 초대" 로 한다.
     // 친구 패널의 "초대" 와 같은 동작: 누르면 3초 동안 "취소", 그 뒤 "초대됨"
     begin (TXT ("프로필: 방 초대 (v2.1)"));

@@ -112,14 +112,14 @@ jobs:
           "$T" Update   # 업데이트 매니페스트 검증(Ed25519·sha256)과 확인 순서를 이 플랫폼 컴파일러로 빌드한 것으로
 
       - name: 사이드바 폭 확인 (화면 자가 테스트)
-        # 방 화면 사이드바를 창 폭 1100 / 1280 / 1440 에서 펼친 채·접은 채 들어가 본다 (--uitest=sidebar, 빌드 0 전용: ui/dev/UiSelfTest).
+        # 방 화면 사이드바를 창 폭 1100 / 1280 / 1440 에서 펼친 채·접은 채 들어가 본다 (--uitest=roomsidebar, 빌드 0 전용: ui/dev/UiSelfTest. 마우스 클릭 없이).
         # 1180 미만은 접힌 아이콘 줄(56), 그 이상은 사용자가 둔 상태. 독립 앱은 숨지 않는다. 결과는 "UITEST INFO room sidebar" 줄. 빌드를 막지는 않는다
         if: env.RELEASE != 'true'
         continue-on-error: true
         run: |
           EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
           for w in 1100 1280 1440; do
-            timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=sidebar --window=0,0,$w,800 > "uitest-$w.log" 2>&1 || true
+            timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=roomsidebar --window=0,0,$w,800 > "uitest-$w.log" 2>&1 || true
             grep -E "^UITEST (INFO room sidebar|FAIL|DONE)" "uitest-$w.log" || { echo "결과 없음 (폭 $w)"; tail -20 "uitest-$w.log"; }
           done
 
