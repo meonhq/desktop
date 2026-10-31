@@ -612,6 +612,14 @@ void Sidebar::setChrome (Chrome c)
     repaint();
 }
 
+void Sidebar::setMacToggleX (int x)
+{
+    if (x == macToggleX) return;
+    macToggleX = x;
+    resized();
+    repaint();
+}
+
 void Sidebar::previewFold (bool open, float e)
 {
     collapsed = ! open;
@@ -697,7 +705,7 @@ juce::Rectangle<int> Sidebar::toggleArea() const
     if (forced) return {};   // 잠시 접힌 동안은 펼칠 자리가 없다
     switch (chrome)
     {
-        case Chrome::macWindow: return { 84, 10, 32, 32 };   // 신호등(20~72) 오른쪽 (디자인 toggleL 84, 펼침·접힘 같음)
+        case Chrome::macWindow: return { macToggleX, 10, 32, 32 };   // 신호등 오른쪽 12 (디자인 toggleL 84, 펼침·접힘 같음)
         case Chrome::flat:      return { 12, 10, 32, 32 };   // 디자인 fullscreen 켜짐: toggleL 12
         case Chrome::legacy:    break;
     }
@@ -706,9 +714,11 @@ juce::Rectangle<int> Sidebar::toggleArea() const
 
 int Sidebar::headerInset() const
 {
-    // 디자인 hdPL: 맥 창 모드에서 접히면 72 (신호등·접기 버튼이 본문 제목 줄 위로 온다), 그 밖은 18
+    // 디자인 hdPL: 맥 창 모드에서 접히면 72 = 접기 버튼 84 - 12 (신호등·접기 버튼이 본문 제목 줄 위로 온다), 그 밖은 18.
+    // 접기 버튼이 신호등을 따라 옮겨지면 같이 옮긴다 (접기 버튼 x - 12)
     if (chrome != Chrome::macWindow) return metric::padX;
-    return juce::roundToInt (18.0f + (72.0f - 18.0f) * (1.0f - openProgress()));
+    const float shutInset = (float) (macToggleX - 12);
+    return juce::roundToInt (18.0f + (shutInset - 18.0f) * (1.0f - openProgress()));
 }
 
 int Sidebar::logoRowH() const

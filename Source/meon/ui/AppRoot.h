@@ -39,8 +39,12 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;   // 개발용 미리 보기의 가짜 신호등
-    /** 개발용 (--chrome=mac): 맥 창 모드의 신호등 자리에 가짜 신호등 (맥 밖에서 배치를 미리 본다) */
+    /** 개발용 (--chrome=mac): 맥 창 모드의 신호등 자리에 가짜 신호등 (맥 밖에서 배치를 미리 본다).
+        자리는 macOS 26 러너에서 잰 기본 버튼 틀 (14×14, x 19·42·65, y 19). 오른쪽 끝 79 */
     static void drawMockLights (juce::Graphics&);
+    static constexpr int mockLightsRight = 65 + 14;
+    /** 맥 창 모드의 사이드바 접기 버튼 x: 신호등(확대 버튼) 오른쪽 끝 + 12. 모르면 디자인 84 */
+    int macToggleX() const;
     /** 맥 창 제목 줄이 붙거나 전체 화면에 들어가고 나온 뒤 (에디터가 부른다): 창 윗부분 배치를 다시 */
     void windowChromeChanged() { resized(); repaint(); }
     /** 개발용 (--chrome=mac·flat·plugin): 창 윗부분 배치를 정한다. mac 은 신호등 자리에 가짜 신호등을 그린다 */

@@ -20,8 +20,10 @@ class Sidebar : public juce::Component,
 public:
     enum class Page { none, home, rooms, room };
     /** 창 윗부분 배치 (디자인 chromeVals, 로고 위치 A안).
-        macWindow: 맥 독립 앱 창 모드 (신호등 있음). 접기 버튼 x 84 (신호등 오른쪽), 로고는 그 아래 줄 (18, 56),
-                   로고 줄 높이 펼침 32 / 접힘 0. 접히면 맨 윗줄이 본문 제목 줄과 이어진다 (오른쪽 선은 52 부터, 제목 줄 왼쪽 여백 72).
+        macWindow: 맥 독립 앱 창 모드 (신호등 있음). 접기 버튼은 신호등 오른쪽: 확대 버튼 오른쪽 끝 + 12 (setMacToggleX.
+                   디자인은 84 = 원 끝 72 + 12. 신호등은 macOS 기본 간격이라 버전마다 끝이 다르다: macOS 26 은 79 → 91, 사용자 결정 2026-10-31).
+                   로고는 그 아래 줄 (18, 56), 로고 줄 높이 펼침 32 / 접힘 0.
+                   접히면 맨 윗줄이 본문 제목 줄과 이어진다 (오른쪽 선은 52 부터, 제목 줄 왼쪽 여백 = 접기 버튼 x - 12. 디자인 72).
         flat     : 신호등이 없을 때 (맥 전체 화면·윈도우·리눅스 독립 앱) = 디자인 fullscreen 켜짐. 접기 버튼 x 12, 로고 (56, 14).
         legacy   : 플러그인 (이번에 바꾸지 않음): 로고 (18, 14), 접기 버튼은 펼치면 오른쪽 끝, 접으면 12 */
     enum class Chrome { legacy, macWindow, flat };
@@ -43,11 +45,14 @@ public:
     Page getPage() const { return page; }
     void setChrome (Chrome);
     Chrome getChrome() const { return chrome; }
+    /** 맥 창 모드의 접기 버튼 x (확대 버튼 오른쪽 끝 + 12). 접힌 제목 줄 왼쪽 여백도 이것을 따른다 (x - 12) */
+    void setMacToggleX (int x);
+    static constexpr int designMacToggleX = 84;
     /** 펼침 진행값 (접힘 0 ~ 펼침 1, 180ms cubic-bezier(0.2, 0, 0, 1)). 폭·글자와 로고 불투명도·로고 줄 높이·제목 줄 왼쪽 여백이 이 값으로 같이 움직인다 */
     float openProgress() const { return fold.value (foldPanel); }
     /** 접기 버튼 자리 (사이드바 = 창 왼쪽 위 기준). 잠시 접힌 동안은 빈 사각형 */
     juce::Rectangle<int> toggleArea() const;
-    /** 본문(공개 방·방 화면) 제목 줄의 왼쪽 여백: 맥 창 모드에서 접히면 72 (신호등·접기 버튼 자리), 아니면 18. 접는 동안 같이 움직인다 */
+    /** 본문(공개 방·방 화면) 제목 줄의 왼쪽 여백: 맥 창 모드에서 접히면 접기 버튼 x - 12 (디자인 72: 신호등·접기 버튼 자리), 아니면 18. 접는 동안 같이 움직인다 */
     int headerInset() const;
     /** 프로필 메뉴가 열려 있으면 프로필 줄을 선택된 색으로 */
     void setProfileMenuOpen (bool);
@@ -88,6 +93,7 @@ private:
     bool collapsed = false, forced = false, profileMenuOpen = false;
     bool shut() const { return collapsed || forced; }
     Chrome chrome = Chrome::flat;
+    int macToggleX = designMacToggleX;
     // 접기 애니메이션 (디자인: 180ms cubic-bezier(0.2, 0, 0, 1)). 화면 쪽 타이머(VBlank)만 쓴다: 오디오 처리와 무관.
     // 사이드바 폭과 참여 중·친구·오프라인 섹션 높이가 각각 움직인다
     bool laying = false;   // setForcedCollapsed 를 AppRoot::resized 가 부르는 중 (그 안에서 다시 배치하지 않는다)

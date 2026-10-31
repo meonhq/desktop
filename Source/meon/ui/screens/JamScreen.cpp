@@ -1362,7 +1362,7 @@ void JamScreen::resized()
             const int cw = codeBox->idealWidth();
             codeBox->setBounds (h.removeFromRight (cw).withSizeKeepingCentre (cw, metric::buttonH));
         }
-        const int tx = sidebarShown ? headerInset : (int) (metric::padX + logoW + 18.0f);   // 디자인: 방 이름은 왼쪽 18 (맥 창 모드에서 사이드바를 접으면 72)
+        const int tx = sidebarShown ? headerInset : (int) (metric::padX + logoW + 18.0f);   // 디자인: 방 이름은 왼쪽 18 (맥 창 모드에서 사이드바를 접으면 접기 버튼 x - 12, 디자인 72)
         const int tagW = (privateTag->isVisible() ? privateTag->getIdealWidth() + 6 : 0) + (gear.isVisible() ? 24 + 6 : 0);
         const int titleMax = juce::jmax (40, h.getRight() - 18 - tx - tagW);
         const int tw = juce::jmin (titleMax, roomTitle.getIdealWidth() + 2);

@@ -1183,7 +1183,7 @@ void HomeScreen::paint (juce::Graphics& g)
     g.fillRect (x0, canvasTop, getWidth() - x0, getHeight() - canvasTop);
     if (shell)
     {
-        // 쪽 제목 (디자인: 52 높이, 600 16px, 왼쪽 18. 맥 창 모드에서 사이드바를 접으면 72: 신호등·접기 버튼 자리)
+        // 쪽 제목 (디자인: 52 높이, 600 16px, 왼쪽 18. 맥 창 모드에서 사이드바를 접으면 접기 버튼 x - 12 (디자인 72): 신호등·접기 버튼 자리)
         g.setColour (col::ink);
         g.setFont (font (600, 16.0f));
         g.drawText (pageTitle, x0 + titleInset, 0, getWidth() - x0 - titleInset - metric::padX, headerLine(), juce::Justification::centredLeft, true);

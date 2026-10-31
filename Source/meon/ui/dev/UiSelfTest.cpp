@@ -1118,7 +1118,8 @@ void UiSelfTest::addSidebarTests()
     add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
 
-    // v2.1 최신: 창 윗부분 배치 (chromeVals A안). 맥 창 모드 = 신호등 오른쪽 접기 버튼 84·로고 아래 줄(32)·접히면 제목 줄 왼쪽 72,
+    // v2.1 최신: 창 윗부분 배치 (chromeVals A안). 맥 창 모드 = 신호등 오른쪽 접기 버튼(신호등 끝 + 12, 디자인 84)·로고 아래 줄(32)·
+    // 접히면 제목 줄 왼쪽 = 접기 버튼 - 12 (디자인 72). 미리 보기(--chrome=mac)의 신호등은 macOS 26 자리라 91·79,
     // 신호등 없음(맥 전체 화면·윈도우·리눅스) = 접기 버튼 12·로고 줄 없음·제목 줄 왼쪽 18. 접는 동안 같이 움직인다
     begin (TXT ("사이드바: 창 배치 (v2.1 최신)"));
     add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
@@ -1145,7 +1146,7 @@ void UiSelfTest::addSidebarTests()
        #endif
         expect (root.chromeMode() == (core.isPlugin() ? Sidebar::Chrome::legacy : native), TXT ("이 플랫폼의 창 배치 (플러그인은 예전 배치)"));
         root.devForceChrome (Sidebar::Chrome::macWindow);
-        chromeCheck (TXT ("맥 창 모드 펼침"), 84, 52 + 32, 18);
+        chromeCheck (TXT ("맥 창 모드 펼침"), AppRoot::mockLightsRight + 12, 52 + 32, 18);
         root.sidebar->setCollapsed (true);
     }, 0);
     add ([this]
@@ -1155,13 +1156,13 @@ void UiSelfTest::addSidebarTests()
         const float e = (float) (sb->getWidth() - Sidebar::closedW) / (float) (Sidebar::openW - Sidebar::closedW);   // 마지막 프레임
         const int logoRow = sb->viewport.getY() - 52, inset = home().titleInset;
         expect (e > 0.02f && e < 0.98f, TXT ("접는 중 (진행값 ") + juce::String (e, 2) + ")");
-        expect (std::abs (logoRow - juce::roundToInt (32.0f * e)) <= 1 && std::abs (inset - juce::roundToInt (18.0f + 54.0f * (1.0f - e))) <= 1,
+        expect (std::abs (logoRow - juce::roundToInt (32.0f * e)) <= 1 && std::abs (inset - juce::roundToInt (18.0f + (float) (AppRoot::mockLightsRight - 18) * (1.0f - e))) <= 1,
                 TXT ("접는 중: 폭 ") + juce::String (sb->getWidth()) + TXT (", 로고 줄 ") + juce::String (logoRow) + TXT (", 제목 줄 왼쪽 ") + juce::String (inset));
     }, 60);
     waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
     add ([this, chromeCheck]
     {
-        chromeCheck (TXT ("맥 창 모드 접힘"), 84, 52, 72);
+        chromeCheck (TXT ("맥 창 모드 접힘"), AppRoot::mockLightsRight + 12, 52, AppRoot::mockLightsRight);
         root.devForceChrome (Sidebar::Chrome::flat);
         chromeCheck (TXT ("신호등 없음 접힘"), 12, 52, 18);
         root.sidebar->setCollapsed (false);
@@ -1390,6 +1391,8 @@ void UiSelfTest::addChromeTests()
         expect (p.lights[0][0] < p.lights[1][0] && p.lights[1][0] < p.lights[2][0], TXT ("닫기·최소화·확대 순서"));
         expect (root.chromeMode() == Sidebar::Chrome::macWindow, TXT ("사이드바: 맥 창 배치"));
         const auto t = root.toggle->getBounds();
+        const int right = (int) std::ceil (p.lights[2][0] + p.lights[2][2]);
+        expect (t.getX() == right + 12, TXT ("접기 버튼 = 신호등 끝 ") + juce::String (right) + " + 12 (" + juce::String (t.getX()) + ")");
         std::cerr << "UITEST INFO chrome 신호등 간격: 버튼 틀 x " << p.lights[0][0] << " / " << p.lights[1][0] << " / " << p.lights[2][0]
                   << " (간격 " << (p.lights[1][0] - p.lights[0][0]) << "), 확대 버튼 오른쪽 끝 " << (p.lights[2][0] + p.lights[2][2])
                   << ", 접기 버튼 x " << t.getX() << " (사이 " << (t.getX() - (p.lights[2][0] + p.lights[2][2])) << ")"
@@ -1408,7 +1411,12 @@ void UiSelfTest::addChromeTests()
     // 사이드바 접기·펼치기
     add ([this] { root.sidebar->setCollapsed (true); }, 0);
     waitUntil (TXT ("접힘"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
-    add ([probeNow, same] { same (TXT ("사이드바 접음"), probeNow()); }, 100);
+    add ([this, probeNow, same]
+    {
+        same (TXT ("사이드바 접음"), probeNow());
+        const int tx = root.toggle->getX();
+        expect (home().titleInset == tx - 12, TXT ("접힌 제목 줄 왼쪽 = 접기 버튼 - 12 (") + juce::String (home().titleInset) + " / " + juce::String (tx) + ")");
+    }, 100);
     add ([this] { root.sidebar->setCollapsed (false); }, 0);
     waitUntil (TXT ("펼침"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
     add ([probeNow, same] { same (TXT ("사이드바 펼침"), probeNow()); }, 100);

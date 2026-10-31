@@ -5,7 +5,7 @@
 //     창 크기·키 창·전체 화면·다른 모니터·화면 배율이 바뀔 때 AppKit 이 다시 배치해도 늘 같은 자리다.
 //     (예전 방식의 버그: 처음 켤 때 버튼을 옮긴 뒤 AppKit 이 다음 화면 갱신에서 제목 줄을 다시 배치해 버튼이 기본 자리(모서리)로 돌아갔고,
 //      그 뒤 알림이 없어 창 크기를 바꿀 때까지 그대로였다)
-//   - macOS 10.13–10.15 에는 툴바 스타일이 없다: 같은 빈 툴바로 제목 줄과 툴바가 합쳐지지만 높이는 그 시스템이 정한다.
+//   - macOS 10.13–10.15 에는 툴바 스타일이 없어 윗줄 높이를 보장할 수 없다: 붙이지 않는다 (회색 제목 줄 그대로).
 //   - 전체 화면에서는 툴바를 뗀다 (신호등이 없는 배치. 툴바가 있으면 전체 화면 위에 빈 줄이 남는다). 나오면 다시 붙인다.
 //     JUCE 는 전체 화면에서 나올 때 창 모양(styleMask)을 처음 값으로 되돌린다 (resetWindowPresentation): 그 뒤에 다시 붙인다.
 //   - 맨 윗줄 누름: 앱 화면(JUCE)이 받아서 빈 곳이면 titleBarMouseDown 을 부른다 (사이드바 접기 버튼·제목 줄 버튼은 각자 눌린다).
@@ -56,10 +56,6 @@ namespace
             [t setAllowsUserCustomization: NO];
             [t setAutosavesConfiguration: NO];
             [t setDisplayMode: NSToolbarDisplayModeIconOnly];
-           #pragma clang diagnostic push
-           #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [t setShowsBaselineSeparator: NO];   // 10.13–10.15 의 툴바 아래 선 (11+ 는 titlebarSeparatorStyle)
-           #pragma clang diagnostic pop
             [w setToolbar: t];
             [t release];
         }
@@ -154,6 +150,9 @@ namespace
 
 bool install (void* nsView, std::function<void()> onChange)
 {
+    // macOS 10.13–10.15: 툴바 스타일(unified)이 없어 윗줄 높이(52)를 보장할 수 없다. 회색 제목 줄 그대로 둔다 (사용자 결정 2026-10-31)
+    if (@available (macOS 11.0, *)) {}
+    else return false;
     NSWindow* w = windowFor (nsView);
     if (w == nil) return false;
     auto& s = state();
@@ -250,6 +249,17 @@ void titleBarMouseDown (void* nsView)
         return;
     }
     [w performWindowDragWithEvent: ev];
+}
+
+int lightsRight (void* nsView)
+{
+    const auto& s = state();
+    NSWindow* w = windowFor (nsView);
+    if (! s.applied || w == nil || w != s.window || isFullScreen (w)) return 0;
+    NSButton* zoom = [w standardWindowButton: NSWindowZoomButton];
+    if (zoom == nil || [zoom isHidden]) return 0;
+    const NSRect r = [zoom convertRect: [zoom bounds] toView: nil];   // 창 좌표 (x 는 왼쪽 기준이라 그대로)
+    return (int) std::ceil (NSMaxX (r));
 }
 
 Probe probe (void* nsView, int toggleX, int toggleY, int emptyX, int emptyY)

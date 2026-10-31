@@ -10,6 +10,7 @@ bool install (void*, std::function<void()>) { return false; }
 void detach() {}
 bool installedOn (void*) { return false; }
 void titleBarMouseDown (void*) {}
+int lightsRight (void*) { return 0; }
 Probe probe (void*, int, int, int, int) { return {}; }
 void devPostClick (void*, int, int, int) {}
 void devSetActive (bool) {}

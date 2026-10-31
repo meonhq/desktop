@@ -109,11 +109,11 @@ void AppRoot::paintOverChildren (juce::Graphics& g)
 
 void AppRoot::drawMockLights (juce::Graphics& g)
 {
-    // 52px 윗줄의 세로 가운데, 원 12. 자리는 macOS 가 정한다 (빈 툴바 + unified): 여기 값은 미리 보기용 근사치
+    // 52px 윗줄의 세로 가운데. 자리는 macOS 가 정한다 (빈 툴바 + unified): macOS 26 러너에서 잰 버튼 틀 (mac #224)
     const juce::uint32 fills[] = { 0xFFFF5F57, 0xFFFEBC2E, 0xFF28C840 }, rims[] = { 0xFFE2463F, 0xFFE1A116, 0xFF1AAB29 };
     for (int i = 0; i < 3; ++i)
     {
-        const juce::Rectangle<float> c (20.0f + 20.0f * (float) i, 20.0f, 12.0f, 12.0f);
+        const juce::Rectangle<float> c (19.0f + 23.0f * (float) i, 19.0f, 14.0f, 14.0f);
         g.setColour (juce::Colour (fills[i]));
         g.fillEllipse (c);
         g.setColour (juce::Colour (rims[i]));
@@ -130,6 +130,16 @@ Sidebar::Chrome AppRoot::chromeMode() const
     if (auto* peer = getPeer(); peer != nullptr && meon::chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen())
         return Sidebar::Chrome::macWindow;
     return Sidebar::Chrome::flat;
+}
+
+int AppRoot::macToggleX() const
+{
+    // 신호등은 macOS 기본 간격이라 버전마다 오른쪽 끝이 다르다 (디자인 72, macOS 26 은 79): 접기 버튼은 그 + 12 (사용자 결정 2026-10-31)
+    if (hasForcedChrome) return mockLightsRight + 12;
+    if (auto* peer = getPeer())
+        if (const int right = meon::chrome::lightsRight (peer->getNativeHandle()); right > 0)
+            return right + 12;
+    return Sidebar::designMacToggleX;
 }
 
 void AppRoot::titleBarMouseDown()
@@ -564,6 +574,7 @@ void AppRoot::resized()
     // 통째로 숨기는 것은 플러그인만 (900~915). 독립 앱은 창이 최소 폭(1024)보다 좁아져도(작은 화면·배율, 창 나란히 놓기)
     // 접힌 아이콘 줄은 남긴다 (예전에는 이 조건에 플러그인 확인이 없어서 996 미만이면 앱에서도 숨었다)
     sidebar->setChrome (chromeMode());
+    if (sidebar->getChrome() == Sidebar::Chrome::macWindow) sidebar->setMacToggleX (macToggleX());
     const bool roomView = jam != nullptr && jam->isVisible() && ! minimized;
     const int need = core::panel::chrome + core::panel::membersMin + core::panel::defaultWidth (core.isPlugin());
     sidebar->setForcedCollapsed (roomView && getWidth() - Sidebar::openW < need);
@@ -571,7 +582,7 @@ void AppRoot::resized()
     sidebar->setVisible (! hideSidebar);
     const int sw = hideSidebar ? 0 : sidebar->currentWidth();
     // 사이드바가 옆에 있으면 방 화면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 뺀다. 숨으면(좁은 플러그인 창) 예전 윗줄 (갈 곳이 없어지지 않게)
-    // 본문 제목 줄 왼쪽 여백 (디자인 hdPL): 맥 창 모드에서 사이드바를 접으면 72 (신호등·접기 버튼 자리), 접는 동안 같이 움직인다
+    // 본문 제목 줄 왼쪽 여백 (디자인 hdPL): 맥 창 모드에서 사이드바를 접으면 접기 버튼 x - 12 (디자인 72), 접는 동안 같이 움직인다
     const int titleInset = hideSidebar ? metric::padX : sidebar->headerInset();
     if (auto* screen = getJamScreen()) { screen->setSidebarShown (! hideSidebar); screen->setHeaderInset (titleInset); }
     sidebar->setBounds (0, 0, juce::jmax (sw, Sidebar::closedW), getHeight());
