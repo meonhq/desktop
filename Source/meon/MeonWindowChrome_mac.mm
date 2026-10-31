@@ -174,7 +174,17 @@ bool install (void* nsView, std::function<void()> onChange)
     observe (w, NSWindowWillEnterFullScreenNotification, ^(NSNotification*)
     {
         auto& st = state();
-        if (st.applied) [st.window setToolbar: nil];
+        if (! st.applied) return;
+        [st.window setToolbar: nil];
+        // 전체 화면에 들어가지 못하면(실패 알림은 JUCE 가 가진 위임자로만 온다) 툴바가 떨어진 채로 남는다: 전환이 끝났을 즈음 확인한다
+        dispatch_after (dispatch_time (DISPATCH_TIME_NOW, (int64_t) (3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            auto& s2 = state();
+            if (s2.applied && ! isFullScreen (s2.window) && [s2.window toolbar] == nil)
+            {
+                apply (s2.window);
+                if (s2.onChange) s2.onChange();
+            }
+        });
     });
     observe (w, NSWindowDidEnterFullScreenNotification, ^(NSNotification*)
     {
@@ -192,8 +202,6 @@ bool install (void* nsView, std::function<void()> onChange)
         });
     };
     observe (w, NSWindowDidExitFullScreenNotification, reapply);
-    observe (w, NSWindowDidFailToEnterFullScreenNotification, reapply);
-    observe (w, NSWindowDidFailToExitFullScreenNotification, reapply);
 
     if (s.monitor == nil)
         s.monitor = [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp

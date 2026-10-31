@@ -1335,7 +1335,7 @@ void UiSelfTest::addChromeTests()
         // 맥에서 "빈 곳"으로 누르는 점이 공개 방 제목 줄의 빈 곳인지만 본다 (JUCE 쪽 판정은 플랫폼과 같다)
         const int x = root.sidebar->currentWidth() + (root.getWidth() - root.sidebar->currentWidth()) / 2;
         auto* hit = root.getComponentAt (juce::Point<int> (x, 26));
-        expect (hit == root.home.get(), TXT ("제목 줄 가운데는 빈 곳 (") + (hit != nullptr ? juce::String (typeid (*hit).name()) : juce::String ("없음")) + ")");
+        expect (hit == root.home.get(), TXT ("제목 줄 가운데는 빈 곳 (") + (hit != nullptr ? juce::String (typeid (*hit).name()) : TXT ("없음")) + ")");
         std::cerr << "UITEST INFO chrome: macOS 가 아니라 나머지는 건너뜀" << std::endl;
     }, 0);
    #else
@@ -1444,7 +1444,7 @@ void UiSelfTest::addChromeTests()
     add ([this, sh, handle, emptyPoint, probeNow]
     {
         auto* hit = root.getComponentAt (root.getLocalPoint (&root.getPeer()->getComponent(), emptyPoint()));
-        expect (hit == root.home.get(), TXT ("빈 곳 점이 제목 줄 빈 곳 (") + (hit != nullptr ? hit->getName() + " " + juce::String (typeid (*hit).name()) : juce::String ("없음")) + ")");
+        expect (hit == root.home.get(), TXT ("빈 곳 점이 제목 줄 빈 곳 (") + (hit != nullptr ? hit->getName() + " " + juce::String (typeid (*hit).name()) : TXT ("없음")) + ")");
         sh->presses = probeNow().titleBarPresses;
         sh->bounds = peer()->getBounds();
         const auto e = emptyPoint();
