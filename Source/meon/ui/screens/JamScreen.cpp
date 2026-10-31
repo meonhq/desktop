@@ -1553,7 +1553,7 @@ void JamScreen::resized()
         memberList->setSize (memberViewport.getWidth() - (listH + 2 > area.getHeight() ? memberViewport.getScrollBarThickness() : 0), listH);
         if (! (vMoving || hMoving)) memberList->resized();   // 움직이는 동안은 크기가 바뀔 때만 (setSize 가 부른다)
     }
-    if (modal != nullptr) modal->setBounds (getLocalBounds());
+    if (modal != nullptr && ! hostOverlay) modal->setBounds (getLocalBounds());   // 모달 층이면 AppRoot 가 창 전체로
     if (popover != nullptr && requestList != nullptr)
         popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + requestList->getPreferredHeight());
     if (popover != nullptr && notifications != nullptr)
@@ -1654,6 +1654,7 @@ void JamScreen::showModal (std::unique_ptr<Modal> m)
     modal = std::move (m);
     juce::Component::SafePointer<JamScreen> safe (this);
     modal->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
+    if (hostOverlay) { hostOverlay (*modal, true); return; }   // 창 전체 (사이드바까지 덮고 창 가운데)
     addAndMakeVisible (*modal);
     modal->setBounds (getLocalBounds());
     modal->toFront (true);
@@ -1700,6 +1701,12 @@ void JamScreen::openProfile (const juce::String& userId)
     for (auto& f : core.store().state().friends)
         if (f.user.id == userId) u = f.user;
     if (u.username.isEmpty()) u.nickname = memberName (userId);
+    showProfile (u);
+}
+
+void JamScreen::openProfile (const core::UserPublic& u)
+{
+    if (u.username.isEmpty()) { openProfile (u.id); return; }
     showProfile (u);
 }
 

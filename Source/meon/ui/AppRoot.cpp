@@ -20,23 +20,12 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     sidebar->onHome = [this] { showPage (Sidebar::homeMenu ? Sidebar::Page::home : Sidebar::Page::rooms); };
     sidebar->onRooms = [this] { showPage (Sidebar::Page::rooms); };
     sidebar->onShowRoom = [this] { setMinimized (false); };
-    sidebar->onJoinCode = [this]
-    {
-        // 코드로 입장은 홈의 모달 (기존 화면). 방 안이면 방은 그대로 두고 홈 위에 띄운다 (들어가기 전에 나가기 확인)
-        if (core.store().state().currentRoom && ! minimized) setMinimized (true);
-        home->openJoinCode();
-    };
+    // 모달·팝오버는 화면을 바꾸지 않는다: 홈이 띄우는 창(코드로 입장·친구 추가·알림)도 모달 층(창 전체)에 뜨므로 방 화면이면 방 화면 위에 그대로.
+    // (예전에는 홈 안에 떠서 방 안이면 먼저 방을 최소화했다 = 홈 메뉴를 끈 뒤로 공개 방으로 바뀌었다)
+    sidebar->onJoinCode = [this] { home->openJoinCode(); };   // 방에 있으면 사이드바에 없다 (방 만들기와 같은 규칙)
     sidebar->onCreateRoom = [this] { home->openCreateRoom(); };
-    sidebar->onAddFriend = [this]
-    {
-        if (core.store().state().currentRoom && ! minimized) setMinimized (true);
-        home->openAddFriend();
-    };
-    sidebar->onOpenFriend = [this] (const core::UserPublic& u)
-    {
-        if (auto* screen = getJamScreen(); screen != nullptr && screen->isVisible()) screen->openProfile (u.id);
-        else home->openProfile (u);
-    };
+    sidebar->onAddFriend = [this] { home->openAddFriend(); };
+    sidebar->onOpenFriend = [this] (const core::UserPublic& u) { openProfile (u); };
     sidebar->onProfileMenu = [this] { if (profileMenu != nullptr) closeProfileMenu(); else openProfileMenu(); };
     sidebar->onAcceptInvite = [this] (const juce::String& id) { acceptInvite (id); };
     sidebar->onDeclineInvite = [this] (const juce::String& id)
@@ -55,6 +44,15 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     home->onOpenSettings = [this] { if (onOpenSettings) onOpenSettings (0); };
     home->onJoinFailure = [this] (const core::ApiError& e) { showJoinFailure (e); };
     home->onReturnToRoom = [this] { setMinimized (false); };
+    // 겹침은 한 번에 하나 (홈·방 화면 사이에도): 한 화면이 모달·팝오버를 띄우면 다른 화면의 팝오버는 닫힌다 (모달이 떠 있으면 덮개가 막아 다른 화면은 띄우지 못한다)
+    home->hostOverlay = [this] (juce::Component& c, bool full) { if (auto* j = getJamScreen()) j->closeOverlays(); hostOverlay (c, full); };
+    home->onOverlayClosed = [this] { focusScreen(); };
+    home->onOpenProfileFromList = [this] (const core::UserPublic& u)
+    {
+        // 알림 목록 줄 안에서 불리므로 다음 메시지에서 (목록을 닫는다)
+        juce::Component::SafePointer<AppRoot> safe (this);
+        juce::MessageManager::callAsync ([safe, u] { if (safe != nullptr) safe->openProfile (u); });
+    };
     addChildComponent (*home);
     toggle = std::make_unique<SidebarToggle>();
     toggle->onPress = [this] { sidebar->toggleCollapsed(); syncToggle(); };
@@ -81,6 +79,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 
 AppRoot::~AppRoot()
 {
+    tearingDown = true;
     if (home != nullptr) home->onOverlayChanged = nullptr;
     if (auto* screen = getJamScreen()) screen->onOverlayChanged = nullptr;
     core.store().removeListener (this);
@@ -155,12 +154,67 @@ void AppRoot::syncToggle()
     if (! show) return;
     toggle->setBounds (ta);
     toggle->setOpen (! sidebar->isCollapsed());
-    // 모달 덮개 아래 (홈 모달은 창 전체, 방 화면 모달은 방 화면만 덮는다)
-    auto* screen = getJamScreen();
-    const bool covered = roomClosed != nullptr
-                      || (home->isVisible() && home->dimsWindow())
-                      || (screen != nullptr && screen->isVisible() && screen->dimsScreen() && screen->getBounds().contains (ta));
-    toggle->setCovered (covered);
+    // 방 닫힘 덮개 아래면 누르지 못한다. 모달은 모달 층(접기 버튼 위)이라 덮개가 접기 버튼 위에 그려진다
+    toggle->setCovered (roomClosed != nullptr);
+}
+
+//==============================================================================
+void AppRoot::hostOverlay (juce::Component& c, bool fullWindow)
+{
+    hosted.erase (std::remove_if (hosted.begin(), hosted.end(), [&c] (const Hosted& h) { return h.c == nullptr || h.c.getComponent() == &c; }), hosted.end());
+    hosted.push_back ({ &c, fullWindow });
+    addAndMakeVisible (c);
+    if (fullWindow) c.setBounds (getLocalBounds());
+    c.toFront (fullWindow);   // 모달은 예전처럼 글자 입력을 받는다 (팝오버는 받지 않는다)
+    raiseTopLayers();
+    syncToggle();
+}
+
+bool AppRoot::hasWindowModal() const
+{
+    for (auto& h : hosted) if (h.full && h.c != nullptr && h.c->isVisible()) return true;
+    return false;
+}
+
+void AppRoot::restack()
+{
+    if (toggle != nullptr) toggle->toFront (false);
+    for (auto& h : hosted) if (h.c != nullptr) h.c->toFront (false);
+    raiseTopLayers();
+}
+
+void AppRoot::raiseTopLayers()
+{
+    if (profileMenu != nullptr) profileMenu->toFront (false);
+    if (roomClosed != nullptr) roomClosed->toFront (false);
+    for (auto* t : toasts) t->toFront (false);
+    if (fail != nullptr) fail->toFront (false);
+}
+
+void AppRoot::childrenChanged()
+{
+    if (tearingDown) return;
+    hosted.erase (std::remove_if (hosted.begin(), hosted.end(), [this] (const Hosted& h) { return h.c == nullptr || h.c->getParentComponent() != this; }), hosted.end());
+    syncToggle();
+}
+
+void AppRoot::focusScreen()
+{
+    // 모달 층의 창이 닫힌 뒤: 보이는 화면이 글자 입력을 받는다 (단축키 M·N·Enter …)
+    if (auto* screen = getJamScreen(); screen != nullptr && screen->isShowing()) screen->grabKeyboardFocus();
+    else if (home->isShowing()) home->grabKeyboardFocus();
+}
+
+void AppRoot::openProfile (const core::UserPublic& u)
+{
+    // 방 화면이 보이면 방 화면의 프로필 (사이드바 친구를 누를 때와 같다). 홈의 알림 목록·팝오버는 닫는다 (홈에서 프로필을 열 때와 같다)
+    if (auto* screen = getJamScreen(); screen != nullptr && screen->isVisible())
+    {
+        home->closeOverlays();
+        screen->openProfile (u);
+    }
+    else
+        home->openProfile (u);
 }
 
 //==============================================================================
@@ -181,6 +235,8 @@ void AppRoot::applyScreen()
     // setHomeVisible 은 공개 방 구독·새로 고침만 하므로 최소화해도 내 소리는 그대로다
     if (minimized)
     {
+        // 방 화면이 띄운 모달·팝오버는 닫는다 (모달 층에 남아 홈 위에 뜨지 않게). 모달이 떠 있으면 사이드바가 덮여 있어 보통은 없다
+        if (auto* screen = getJamScreen()) screen->closeOverlays();
         if (jam != nullptr) jam->setVisible (false);   // 지우지 않는다: 채팅 스크롤·입력 중인 글·접기 상태가 남는다
         // 최소화 막대는 쓰지 않는다: 사이드바 "참여 중" 항목이 대신한다 (사용자 결정 2026-10-29)
         home->setRoomBar (false);
@@ -198,8 +254,7 @@ void AppRoot::applyScreen()
     }
     syncSidebar();
     resized();
-    for (auto* t : toasts) t->toFront (false);
-    if (fail != nullptr) fail->toFront (false);
+    restack();
 }
 
 //==============================================================================
@@ -225,15 +280,15 @@ void AppRoot::openProfileMenu()
     profileMenu->onDismiss = [this] { closeProfileMenu(); };
     profileMenu->onNotifications = [this]
     {
+        // 알림 팝오버는 모달 층 (방 화면이면 방 화면 위에 그대로. 화면을 바꾸지 않는다)
         closeProfileMenu();
-        if (core.store().state().currentRoom && ! minimized) setMinimized (true);
         home->toggleNotifications();
     };
     profileMenu->onSettings = [this] { closeProfileMenu(); if (onOpenSettings) onOpenSettings (0); };
     addAndMakeVisible (*profileMenu);
     sidebar->setProfileMenuOpen (true);
     resized();
-    profileMenu->toFront (false);
+    raiseTopLayers();
 }
 
 void AppRoot::closeProfileMenu()
@@ -260,9 +315,10 @@ void AppRoot::updateScreen()
             };
             screen->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
             screen->onOverlayChanged = [this] { syncToggle(); };
+            screen->hostOverlay = [this] (juce::Component& c, bool full) { home->closeOverlays(); hostOverlay (c, full); };
             jam = std::move (screen);
             addAndMakeVisible (*jam);
-            toggle->toFront (false);   // 접기 버튼은 방 화면 위 (토스트·겹침은 그 뒤에 다시 앞으로)
+            toggle->toFront (false);   // 접기 버튼은 방 화면 위 (모달 층·토스트는 applyScreen 의 restack 이 다시 앞으로)
             minimized = false;   // 새로 들어간 방은 합주 화면부터
         }
         // 다른 기기에서 들어간 방으로 옮겨져도(movedToOtherRoom) 최소화 상태는 그대로 둔다 (막대가 새 방을 보여 준다)
@@ -297,8 +353,7 @@ void AppRoot::updateScreen()
     }
     syncSidebar();
     resized();
-    for (auto* t : toasts) t->toFront (false);
-    if (fail != nullptr) fail->toFront (false);
+    restack();
 }
 
 void AppRoot::stateChanged (core::StateKey k)
@@ -556,7 +611,7 @@ bool AppRoot::handleShortcut (const juce::KeyPress& k)
     {
         if (profileMenu != nullptr) { closeProfileMenu(); return true; }
         if (fail != nullptr) { fail.reset(); return true; }
-        if (home->isVisible() && home->closeTopOverlay()) return true;
+        if (home->closeTopOverlay()) return true;   // 홈이 띄운 창은 모달 층이라 방 화면에서도 보인다
     }
     // 방 최소화 중에는 합주 화면이 숨어 있으므로 단축키(M·N·Enter …)를 넘기지 않는다
     if (auto* screen = dynamic_cast<JamScreen*> (jam.get()); screen != nullptr && screen->isVisible())
@@ -591,6 +646,7 @@ void AppRoot::resized()
         profileMenu->setBounds (getLocalBounds());
         profileMenu->box = { 9, getHeight() - 55 - ProfileMenu::boxH, ProfileMenu::boxW, ProfileMenu::boxH };
     }
+    for (auto& h : hosted) if (h.full && h.c != nullptr) h.c->setBounds (getLocalBounds());   // 모달 층: 창 전체
     if (roomClosed != nullptr) { roomClosed->setBounds (getLocalBounds()); roomClosed->toFront (false); }
     if (fail != nullptr)
         fail->setBounds (juce::Rectangle<int> (380, fail->getPreferredHeight()).withCentre (getLocalBounds().getCentre()));

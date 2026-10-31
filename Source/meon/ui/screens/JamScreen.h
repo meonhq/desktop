@@ -56,7 +56,7 @@ public:
     /** 개발용 스냅숏: 채팅 입력 칸에 글을 넣고 커서를 끝에 */
     void devSetChatInput (const juce::String&);
     /** 개발용 (캡처·CPU 확인·자가 테스트): 헤더의 팝오버를 연다 ("requests" 입장 요청, "notif" 알림) */
-    void devOpenPopover (const juce::String& which) { if (which == "requests") toggleRequests(); else if (which == "notif") toggleNotifications(); }
+    void devOpenPopover (const juce::String& which) { if (which == "requests") toggleRequests(); else if (which == "notif") toggleNotifications(); else if (which == "gear") gear.onClick(); }
     const Popover* devPopover() const { return popover.get(); }
     /** 개발용 스냅숏: 방 나가기를 한 번 누른 상태 */
     void devArmLeave() { leave.triggerClick(); }
@@ -70,13 +70,18 @@ private:
 public:
     /** 프로필 창 (사이드바의 친구를 눌렀을 때도 연다. 홈·사이드바 디자인) */
     void openProfile (const juce::String& userId);
+    /** 사이드바 친구·알림 목록의 사람 (AppRoot) */
+    void openProfile (const core::UserPublic&);
     /** 홈·사이드바 디자인 v2: 사이드바가 옆에 있으면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 숨긴다
         (방 이름·방 설정·입장 요청·입장 코드·방 나가기만). 사이드바가 숨으면(좁은 플러그인 창) 예전 윗줄로 돌아간다 */
     void setSidebarShown (bool);
     /** 방 이름 왼쪽 여백 (디자인 hdPL: 보통 18, 맥 창 모드에서 사이드바를 접으면 72: 신호등·접기 버튼 자리) */
     void setHeaderInset (int);
-    /** 방 화면을 어둡게 덮는 모달이 떠 있다 (사이드바는 덮지 않는다) */
+    /** 모달이 떠 있다 (모달 층이면 창 전체, 사이드바까지 덮는다) */
     bool dimsScreen() const { return modal != nullptr; }
+    /** 모달을 띄울 곳 (AppRoot 의 모달 층: 창 전체. 설정 창처럼 사이드바까지 어둡게 덮고 창 가운데). 없으면 방 화면 위.
+        주인은 방 화면이다 (닫으면 방 화면이 지운다) */
+    std::function<void (juce::Component&, bool fullWindow)> hostOverlay;
     /** 겹침이 생기거나 사라졌다 (AppRoot 가 접기 버튼을 덮개 아래로) */
     std::function<void()> onOverlayChanged;
     /** 윗줄의 빈 곳·방 이름을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */

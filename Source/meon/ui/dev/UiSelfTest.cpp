@@ -10,6 +10,7 @@
 #include "../../core/util/ChatInput.h"
 #include "../../MeonWindowFrame.h"
 #include "../shell/WindowChromeView.h"
+#include "../overlays/SettingsModal.h"
 
 namespace meon::ui
 {
@@ -36,6 +37,7 @@ void UiSelfTest::start()
     if (want ("chrome"))   addChromeTests();
     if (want ("popover"))  addPopoverTests();
     if (want ("winchrome")) addWinChromeTests();
+    if (want ("overlay"))  addOverlayTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -210,6 +212,12 @@ juce::Button* UiSelfTest::findButton (juce::Component& c, const juce::String& te
         if (auto* found = findButton (*child, text)) return found;
     }
     return nullptr;
+}
+
+juce::Button* UiSelfTest::confirmButton (const juce::String& text) const
+{
+    // 홈의 확인 모달 (모달 층: AppRoot 의 자식)
+    return home().confirm != nullptr ? findButton (*home().confirm, text) : nullptr;
 }
 
 juce::Button* UiSelfTest::firstButton (juce::Component& c)
@@ -469,7 +477,7 @@ void UiSelfTest::addMinimizeTests()
     add ([this]
     {
         expect (home().confirm != nullptr, TXT ("'바로 입장' → 확인 모달"));
-        expect (findButton (home(), TXT ("나가고 들어가기")) != nullptr && findButton (home(), TXT ("취소")) != nullptr, TXT ("[취소] [나가고 들어가기]"));
+        expect (confirmButton (TXT ("나가고 들어가기")) != nullptr && confirmButton (TXT ("취소")) != nullptr, TXT ("[취소] [나가고 들어가기]"));
         key (juce::KeyPress (juce::KeyPress::escapeKey));
     }, 300);
     add ([this, pickCard]
@@ -486,7 +494,7 @@ void UiSelfTest::addMinimizeTests()
         expect (home().confirm == nullptr && inRoom(), TXT ("바깥 클릭 = 취소"));
         if (auto* b = pickCard()) click (*b);
     }, 300);
-    add ([this] { if (auto* ok = findButton (home(), TXT ("나가고 들어가기"))) click (*ok); }, 0);
+    add ([this] { if (auto* ok = confirmButton (TXT ("나가고 들어가기"))) click (*ok); }, 0);
     waitUntil (TXT ("나간 뒤 다른 방으로"), [this, target] { return inRoom() && roomId() == *target && jam() != nullptr && jam()->isShowing(); }, 6000);
     add ([this] { expect (! root.isMinimized() && ! home().hasRoomBar(), TXT ("새 방은 합주 화면으로 (최소화 아님)")); });
 
@@ -514,8 +522,8 @@ void UiSelfTest::addMinimizeTests()
     add ([this] { if (auto* m = dynamic_cast<ProfileModal*> (home().modal.get())) click (m->joinRoom); }, 300);
     add ([this]
     {
-        expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 들어가기")) != nullptr, TXT ("친구 참여 → 확인 모달"));
-        if (auto* c = findButton (home(), TXT ("취소"))) click (*c);
+        expect (home().confirm != nullptr && confirmButton (TXT ("나가고 들어가기")) != nullptr, TXT ("친구 참여 → 확인 모달"));
+        if (auto* c = confirmButton (TXT ("취소"))) click (*c);
     }, 300);
     add ([this]
     {
@@ -961,7 +969,8 @@ void UiSelfTest::addFriendRequestTests()
     };
     auto list = [this]() -> juce::Component*
     {
-        if (auto* j = jam(); j != nullptr && j->isShowing()) return j->notifications.get();
+        // 방 화면 윗줄 알림 버튼(사이드바가 숨은 좁은 창)의 목록, 아니면 프로필 › 알림 (홈이 띄우는 모달 층 팝오버: 방 화면 위에도 뜬다)
+        if (auto* j = jam(); j != nullptr && j->isShowing() && j->notifications != nullptr) return j->notifications.get();
         return home().notifications.get();
     };
     auto press = [this, list] (const juce::String& text) { if (auto* l = list()) if (auto* b = findButton (*l, text)) click (*b); };
@@ -1054,7 +1063,10 @@ void UiSelfTest::addFriendRequestTests()
         const auto b = root.profileMenu->box;
         click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + 16 });   // 첫 줄 "알림"
     }, 300);
-    waitUntil (TXT ("알림 목록 열림 (방은 그대로)"), [this, list] { return list() != nullptr && list()->isShowing() && inRoom(); });
+    waitUntil (TXT ("알림 목록 열림 (방 화면 그대로)"), [this, list]
+    {
+        return list() != nullptr && list()->isShowing() && inRoom() && ! root.isMinimized() && jam() != nullptr && jam()->isShowing();
+    });
     add ([press] { press (TXT ("수락")); }, 0);
     waitUntil (TXT ("방 안에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
     add ([this, sent, reqs, requestIds]
@@ -1684,12 +1696,13 @@ void UiSelfTest::addPopoverTests()
         expect (panel.getWidth() == 340 && panel.getX() == 9 && panel.getBottom() == root.home->getHeight() - 55,
                 TXT ("알림 패널: 폭 340, 왼쪽 9, 아래 55 (그대로) ") + panel.toString());
         expect (p.getBounds() == panel.expanded (m), TXT ("알림 패널: 구성 요소는 판보다 그림자 폭만큼 크다 (") + juce::String (m) + ")");
-        // 그림자 자리 중 창 안에 있는 부분은 부모(본문 화면) 안: 잘리지 않는다
-        const auto inWindow = p.getBounds().getIntersection (root.home->getLocalBounds());
-        expect (root.home->getLocalBounds().contains (inWindow) && inWindow.getRight() == p.getRight() && inWindow.getY() == p.getY(),
+        // 그림자 자리 중 창 안에 있는 부분은 부모(모달 층 = AppRoot) 안: 잘리지 않는다
+        const auto inWindow = p.getBounds().getIntersection (root.getLocalBounds());
+        expect (root.getLocalBounds().contains (inWindow) && inWindow.getRight() == p.getRight() && inWindow.getY() == p.getY(),
                 TXT ("알림 패널 그림자: 위·오른쪽이 부모 안 (창 가장자리 쪽만 창 끝)"));
-        expect (root.getIndexOfChildComponent (root.home.get()) > root.getIndexOfChildComponent (root.sidebar.get()),
-                TXT ("알림 패널: 본문 화면(사이드바보다 위)에 있어 그림자가 사이드바 위로도 번진다"));
+        expect (p.getParentComponent() == &root && root.getIndexOfChildComponent (&p) > root.getIndexOfChildComponent (root.sidebar.get())
+                 && root.getIndexOfChildComponent (&p) > root.getIndexOfChildComponent (root.home.get()),
+                TXT ("알림 패널: 모달 층 (사이드바·본문 위) 에 있어 그림자가 사이드바 위로도 번진다"));
         expect (! p.hitTest (panel.getRight() - p.getX() + 4, panel.getCentreY() - p.getY()), TXT ("알림 패널: 그림자 자리는 마우스를 받지 않는다"));
         expect (p.hitTest (panel.getCentreX() - p.getX(), panel.getCentreY() - p.getY()), TXT ("알림 패널: 판 안은 받는다"));
         root.repaint();
@@ -1815,6 +1828,25 @@ void UiSelfTest::addWinChromeTests()
         }
         editor->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
     }, 600);
+    // 홈·방 화면의 모달(모달 층: 창 전체)이 떠 있어도 창 버튼은 맨 위에서 눌러진다 (설정 창과 같다)
+    add ([this, sh] { if (sh->on) home().openAddFriend(); }, 500);
+    add ([this, sh, caption, phys, emptyTitle, ht]
+    {
+        if (! sh->on) return;
+        auto* cb = caption();
+        auto* editor = root.getParentComponent();
+        const auto closeC = editor->getLocalPoint (cb, cb->buttonBounds (WinCaptionButtons::closeButton).getCentre());
+        expect (home().modal != nullptr && home().modal->getParentComponent() == &root && home().modal->getBounds() == root.getLocalBounds(),
+                TXT ("친구 추가: 모달 층 (창 전체)"));
+        expect (editor->getComponentAt (closeC) == cb, TXT ("친구 추가 모달 위에서도 닫기 버튼이 맨 위 (눌러진다)"));
+        if (sh->real)
+        {
+            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == 9, TXT ("모달 위: 최대화 버튼 HTMAXBUTTON"));
+            const int t = ht (phys (root, emptyTitle()));
+            expect (t == 1, TXT ("모달이 떠 있으면 제목 줄은 앱 화면 (설정 창과 같다): ") + juce::String (t));
+        }
+        home().closeOverlays();
+    }, 300);
     if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
     {
         add ([sh] { if (sh->on) std::cerr << "UITEST INFO winchrome: 윈도우가 아니라 실제 창 확인은 건너뜀" << std::endl; }, 0);
@@ -2002,6 +2034,315 @@ void UiSelfTest::addWinChromeTests()
         const auto p = meon::winframe::probe (handle());
         std::cerr << "UITEST INFO winchrome end: window " << rectStr (p.window) << " client " << rectStr (p.client) << " active " << (p.active ? 1 : 0) << std::endl;
     }, 0);
+}
+
+//==============================================================================
+// 팝오버·모달·토스트를 열고 닫아도 보던 화면(공개 방·방 화면)은 그대로. 예전에는 홈이 띄우는 창(알림·친구 추가·코드로 입장)이 홈 안에 떠서
+// 방 화면이면 먼저 방을 최소화했다 (= 홈 메뉴를 끈 뒤로 공개 방으로 바뀌었다). 이제 모달·팝오버는 모달 층(AppRoot: 창 전체,
+// 사이드바까지 어둡게 덮고 창 가운데)에 뜬다. 방에 있으면 사이드바 "코드로 입장" 은 없다 (방 만들기와 같은 규칙)
+void UiSelfTest::addOverlayTests()
+{
+    struct Shared
+    {
+        juce::String room, chatText;
+        int phase = 0;
+        bool sendMuted = false, monMuted = false, selfMon = false, homeVisible = false;
+        float master = 0.0f;
+        bool side = true;   // 방 화면에서 사이드바가 보인다 (좁은 플러그인 창은 숨는다: 방 화면 윗줄의 알림·설정·로비 버튼)
+    };
+    auto sh = std::make_shared<Shared>();
+    auto roomView = [this]
+    {
+        return inRoom() && ! root.isMinimized() && jam() != nullptr && jam()->isShowing() && ! home().isVisible()
+            && root.sidebar->getPage() == Sidebar::Page::room;
+    };
+    auto snap = [this, sh]
+    {
+        auto* s = core.jam();
+        if (s == nullptr) return;
+        sh->room = roomId();
+        sh->phase = (int) s->getPhase();
+        sh->sendMuted = s->isSendMuted();
+        sh->monMuted = s->isMonitorMuted();
+        sh->selfMon = s->isSelfMonitorAudible();
+        sh->master = s->getMasterDb();
+        sh->homeVisible = core.home().isHomeVisible();
+        if (auto* j = jam()) sh->chatText = j->chatInput.getText();
+    };
+    auto same = [this, sh, roomView] (const juce::String& what)
+    {
+        auto* s = core.jam();
+        expect (roomView(), what + TXT (": 방 화면 그대로 (공개 방으로 가지 않음)"));
+        expect (s != nullptr && roomId() == sh->room && (int) s->getPhase() == sh->phase, what + TXT (": 같은 방, 연결 단계 그대로"));
+        if (s != nullptr)
+            expect (s->isSendMuted() == sh->sendMuted && s->isMonitorMuted() == sh->monMuted && s->isSelfMonitorAudible() == sh->selfMon
+                        && s->getMasterDb() == sh->master && core.home().isHomeVisible() == sh->homeVisible,
+                    what + TXT (": 송출·모니터·셀프 모니터·마스터 볼륨 그대로, 공개 방 구독 없음"));
+        if (auto* j = jam()) expect (j->chatInput.getText() == sh->chatText, what + TXT (": 채팅 입력 중인 글 그대로"));
+    };
+    auto fullModal = [this] (juce::Component* m, const juce::String& what)
+    {
+        expect (m != nullptr && m->isShowing(), what + TXT (": 떴다"));
+        if (m == nullptr) return;
+        expect (m->getParentComponent() == &root && m->getBounds() == root.getLocalBounds(), what + TXT (": 모달 층 (창 전체 ") + m->getBounds().toString() + ")");
+        const int idx = root.getIndexOfChildComponent (m);
+        bool above = idx > root.getIndexOfChildComponent (root.sidebar.get()) && idx > root.getIndexOfChildComponent (root.home.get())
+                  && idx > root.getIndexOfChildComponent (root.toggle.get());
+        if (root.jam != nullptr) above = above && idx > root.getIndexOfChildComponent (root.jam.get());
+        expect (above, what + TXT (": 사이드바·본문·방 화면·접기 버튼 위"));
+        if (root.sidebar->isVisible())
+        {
+            auto* hit = root.getComponentAt (juce::Point<int> (root.sidebar->getWidth() / 2, root.getHeight() / 2));
+            expect (hit == m || m->isParentOf (hit), what + TXT (": 사이드바 자리도 덮는다 (누르면 모달 바깥)"));
+        }
+        if (auto* md = dynamic_cast<Modal*> (m))
+        {
+            const auto box = md->boxBounds();
+            expect (std::abs (box.getCentreX() - root.getWidth() / 2) <= 1 && std::abs (box.getCentreY() - root.getHeight() / 2) <= 1,
+                    what + TXT (": 창 가운데 (") + box.toString() + ")");
+        }
+    };
+    auto outside = [this] { click (root, { juce::jmax (8, root.sidebar->getWidth() / 2), root.getHeight() / 2 }); };   // 사이드바 위 덮개 (모달 바깥)
+    auto profileMenuItem = [this] (int i)
+    {
+        if (root.profileMenu == nullptr) return;
+        const auto b = root.profileMenu->box;
+        click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + i * 34 + 16 });
+    };
+    auto settingsOpen = [this]
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (dynamic_cast<SettingsModal*> (c) != nullptr) return true;
+        return false;
+    };
+    auto friendPlus = [this]
+    {
+        const auto h = root.sidebar->devSectionHeader (TXT ("친구"));
+        expect (! h.isEmpty(), TXT ("사이드바 친구 머리말"));
+        if (! h.isEmpty()) click (*root.sidebar, { h.getRight() - 6 - 11, h.getCentreY() });   // 머리말 오른쪽 + (22×22, 오른쪽 6)
+    };
+
+    begin (TXT ("겹침: 방 화면에서 열고 닫아도 방 화면 그대로"));
+    closeToasts();
+    enterNewRoom();
+    add ([this, sh, snap]
+    {
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+        sh->side = root.sidebar->isVisible();
+        if (! sh->side) std::cerr << "UITEST INFO overlay: 방 화면에서 사이드바가 숨음 (좁은 창). 사이드바 항목은 건너뛰고 방 화면 윗줄 알림으로" << std::endl;
+        jam()->devSetChatInput (TXT ("입력 중인 글"));
+        jam()->grabKeyboardFocus();
+        snap();
+        expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 있으면 사이드바 코드로 입장 없음 (펼침)"));
+        expect (! root.sidebar->devRow (TXT ("공개 방")).isEmpty(), TXT ("공개 방 메뉴는 그대로"));
+    }, 600);
+    // 프로필 › 알림: 방 화면 위에 팝오버 (사이드바가 숨는 좁은 창은 방 화면 윗줄 알림 버튼: 방 화면 안 팝오버)
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); else click (jam()->bell); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (0); }, 400);
+    waitUntil (TXT ("알림 팝오버 열림"), [this, sh]
+    {
+        return sh->side ? (home().popover != nullptr && home().popover->isShowing()) : (jam()->notifications != nullptr && jam()->notifications->isShowing());
+    });
+    add ([this, sh, same]
+    {
+        same (TXT ("알림 열기"));
+        if (! sh->side) { jam()->devOpenPopover ("notif"); return; }   // 다시 누르면 닫힌다
+        auto* p = home().popover.get();
+        if (p == nullptr) return;
+        expect (p->getParentComponent() == &root && root.getIndexOfChildComponent (p) > root.getIndexOfChildComponent (root.jam.get()),
+                TXT ("알림 팝오버: 모달 층 (방 화면 위)"));
+        expect (p->getPanelBounds().getX() == 9 && p->getPanelBounds().getBottom() == root.getHeight() - 55,
+                TXT ("알림 팝오버: 프로필 줄 위 (왼쪽 9, 아래 55) ") + p->getPanelBounds().toString());
+        if (auto* x = firstButton (*p)) click (*x);   // 머리말 닫기
+    }, 300);
+    add ([this, same]
+    {
+        expect (home().popover == nullptr && (jam()->notifications == nullptr), TXT ("알림 닫기 → 닫힘"));
+        same (TXT ("알림 닫기"));
+    }, 0);
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); else click (jam()->bell); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (0); }, 400);
+    waitUntil (TXT ("알림 팝오버 다시 열림"), [this] { return home().popover != nullptr || jam()->notifications != nullptr; });
+    add ([this] { jam()->grabKeyboardFocus(); key (juce::KeyPress (juce::KeyPress::escapeKey)); }, 300);
+    add ([this, same]
+    {
+        expect (home().popover == nullptr && jam()->notifications == nullptr, TXT ("Esc → 알림 닫힘"));
+        same (TXT ("알림 Esc"));
+        jam()->devOpenPopover ("requests");   // 방 화면의 입장 요청 팝오버
+    }, 300);
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (0); }, 400);
+    add ([this, sh, same]
+    {
+        if (sh->side)
+            expect (home().popover != nullptr && jam()->popover == nullptr, TXT ("팝오버는 하나만: 알림을 열면 방 화면의 입장 요청 팝오버는 닫힘"));
+        same (TXT ("입장 요청 → 알림"));
+        home().closeOverlays();
+        jam()->closeOverlays();
+    }, 300);
+    // 프로필 › 설정 (설정 창은 에디터의 모달 층). 좁은 창은 방 화면 윗줄 설정 버튼
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); else click (jam()->settings); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (1); }, 700);
+    waitUntil (TXT ("설정 열림"), settingsOpen);
+    add ([same] { same (TXT ("프로필 › 설정 열기")); }, 0);
+    add ([this] { if (auto* e = root.getParentComponent()) e->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)); }, 0);
+    waitUntil (TXT ("설정 닫힘"), [settingsOpen] { return ! settingsOpen(); });
+    add ([same] { same (TXT ("설정 닫기")); }, 300);
+    // 사이드바 친구 + → 친구 추가 (좁은 창은 사이드바가 없어 홈의 창을 직접: 같은 모달 층인지만)
+    add ([sh, friendPlus, this] { if (sh->side) friendPlus(); else home().openAddFriend(); }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("친구 추가 (방 화면)"));
+        same (TXT ("친구 추가 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this, same]
+    {
+        expect (home().modal == nullptr, TXT ("덮개를 누르면 친구 추가 닫힘"));
+        same (TXT ("친구 추가 닫기"));
+        expect (jam()->hasKeyboardFocus (true), TXT ("닫으면 방 화면이 글자 입력을 받는다 (단축키 M·N)"));
+    }, 0);
+    // 방 화면의 모달 (방 설정: 방장)
+    add ([this] { expect (jam()->gear.isShowing(), TXT ("방장: 방 설정 버튼")); click (jam()->gear); }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (jam()->modal.get(), TXT ("방 설정 (방 화면)"));
+        same (TXT ("방 설정 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this, same]
+    {
+        expect (jam()->modal == nullptr, TXT ("사이드바 위 덮개를 누르면 방 설정 닫힘"));
+        same (TXT ("방 설정 닫기"));
+    }, 0);
+    // 사이드바 친구 줄 → 방 화면의 프로필 (좁은 창은 방 화면 멤버·친구 목록이 같은 창을 연다)
+    add ([this, sh]
+    {
+        if (! sh->side)
+        {
+            for (auto& f : core.store().state().friends) { jam()->openProfile (f.user); return; }
+            expect (false, TXT ("친구"));
+            return;
+        }
+        for (auto& f : core.store().state().friends)
+            if (f.status == "online" || f.status == "in_room")
+            {
+                const auto r = root.sidebar->devRow (f.user.nickname.value_or (f.user.username));
+                if (! r.isEmpty()) { click (*root.sidebar, { r.getX() + 48, r.getCentreY() }); return; }
+            }
+        expect (false, TXT ("사이드바 친구 줄"));
+    }, 0);
+    waitUntil (TXT ("친구 프로필 열림"), [this] { return jam()->modal != nullptr; });
+    add ([this, same, fullModal]
+    {
+        fullModal (jam()->modal.get(), TXT ("친구 프로필 (방 화면)"));
+        expect (dynamic_cast<ProfileModal*> (jam()->modal.get()) != nullptr, TXT ("방 화면의 프로필 창"));
+        same (TXT ("친구 프로필 열기"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 400);
+    add ([this, same]
+    {
+        expect (jam()->modal == nullptr, TXT ("Esc → 프로필 닫힘"));
+        same (TXT ("친구 프로필 닫기"));
+    }, 0);
+    // 토스트 닫기
+    add ([this] { root.addInfoToast (TXT ("겹침 확인 토스트"), {}); }, 400);
+    add ([this]
+    {
+        for (auto* t : root.toasts)
+            if (t->getTitle() == TXT ("겹침 확인 토스트"))
+                if (auto* b = firstButton (*t)) click (*b);
+    }, 400);
+    add ([this, same]
+    {
+        bool gone = true;
+        for (auto* t : root.toasts) gone = gone && t->getTitle() != TXT ("겹침 확인 토스트");
+        expect (gone, TXT ("토스트 닫기 → 닫힘"));
+        same (TXT ("토스트 닫기"));
+    }, 0);
+    // 접힌 사이드바 (좁은 창은 사이드바가 없어 같은 확인을 한 번 더)
+    add ([this, sh] { if (sh->side) root.sidebar->setCollapsed (true); }, 600);
+    add ([this, sh]
+    {
+        if (! sh->side) { home().openAddFriend(); return; }
+        expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 있으면 사이드바 코드로 입장 없음 (접힘)"));
+        const auto r = root.sidebar->devRow (TXT ("친구 추가"));
+        expect (! r.isEmpty(), TXT ("접힌 사이드바: 친구 추가 아이콘"));
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+    }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("친구 추가 (접힌 사이드바)"));
+        same (TXT ("접힌 사이드바: 친구 추가 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this] { expect (home().modal == nullptr, TXT ("접힌 사이드바: 덮개 → 친구 추가 닫힘")); click (jam()->gear); }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (jam()->modal.get(), TXT ("방 설정 (접힌 사이드바)"));
+        same (TXT ("접힌 사이드바: 방 설정 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this, same]
+    {
+        expect (jam()->modal == nullptr, TXT ("접힌 사이드바: 덮개 → 방 설정 닫힘"));
+        same (TXT ("접힌 사이드바: 닫기"));
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+    }, 600);
+
+    begin (TXT ("겹침: 공개 방에서 열고 닫아도 공개 방 그대로"));
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("방에서 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); }, 6000);
+    closeToasts();
+    add ([this]
+    {
+        expect (root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("공개 방"));
+        expect (! root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방 밖: 사이드바 코드로 입장 있음"));
+    }, 0);
+    add ([friendPlus] { friendPlus(); }, 400);
+    add ([this, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("친구 추가 (공개 방)"));
+        expect (! inRoom() && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("친구 추가 열기: 공개 방 그대로"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this] { expect (home().modal == nullptr && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("친구 추가 닫기: 공개 방 그대로")); }, 0);
+    add ([this] { click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); }, 300);
+    add ([profileMenuItem] { profileMenuItem (0); }, 400);
+    add ([this]
+    {
+        expect (home().popover != nullptr && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("알림 열기: 공개 방 그대로"));
+        if (home().popover != nullptr) if (auto* x = firstButton (*home().popover)) click (*x);
+    }, 300);
+    add ([this] { expect (home().popover == nullptr && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("알림 닫기: 공개 방 그대로")); }, 0);
+    // 코드로 입장 창이 열린 채로 초대를 수락해 방에 들어가면 그 창은 닫힌다
+    clickSidebar (TXT ("코드로 입장"));
+    add ([this, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("코드로 입장 (공개 방)"));
+        expect (dynamic_cast<JoinCodeModal*> (home().modal.get()) != nullptr, TXT ("코드로 입장 창"));
+        if (auto* f = core.fakeServer()) f->devInviteMe();
+    }, 0);
+    auto inviteToast = [this]() -> Toast*
+    {
+        for (auto* t : root.toasts) if (t->key.isNotEmpty() && ! t->key.startsWith ("jr:")) return t;
+        return nullptr;
+    };
+    waitUntil (TXT ("초대 토스트 (코드로 입장 창 위)"), [inviteToast] { return inviteToast() != nullptr; });
+    add ([this, inviteToast]
+    {
+        auto* t = inviteToast();
+        expect (t != nullptr && root.getIndexOfChildComponent (t) > root.getIndexOfChildComponent (home().modal.get()), TXT ("토스트는 모달 층 위"));
+        if (t != nullptr) if (auto* b = findButton (*t, TXT ("수락"))) click (*b);
+    }, 0);
+    waitUntil (TXT ("초대 수락 → 그 방 화면"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing() && ! root.isMinimized(); }, 6000);
+    add ([this]
+    {
+        expect (home().modal == nullptr && ! root.hasWindowModal(), TXT ("방에 들어가면 코드로 입장 창은 닫힘"));
+        expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 들어가면 사이드바 코드로 입장 없음"));
+    }, 300);
 }
 
 } // namespace meon::ui

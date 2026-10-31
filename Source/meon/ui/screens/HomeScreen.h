@@ -68,6 +68,13 @@ public:
     bool dimsWindow() const { return modal != nullptr || confirm != nullptr; }
     /** 겹침이 생기거나 사라졌다 (AppRoot 가 접기 버튼을 덮개 아래로) */
     std::function<void()> onOverlayChanged;
+    /** 모달·확인 창·알림 팝오버를 띄울 곳 (AppRoot 의 모달 층: 창 전체, 방 화면 위에도 뜬다). 없으면 홈 위.
+        주인은 홈이다 (닫으면 홈이 지운다). fullWindow: 창 전체 크기 + 글자 입력 */
+    std::function<void (juce::Component&, bool fullWindow)> hostOverlay;
+    /** 모달 층의 창이 닫혔는데 홈이 숨어 있다 (방 화면): AppRoot 가 보이는 화면에 글자 입력을 돌려준다 */
+    std::function<void()> onOverlayClosed;
+    /** 알림 목록에서 사람을 눌렀다 (AppRoot: 보이는 화면의 프로필). 없으면 홈의 프로필 */
+    std::function<void (const core::UserPublic&)> onOpenProfileFromList;
     /** 맨 윗줄(제목 줄)의 빈 곳을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */
     std::function<void()> onTitleBarMouseDown;
     /** 제목 줄의 빈 곳인지 (mouseDown 의 맥 창 끌기와 같은 조건. 윈도우는 이 자리를 운영체제 제목 줄로 판정한다) */
@@ -174,6 +181,9 @@ private:
     std::unique_ptr<Popover> popover;
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
+    void showLayer (juce::Component&, bool fullWindow);   // hostOverlay 또는 홈 위
+    void overlayClosed();                                 // 글자 입력을 홈(보이면)이나 보이는 화면으로
+    void layoutOverlays();                                // 알림 팝오버 자리 (모달 층이면 그 좌표), 홈 위 모달 크기
 
     // 방 최소화
     struct RoomBar;

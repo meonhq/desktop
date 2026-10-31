@@ -103,11 +103,13 @@ struct Sidebar::Body : public juce::Component
         if (homeMenu)
             nav (icons::Id::navHome, TXT ("홈"), owner.page == Page::home, [this] { if (owner.onHome) owner.onHome(); });
         nav (icons::Id::navRooms, TXT ("공개 방"), owner.page == Page::rooms, [this] { if (owner.onRooms) owner.onRooms(); });
-        nav (icons::Id::navHash, TXT ("코드로 입장"), false, [this] { if (owner.onJoinCode) owner.onJoinCode(); });
+        // 방에 있으면 코드로 입장은 없다 (펼침·접힘 모두. 참여 중 "+" 방 만들기와 같은 규칙: 방에 들어가 있으면 다른 방으로 가는 입구를 숨긴다)
+        const bool joined = s.currentRoom.has_value();
+        if (! joined)
+            nav (icons::Id::navHash, TXT ("코드로 입장"), false, [this] { if (owner.onJoinCode) owner.onJoinCode(); });
         y += sectionGap - rowGap;
 
         // 참여 중
-        const bool joined = s.currentRoom.has_value();
         if (open)
         {
             Row h { Kind::header, { x, y, rw, 28 }, TXT ("참여 중") };

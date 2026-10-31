@@ -936,10 +936,42 @@ void HomeScreen::showModal (std::unique_ptr<Modal> m)
     notifications.reset();
     modal = std::move (m);
     modal->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
-                                                               { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
-    addAndMakeVisible (*modal);
-    modal->setBounds (getLocalBounds());
-    modal->toFront (true);
+                                                               { if (safe != nullptr) { safe->modal.reset(); safe->overlayClosed(); } }); };
+    showLayer (*modal, true);
+}
+
+void HomeScreen::showLayer (juce::Component& c, bool fullWindow)
+{
+    // 모달 층 (AppRoot): 창 전체를 덮고 사이드바·접기 버튼 위. 방 화면을 보는 중이어도 화면은 그대로 두고 그 위에 뜬다
+    if (hostOverlay) { hostOverlay (c, fullWindow); return; }
+    addAndMakeVisible (c);
+    if (fullWindow) c.setBounds (getLocalBounds());
+    c.toFront (fullWindow);
+}
+
+void HomeScreen::overlayClosed()
+{
+    if (isShowing()) grabKeyboardFocus();
+    else if (onOverlayClosed) onOverlayClosed();
+}
+
+void HomeScreen::layoutOverlays()
+{
+    if (! hostOverlay)
+    {
+        if (modal != nullptr) modal->setBounds (getLocalBounds());
+        if (confirm != nullptr) confirm->setBounds (getLocalBounds());
+    }
+    if (popover == nullptr || notifications == nullptr) return;
+    // 모달 층이면 AppRoot 좌표 (홈은 AppRoot 전체라 보통 같다)
+    const auto o = popover->getParentComponent() == this ? juce::Point<int>() : getPosition();
+    const int h = popover->getPreferredHeight();
+    popover->setContent (notifications.get(), notifications->getPreferredHeight());
+    const int ph = shell ? popover->getPreferredHeight() : juce::jmax (h, popover->getPreferredHeight());
+    if (shell)   // 사이드바 안: 프로필 줄 위 (디자인 left 9, bottom 55)
+        popover->setPanelBounds (o.x + 9, o.y + getHeight() - 55 - ph, 340, ph);
+    else
+        popover->setPanelBounds (o.x + getWidth() - 12 - 340, o.y + headerLine() + 10, 340, ph);
 }
 
 void HomeScreen::openProfile (const core::UserPublic& u)
@@ -1024,12 +1056,11 @@ void HomeScreen::toggleNotifications()
     popover = std::make_unique<Popover> (TXT ("알림"));
     popover->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
                                                                  { if (safe != nullptr) { safe->popover.reset(); safe->notifications.reset(); } }); };
-    notifications->onSizeChanged = [this] { resized(); };
-    notifications->onOpenProfile = [this] (const core::UserPublic& u) { openProfile (u); };
+    notifications->onSizeChanged = [this] { layoutOverlays(); };
+    notifications->onOpenProfile = [this] (const core::UserPublic& u) { if (onOpenProfileFromList) onOpenProfileFromList (u); else openProfile (u); };
     popover->setContent (notifications.get(), notifications->getPreferredHeight());
-    addAndMakeVisible (*popover);
-    resized();
-    popover->toFront (false);
+    showLayer (*popover, false);
+    layoutOverlays();
 }
 
 void HomeScreen::closeOverlays()
@@ -1043,7 +1074,7 @@ void HomeScreen::closeOverlays()
 bool HomeScreen::closeTopOverlay()
 {
     // 최소화 중 확인 모달은 그 아래 모달(코드로 입장·프로필)보다 먼저 닫힌다 (Esc = 취소)
-    if (confirm != nullptr) { confirm.reset(); grabKeyboardFocus(); return true; }
+    if (confirm != nullptr) { confirm.reset(); overlayClosed(); return true; }
     if (! hasOverlay()) return false;
     closeOverlays();
     return true;
@@ -1122,12 +1153,10 @@ void HomeScreen::confirmLeaveThen (bool create, const juce::String& roomId, std:
     m->onClose = [this]
     {
         juce::Component::SafePointer<HomeScreen> safeSelf (this);
-        juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) { safe->confirm.reset(); safe->grabKeyboardFocus(); } });
+        juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) { safe->confirm.reset(); safe->overlayClosed(); } });
     };
     confirm = std::move (m);
-    addAndMakeVisible (*confirm);
-    confirm->setBounds (getLocalBounds());
-    confirm->toFront (true);
+    showLayer (*confirm, true);   // 그 아래 모달(코드로 입장·프로필) 위
 }
 
 //==============================================================================
@@ -1306,15 +1335,7 @@ void HomeScreen::resized()
             roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작
             if (! fold.isMoving (foldFriends)) layoutRooms();
         }
-        if (modal != nullptr) modal->setBounds (getLocalBounds());
-        if (confirm != nullptr) confirm->setBounds (getLocalBounds());
-        if (popover != nullptr && notifications != nullptr)
-        {
-            popover->setContent (notifications.get(), notifications->getPreferredHeight());
-            const int ph = popover->getPreferredHeight();
-            popover->setPanelBounds (9, getHeight() - 55 - ph, 340, ph);   // 프로필 줄 위 (디자인 left 9, bottom 55)
-            popover->toFront (false);
-        }
+        layoutOverlays();
         repaint();
         return;
     }
@@ -1415,18 +1436,7 @@ void HomeScreen::resized()
         sendGain.setBounds (row.withSizeKeepingCentre (row.getWidth(), metric::smallH));
     }
 
-    if (modal != nullptr) modal->setBounds (getLocalBounds());
-    if (confirm != nullptr) confirm->setBounds (getLocalBounds());
-    if (popover != nullptr && notifications != nullptr)
-    {
-        const int h = popover->getPreferredHeight() - 0;
-        popover->setContent (notifications.get(), notifications->getPreferredHeight());
-        const int ph = juce::jmax (h, popover->getPreferredHeight());
-        if (shell)   // 사이드바 안: 프로필 줄 위 (디자인 left 9, bottom 55)
-            popover->setPanelBounds (9, getHeight() - 55 - ph, 340, ph);
-        else
-            popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, ph);
-    }
+    layoutOverlays();
     if (! fold.isMoving (foldFriends)) repaint();   // 움직이는 동안은 옮겨진 카드 자리만 다시 그린다
 }
 

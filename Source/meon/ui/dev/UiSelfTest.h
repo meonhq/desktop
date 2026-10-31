@@ -1,4 +1,4 @@
-// MEON ui - 개발용 화면 자가 테스트 (--uitest=all|leave|minimize|resize|chat|aoodrop|rooms|friends|sidebar|roomsidebar|chrome). 빌드 0 (MEON_DEV_OPTIONS) 전용.
+// MEON ui - 개발용 화면 자가 테스트 (--uitest=all|leave|minimize|resize|chat|aoodrop|rooms|friends|sidebar|roomsidebar|chrome|popover|winchrome|overlay). 빌드 0 (MEON_DEV_OPTIONS) 전용.
 // 실제 창에 마우스·키 이벤트를 넣고(ComponentPeer) 화면·store·엔진 상태를 확인한다. 가짜 서버로 자동 가입한 홈에서 시작한다.
 // 결과는 표준 오류에 "UITEST PASS|FAIL <구역> · <확인>" 한 줄씩, 끝에 "UITEST DONE <통과> passed, <실패> failed".
 // 끝나면 앱을 닫고 실패 수를 종료 코드로 돌려준다 (linux.yml 이 Xvfb 에서 돌린다).
@@ -78,6 +78,7 @@ private:
     juce::String roomId() const;
     juce::StringArray kickedRooms;   // 자가 테스트 중 내보내진 방 (다시 들어갈 수 없다)
     static juce::Button* findButton (juce::Component&, const juce::String& text);
+    juce::Button* confirmButton (const juce::String& text) const;
     static juce::Button* firstButton (juce::Component&);
 
     // 방에 들어가는 단계 (approval: 방장인 승인 방)
@@ -99,6 +100,7 @@ private:
     void addChromeTests();        // 맥 창 신호등 (--uitest=chrome, mac.yml)
     void addPopoverTests();       // 팝오버 그림자 자리·마우스·그림자 다시 그리기 (--uitest=popover)
     void addWinChromeTests();     // 윈도우 창 윗부분: 창 버튼·제목 줄 영역 판정·최대화·끌기 (--uitest=winchrome, windows.yml)
+    void addOverlayTests();       // 팝오버·모달·토스트를 열고 닫아도 화면 그대로, 모달 층(창 전체), 방 안 코드로 입장 숨김 (--uitest=overlay)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

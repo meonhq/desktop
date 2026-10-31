@@ -651,6 +651,7 @@ void MeonEditor::applyHomePreview()
         // jam:miniarm — minihost 에서 막대의 나가기를 한 번 누른 상태 (방장 툴팁). jam:miniconfirm / jam:minicreate — 최소화 중
         // 공개 방 '바로 입장' / '방 만들기' 를 누른 확인 모달
         // jam:pop=requests|notif|profile|none — 방장 방(입장 요청 1)에서 헤더의 입장 요청·알림 팝오버 또는 프로필 메뉴를 연 화면 (그림자·CPU 확인)
+        // jam:pop=addfriend|gear|notifmenu — 방 화면에서 사이드바 친구 추가 · 방 설정 · 프로필 › 알림 (모달 층: 창 전체)
         const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide" || p == "jam:minireqs" || p.startsWith ("jam:pop=");
         core::CreateRoom c;
         c.type = hostRoom ? "public" : "private";
@@ -715,6 +716,14 @@ void MeonEditor::applyHomePreview()
                     if (what == "profile")
                     {
                         if (auto* sb = safe->appRoot->getSidebar(); sb != nullptr && sb->onProfileMenu) sb->onProfileMenu();
+                    }
+                    else if (what == "addfriend")
+                    {
+                        if (auto* sb = safe->appRoot->getSidebar(); sb != nullptr && sb->onAddFriend) sb->onAddFriend();
+                    }
+                    else if (what == "notifmenu")
+                    {
+                        if (auto* home = safe->appRoot->getHome()) home->toggleNotifications();   // 프로필 메뉴 "알림" 과 같은 길
                     }
                     else if (auto* screen = safe->appRoot->getJamScreen())
                         screen->devOpenPopover (what);

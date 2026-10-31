@@ -39,6 +39,12 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    void childrenChanged() override;
+    /** 모달 층 (창 전체: 설정 창처럼 사이드바까지 덮는다). 홈·방 화면이 띄우는 모달·확인 창·알림 팝오버의 부모가 된다.
+        주인(지우는 쪽)은 그 화면이다. fullWindow 면 창 전체 크기 + 글자 입력을 받는다. 띄운 순서대로 쌓이고, 토스트·입장 실패 상자는 그 위 */
+    void hostOverlay (juce::Component&, bool fullWindow);
+    /** 창 전체를 덮는 모달이 떠 있다 (홈·방 화면이 띄운 것) */
+    bool hasWindowModal() const;
     /** 개발용 (--chrome=mac): 맥 창 모드의 가짜 신호등 오른쪽 끝 (그리기는 에디터 맨 위의 MacTrafficLights). macOS 26 러너에서 잰 값 */
     static constexpr int mockLightsRight = MacTrafficLights::mockRight;
     /** 본문 제목 줄 오른쪽 여백 (디자인 hdPR): 보통 18, 윈도우 독립 앱은 창 버튼 138 + 12 = 150 (에디터가 정한다) */
@@ -61,8 +67,8 @@ private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     HomeScreen::UpdateHooks update;
-    // 왼쪽 사이드바 (홈·사이드바 디자인). 홈 화면은 창 전체를 덮되 사이드바 자리는 비워 둔다 (모달이 창 전체를 덮게).
-    // 합주 화면은 사이드바 오른쪽에만 둔다 (방 화면 안은 그대로)
+    // 왼쪽 사이드바 (홈·사이드바 디자인). 홈 화면은 창 전체를 덮되 사이드바 자리는 비워 둔다.
+    // 합주 화면은 사이드바 오른쪽에만 둔다 (방 화면 안은 그대로). 두 화면의 모달·팝오버는 모달 층(hostOverlay: 창 전체)
     std::unique_ptr<Sidebar> sidebar;
     std::unique_ptr<ProfileMenu> profileMenu;
     // 사이드바 접기 버튼: 창 기준 자리 (맥 창 모드에서는 접혀도 신호등 오른쪽 84). 사이드바·본문 위, 토스트·겹침 아래
@@ -76,6 +82,8 @@ private:
     Sidebar::Page page = Sidebar::homeMenu ? Sidebar::Page::home : Sidebar::Page::rooms;   // 방 밖(또는 최소화)에서 보는 쪽: 공개 방 (홈은 꺼 둠)
     void syncSidebar();
     void showPage (Sidebar::Page);
+    /** 프로필 창: 방 화면이 보이면 방 화면의 것 (방 화면에서 연 프로필과 같다), 아니면 홈의 것. 화면은 바꾸지 않는다 */
+    void openProfile (const core::UserPublic&);
     void openProfileMenu();
     void closeProfileMenu();
     std::unique_ptr<HomeScreen> home;
@@ -87,6 +95,13 @@ private:
     juce::StringArray seenJoinRequests;   // 알림을 한 번 띄운 입장 요청
     juce::StringArray seenInvites;        // 알림을 한 번 띄운 초대 (10초 뒤 닫히면 다시 띄우지 않는다. 사이드바 카드는 남는다)
     bool minimized = false;   // 방 안이면서 홈을 보는 중 (방에 있는지는 store.currentRoom)
+    struct Hosted { juce::Component::SafePointer<juce::Component> c; bool full = false; };
+    std::vector<Hosted> hosted;   // 모달 층 (띄운 순서, 아래 → 위)
+    bool tearingDown = false;
+    /** 쌓는 순서: 사이드바·홈·방 화면 → 접기 버튼 → 모달 층 → 프로필 메뉴 → 방 닫힘 덮개 → 토스트 → 입장 실패 상자 */
+    void restack();
+    void raiseTopLayers();
+    void focusScreen();
 
     void updateScreen();
     void applyScreen();   // 방 안: minimized 에 따라 홈(+막대)과 합주 화면 중 하나를 보인다
