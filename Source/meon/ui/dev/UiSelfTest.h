@@ -1,4 +1,4 @@
-// MEON ui - 개발용 화면 자가 테스트 (--uitest=all|leave|minimize|resize|chat|aoodrop|rooms|friends). 빌드 0 (MEON_DEV_OPTIONS) 전용.
+// MEON ui - 개발용 화면 자가 테스트 (--uitest=all|leave|minimize|resize|chat|aoodrop|rooms|friends|sidebar|roomsidebar|chrome). 빌드 0 (MEON_DEV_OPTIONS) 전용.
 // 실제 창에 마우스·키 이벤트를 넣고(ComponentPeer) 화면·store·엔진 상태를 확인한다. 가짜 서버로 자동 가입한 홈에서 시작한다.
 // 결과는 표준 오류에 "UITEST PASS|FAIL <구역> · <확인>" 한 줄씩, 끝에 "UITEST DONE <통과> passed, <실패> failed".
 // 끝나면 앱을 닫고 실패 수를 종료 코드로 돌려준다 (linux.yml 이 Xvfb 에서 돌린다).
@@ -7,6 +7,7 @@
 
 #include <JuceHeader.h>
 #include "../../core/MeonCore.h"
+#include "../../MeonWindowChrome.h"
 
 namespace meon::ui
 {
@@ -23,6 +24,8 @@ public:
 
     void start();
     std::function<void (int failures)> onDone;
+    /** 맥 창 제목 줄 상태 한 줄 (UITEST INFO chrome …) */
+    static juce::String describe (const meon::chrome::Probe&);
 
 private:
     core::MeonCore& core;
@@ -34,6 +37,7 @@ private:
         juce::String label;
         std::function<void()> run;
         std::function<bool()> until;   // 있으면 참이 될 때까지 기다린다 (timeoutMs 넘으면 실패)
+        std::function<void()> onTimeout;   // 있으면 시간 초과를 실패로 세지 않고 이것을 부른다 (러너에서 안 될 수 있는 것)
         int waitMs = 150;
         int timeoutMs = 0;
     };
@@ -45,6 +49,7 @@ private:
 
     void add (std::function<void()> run, int waitAfterMs = 150);
     void waitUntil (const juce::String& label, std::function<bool()> cond, int timeoutMs = 4000);
+    void waitUntilOr (const juce::String& label, std::function<bool()> cond, int timeoutMs, std::function<void()> onTimeout);
     void wait (int ms) { add ({}, ms); }
     void begin (const juce::String& name);
     void timerCallback() override;
@@ -91,6 +96,7 @@ private:
     void addFriendRequestTests();
     void addRoomSidebarTests();   // 방 화면에 들어갈 때 사이드바 상태 (창 폭별)
     void addSidebarTests();
+    void addChromeTests();        // 맥 창 신호등 (--uitest=chrome, mac.yml)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

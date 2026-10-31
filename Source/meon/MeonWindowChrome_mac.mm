@@ -1,9 +1,16 @@
 // MEON - 맥 독립 앱 창의 제목 줄. 설명은 MeonWindowChrome.h
 //   - 제목 줄을 투명하게 하고 제목 글자를 숨긴 뒤(창 이름은 남는다) 내용 영역을 창 맨 위까지 넓힌다 (fullSizeContentView).
-//   - 신호등은 macOS 기본 버튼을 그대로 쓰고 위치만 옮긴다: 제목 줄 묶음 높이를 52 로 하고 그 세로 가운데,
-//     원(12px)의 왼쪽이 20, 사이 8 (디자인). 크기를 바꾸거나 전체 화면에서 나오면 AppKit 이 원래 자리로 되돌리므로 그때마다 다시 둔다.
-//   - JUCE 는 전체 화면에서 나올 때 창 모양(styleMask)을 처음 값으로 되돌린다 (resetWindowPresentation): 그 뒤에 다시 붙인다.
-//   - 맨 윗줄 끌기: 지금 처리 중인 마우스 누름으로 performWindowDragWithEvent (macOS 가 옮긴다: 화면 가장자리 붙이기 등 그대로).
+//   - 빈 NSToolbar 를 붙이고 unified 스타일로 둔다 (macOS 11+). 그러면 제목 줄 + 툴바가 한 줄(52pt)이 되고,
+//     macOS 가 신호등을 그 세로 가운데에 시스템 간격으로 놓는다. 버튼을 직접 옮기지 않는다:
+//     창 크기·키 창·전체 화면·다른 모니터·화면 배율이 바뀔 때 AppKit 이 다시 배치해도 늘 같은 자리다.
+//     (예전 방식의 버그: 처음 켤 때 버튼을 옮긴 뒤 AppKit 이 다음 화면 갱신에서 제목 줄을 다시 배치해 버튼이 기본 자리(모서리)로 돌아갔고,
+//      그 뒤 알림이 없어 창 크기를 바꿀 때까지 그대로였다)
+//   - macOS 10.13–10.15 에는 툴바 스타일이 없다: 같은 빈 툴바로 제목 줄과 툴바가 합쳐지지만 높이는 그 시스템이 정한다.
+//   - 전체 화면에서는 툴바를 뗀다 (신호등이 없는 배치. 툴바가 있으면 전체 화면 위에 빈 줄이 남는다). 나오면 다시 붙인다.
+//     JUCE 는 전체 화면에서 나올 때 창 모양(styleMask)을 처음 값으로 되돌린다 (resetWindowPresentation): 그 뒤에 다시 붙인다.
+//   - 맨 윗줄 누름: 앱 화면(JUCE)이 받아서 빈 곳이면 titleBarMouseDown 을 부른다 (사이드바 접기 버튼·제목 줄 버튼은 각자 눌린다).
+//     그 줄에서 툴바·제목 줄이 누름을 가로채면(앱 화면이 아닌 뷰가 받으면) 그 누름을 앱 화면으로 넘긴다 (신호등은 그대로 신호등이 받는다).
+//   - 끌기는 지금 처리 중인 마우스 누름으로 performWindowDragWithEvent (macOS 가 옮긴다: 화면 가장자리 붙이기 등 그대로).
 //     두 번 누름은 시스템 설정 "제목 막대를 이중 클릭할 때" (AppleActionOnDoubleClick) 를 따른다.
 #import <AppKit/AppKit.h>
 #include "MeonWindowChrome.h"
@@ -17,14 +24,14 @@ namespace
 {
     struct State
     {
-        NSWindow* window = nil;          // 붙인 창 (앱 창 하나). 창이 사라지기 전에 remove 가 불린다
+        NSWindow* window = nil;          // 붙인 창 (앱 창 하나). 에디터가 사라질 때 detach 가 불린다
         std::vector<id> observers;
+        id monitor = nil;                // 맨 윗줄 누름을 앱 화면으로 넘기는 이벤트 감시
         std::function<void()> onChange;
         bool applied = false;
-        // 원래 자리 (remove 에서 되돌린다)
-        bool saved = false;
-        CGFloat containerH = 0;
-        NSPoint buttonOrigins[3] {};
+        bool forwarding = false;         // 넘긴 누름이 떼어질 때까지 끌기·뗌도 넘긴다
+        NSEvent* forwardingDown = nil;   // 넘기는 중인 누름 (titleBarMouseDown 이 쓴다. 감시 안에서는 currentEvent 가 다를 수 있다)
+        int forwarded = 0, titleBarPresses = 0;
     };
 
     State& state()
@@ -39,60 +46,39 @@ namespace
         return view != nil ? [view window] : nil;
     }
 
-    bool buttonsOf (NSWindow* w, NSButton* out[3], NSView** container)
-    {
-        out[0] = [w standardWindowButton: NSWindowCloseButton];
-        out[1] = [w standardWindowButton: NSWindowMiniaturizeButton];
-        out[2] = [w standardWindowButton: NSWindowZoomButton];
-        if (out[0] == nil || out[1] == nil || out[2] == nil) return false;
-        NSView* titlebar = [out[0] superview];         // 제목 줄 (버튼이 든 곳)
-        *container = titlebar != nil ? [titlebar superview] : nil;   // 제목 줄 묶음
-        return *container != nil;
-    }
+    bool isFullScreen (NSWindow* w) { return w != nil && ([w styleMask] & NSWindowStyleMaskFullScreen) != 0; }
 
-    /** 신호등을 52px 윗줄의 세로 가운데로 (원 왼쪽 20, 원 사이 8) */
-    void layoutButtons (NSWindow* w)
+    void attachToolbar (NSWindow* w)
     {
-        auto& s = state();
-        if (w == nil || ! s.applied || ([w styleMask] & NSWindowStyleMaskFullScreen) != 0) return;
-        NSButton* b[3];
-        NSView* container = nil;
-        if (! buttonsOf (w, b, &container)) return;
-        if (! s.saved)
+        if ([w toolbar] == nil)
         {
-            s.saved = true;
-            s.containerH = NSHeight ([container frame]);
-            for (int i = 0; i < 3; ++i) s.buttonOrigins[i] = [b[i] frame].origin;
+            NSToolbar* t = [[NSToolbar alloc] initWithIdentifier: @"com.meon.MEON.titlebar"];
+            [t setAllowsUserCustomization: NO];
+            [t setAutosavesConfiguration: NO];
+            [t setDisplayMode: NSToolbarDisplayModeIconOnly];
+           #pragma clang diagnostic push
+           #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            [t setShowsBaselineSeparator: NO];   // 10.13–10.15 의 툴바 아래 선 (11+ 는 titlebarSeparatorStyle)
+           #pragma clang diagnostic pop
+            [w setToolbar: t];
+            [t release];
         }
-        const CGFloat barH = (CGFloat) barHeight;
-        NSRect cf = [container frame];
-        if (std::abs (NSHeight (cf) - barH) > 0.5 || std::abs (NSMaxY (cf) - NSHeight ([w frame])) > 0.5)
-        {
-            cf.size.height = barH;
-            cf.origin.y = NSHeight ([w frame]) - barH;
-            [container setFrame: cf];
-        }
-        const CGFloat bw = NSWidth ([b[0] frame]), bh = NSHeight ([b[0] frame]);
-        const CGFloat x0 = 20.0 - (bw - 12.0) * 0.5;   // 버튼 틀은 원보다 조금 크다: 원 왼쪽이 20 이 되게
-        const CGFloat y = std::round ((barH - bh) * 0.5);
-        for (int i = 0; i < 3; ++i)
-        {
-            const NSPoint p = NSMakePoint (x0 + 20.0 * i, y);   // 원 12 + 사이 8
-            if (! NSEqualPoints ([b[i] frame].origin, p))
-                [b[i] setFrameOrigin: p];
-        }
+        if (@available (macOS 11.0, *))
+            [w setToolbarStyle: NSWindowToolbarStyleUnified];
     }
 
     void apply (NSWindow* w)
     {
         if (w == nil) return;
+        // 내용 영역을 먼저 넓힌다: 그 뒤에 툴바를 붙여야 내용 크기가 툴바만큼 줄지 않는다
         if (([w styleMask] & NSWindowStyleMaskFullSizeContentView) == 0)
             [w setStyleMask: [w styleMask] | NSWindowStyleMaskFullSizeContentView];
         [w setTitlebarAppearsTransparent: YES];
         [w setTitleVisibility: NSWindowTitleHidden];   // 창 이름(title)은 그대로: 미션 컨트롤·윈도우 메뉴
         if (@available (macOS 11.0, *))
             [w setTitlebarSeparatorStyle: NSTitlebarSeparatorStyleNone];
-        layoutButtons (w);
+        if (! isFullScreen (w))
+            attachToolbar (w);
     }
 
     void observe (NSWindow* w, NSNotificationName name, void (^block) (NSNotification*))
@@ -100,39 +86,102 @@ namespace
         id o = [[NSNotificationCenter defaultCenter] addObserverForName: name object: w queue: [NSOperationQueue mainQueue] usingBlock: block];
         state().observers.push_back (o);
     }
+
+    bool isWindowButton (NSWindow* w, NSView* v)
+    {
+        for (NSWindowButton kind : { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
+        {
+            NSButton* b = [w standardWindowButton: kind];
+            if (b != nil && (v == b || [v isDescendantOf: b])) return true;
+        }
+        return false;
+    }
+
+    /** 창 좌표(AppKit: 창 왼쪽 아래 기준)의 점을 누르면 받는 뷰 */
+    NSView* hitAt (NSWindow* w, NSPoint windowPoint)
+    {
+        NSView* frameView = [[w contentView] superview];
+        if (frameView == nil) return nil;
+        NSView* above = [frameView superview];
+        return [frameView hitTest: above != nil ? [above convertPoint: windowPoint fromView: nil] : windowPoint];
+    }
+
+    /** 맨 윗줄에서 앱 화면이 아닌 뷰(툴바·제목 줄)가 받을 누름을 앱 화면으로 넘긴다. 그 밖은 그대로 */
+    NSEvent* route (NSEvent* ev)
+    {
+        auto& s = state();
+        if (! s.applied || s.window == nil || [ev window] != s.window) return ev;
+        NSView* content = [s.window contentView];
+        if (content == nil) return ev;
+        const NSEventType type = [ev type];
+        if (type == NSEventTypeLeftMouseDown || type == NSEventTypeRightMouseDown)
+        {
+            s.forwarding = false;
+            if (isFullScreen (s.window)) return ev;
+            const NSPoint p = [ev locationInWindow];
+            if (p.y < NSHeight ([s.window frame]) - (CGFloat) barHeight) return ev;   // 맨 윗줄(52)만
+            NSView* hit = hitAt (s.window, p);
+            if (hit == nil || hit == content || [hit isDescendantOf: content] || isWindowButton (s.window, hit)) return ev;
+            s.forwarding = true;
+            ++s.forwarded;
+            s.forwardingDown = ev;
+            if (type == NSEventTypeLeftMouseDown) [content mouseDown: ev];
+            else                                  [content rightMouseDown: ev];
+            s.forwardingDown = nil;
+            return nil;
+        }
+        if (! s.forwarding) return ev;
+        switch (type)
+        {
+            case NSEventTypeLeftMouseDragged:  [content mouseDragged: ev]; break;
+            case NSEventTypeRightMouseDragged: [content rightMouseDragged: ev]; break;
+            case NSEventTypeLeftMouseUp:       s.forwarding = false; [content mouseUp: ev]; break;
+            case NSEventTypeRightMouseUp:      s.forwarding = false; [content rightMouseUp: ev]; break;
+            default: return ev;
+        }
+        return nil;
+    }
+
+    std::string describeHit (NSWindow* w, NSView* hit)
+    {
+        if (hit == nil) return "none";
+        NSView* content = [w contentView];
+        if (hit == content || [hit isDescendantOf: content]) return "content";
+        if (isWindowButton (w, hit)) return "button";
+        return [NSStringFromClass ([hit class]) UTF8String];
+    }
 }
 
-bool install (void* nsView, std::function<void()> onFullScreenChange)
+bool install (void* nsView, std::function<void()> onChange)
 {
     NSWindow* w = windowFor (nsView);
     if (w == nil) return false;
     auto& s = state();
-    s.onChange = std::move (onFullScreenChange);
-    if (s.applied && s.window == w) { apply (w); return true; }
-    if (s.applied) remove ((__bridge void*) [s.window contentView]);
+    if (s.applied && s.window == w) { s.onChange = std::move (onChange); apply (w); return true; }
+    if (s.applied) detach();
+    s.onChange = std::move (onChange);   // detach 가 지웠다
     s.window = w;
     s.applied = true;
-    s.saved = false;
     // 내용이 화면에서 제자리에 있게 창 틀을 제목 줄만큼 줄인다 (내용 크기 그대로). 그래야 창을 닫을 때 저장하는 크기(내용 크기)가
-    // 다음 실행에서도 같다 (틀을 그대로 두면 내용이 28 커진 채 저장돼 켤 때마다 창이 28 씩 커진다)
-    const bool fullScreen = ([w styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    // 다음 실행에서도 같다 (틀을 그대로 두면 내용이 제목 줄만큼 커진 채 저장돼 켤 때마다 창이 커진다)
+    const bool fullScreen = isFullScreen (w);
     const NSRect content = [w contentRectForFrameRect: [w frame]];
     apply (w);
     if (! fullScreen && ! NSEqualRects ([w frame], content))
         [w setFrame: content display: YES];
-    layoutButtons (w);
 
-    // AppKit 이 제목 줄을 다시 배치하면 신호등이 원래 자리로 돌아간다: 크기·키 창·화면 배율이 바뀔 때마다 다시 둔다
-    NSNotificationName relayoutOn[] = { NSWindowDidResizeNotification, NSWindowDidEndLiveResizeNotification, NSWindowDidBecomeKeyNotification,
-                                        NSWindowDidResignKeyNotification, NSWindowDidBecomeMainNotification, NSWindowDidChangeBackingPropertiesNotification };
-    for (NSNotificationName n : relayoutOn)
-        observe (w, n, ^(NSNotification*) { auto& st = state(); if (st.applied) layoutButtons (st.window); });
+    // 전체 화면: 들어가기 전에 툴바를 떼고(신호등 없는 배치), 나온 뒤 다시 붙인다
+    observe (w, NSWindowWillEnterFullScreenNotification, ^(NSNotification*)
+    {
+        auto& st = state();
+        if (st.applied) [st.window setToolbar: nil];
+    });
     observe (w, NSWindowDidEnterFullScreenNotification, ^(NSNotification*)
     {
         auto& st = state();
         if (st.applied && st.onChange) st.onChange();
     });
-    observe (w, NSWindowDidExitFullScreenNotification, ^(NSNotification*)
+    void (^reapply) (NSNotification*) = ^(NSNotification*)
     {
         // JUCE 가 같은 알림에서 창 모양을 처음 값으로 되돌린다: 그 뒤(다음 차례)에 다시 붙인다
         dispatch_async (dispatch_get_main_queue(), ^{
@@ -141,52 +190,45 @@ bool install (void* nsView, std::function<void()> onFullScreenChange)
             apply (st.window);
             if (st.onChange) st.onChange();
         });
-    });
+    };
+    observe (w, NSWindowDidExitFullScreenNotification, reapply);
+    observe (w, NSWindowDidFailToEnterFullScreenNotification, reapply);
+    observe (w, NSWindowDidFailToExitFullScreenNotification, reapply);
+
+    if (s.monitor == nil)
+        s.monitor = [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+                                                                   | NSEventMaskRightMouseDown | NSEventMaskRightMouseDragged | NSEventMaskRightMouseUp
+                                                          handler: ^NSEvent* (NSEvent* ev) { return route (ev); }];
     return true;
 }
 
-void remove (void* nsView)
+void detach()
 {
     auto& s = state();
     for (id o : s.observers) [[NSNotificationCenter defaultCenter] removeObserver: o];
     s.observers.clear();
+    if (s.monitor != nil) { [NSEvent removeMonitor: s.monitor]; s.monitor = nil; }
     s.onChange = nullptr;
-    // 넘겨받은 화면이 아직 그 창 안에 있을 때만 창을 건드린다 (앱을 끝내는 중이면 창이 먼저 사라질 수 있다)
-    NSWindow* w = windowFor (nsView);
-    if (w != nil && w == s.window && s.applied)
-    {
-        NSButton* b[3];
-        NSView* container = nil;
-        if (s.saved && ([w styleMask] & NSWindowStyleMaskFullScreen) == 0 && buttonsOf (w, b, &container))
-        {
-            NSRect cf = [container frame];
-            cf.size.height = s.containerH;
-            cf.origin.y = NSHeight ([w frame]) - s.containerH;
-            [container setFrame: cf];
-            for (int i = 0; i < 3; ++i) [b[i] setFrameOrigin: s.buttonOrigins[i]];
-        }
-        const bool fullScreen = ([w styleMask] & NSWindowStyleMaskFullScreen) != 0;
-        const NSRect content = [w frame];   // 지금은 틀 = 내용
-        [w setTitlebarAppearsTransparent: NO];
-        [w setTitleVisibility: NSWindowTitleVisible];
-        if (@available (macOS 11.0, *))
-            [w setTitlebarSeparatorStyle: NSTitlebarSeparatorStyleAutomatic];
-        [w setStyleMask: [w styleMask] & ~NSWindowStyleMaskFullSizeContentView];
-        // 붙일 때의 반대: 내용은 제자리, 제목 줄만큼 틀을 위로 늘린다
-        if (! fullScreen)
-            [w setFrame: [w frameRectForContentRect: content] display: YES];
-    }
+    s.forwarding = false;
     s.window = nil;
     s.applied = false;
-    s.saved = false;
+}
+
+bool installedOn (void* nsView)
+{
+    const auto& s = state();
+    NSWindow* w = windowFor (nsView);
+    return s.applied && w != nil && w == s.window;
 }
 
 void titleBarMouseDown (void* nsView)
 {
+    auto& s = state();
+    ++s.titleBarPresses;
     NSWindow* w = windowFor (nsView);
-    NSEvent* ev = [NSApp currentEvent];
+    NSEvent* ev = s.forwardingDown != nil ? s.forwardingDown : [NSApp currentEvent];
     if (w == nil || ev == nil || [ev type] != NSEventTypeLeftMouseDown || [ev window] != w) return;
-    if (([w styleMask] & NSWindowStyleMaskFullScreen) != 0) return;   // 전체 화면 창은 옮기지 않는다
+    if (isFullScreen (w)) return;   // 전체 화면 창은 옮기지 않는다
 
     if ([ev clickCount] >= 2)
     {
@@ -200,6 +242,69 @@ void titleBarMouseDown (void* nsView)
         return;
     }
     [w performWindowDragWithEvent: ev];
+}
+
+Probe probe (void* nsView, int toggleX, int toggleY, int emptyX, int emptyY)
+{
+    Probe p;
+    const auto& s = state();
+    p.forwarded = s.forwarded;
+    p.titleBarPresses = s.titleBarPresses;
+    const auto v = [[NSProcessInfo processInfo] operatingSystemVersion];
+    p.os = std::to_string ((int) v.majorVersion) + "." + std::to_string ((int) v.minorVersion) + "." + std::to_string ((int) v.patchVersion);
+    NSWindow* w = windowFor (nsView);
+    if (w == nil) return p;
+    p.installed = s.applied && w == s.window;
+    p.fullScreen = isFullScreen (w);
+    p.toolbar = [w toolbar] != nil;
+    if (@available (macOS 11.0, *))
+        p.unified = [w toolbarStyle] == NSWindowToolbarStyleUnified;
+    p.fullSizeContent = ([w styleMask] & NSWindowStyleMaskFullSizeContentView) != 0;
+    const CGFloat H = NSHeight ([w frame]);
+    p.barH = H - NSMaxY ([w contentLayoutRect]);
+    const NSWindowButton kinds[3] = { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton };
+    for (int i = 0; i < 3; ++i)
+        if (NSButton* b = [w standardWindowButton: kinds[i]])
+        {
+            const NSRect r = [b convertRect: [b bounds] toView: nil];   // 창 좌표 (왼쪽 아래 기준)
+            p.lights[i][0] = NSMinX (r);
+            p.lights[i][1] = H - NSMaxY (r);
+            p.lights[i][2] = NSWidth (r);
+            p.lights[i][3] = NSHeight (r);
+        }
+    const auto at = [&] (double x, double y) { return describeHit (w, hitAt (w, NSMakePoint ((CGFloat) x, H - (CGFloat) y))); };
+    p.hitToggle = at (toggleX, toggleY);
+    p.hitEmpty = at (emptyX, emptyY);
+    p.hitClose = at (p.lights[0][0] + p.lights[0][2] * 0.5, p.lights[0][1] + p.lights[0][3] * 0.5);
+    return p;
+}
+
+void devPostClick (void* nsView, int x, int y, int clickCount)
+{
+    NSWindow* w = windowFor (nsView);
+    if (w == nil) return;
+    const NSPoint at = NSMakePoint ((CGFloat) x, NSHeight ([w frame]) - (CGFloat) y);
+    const NSTimeInterval t = [[NSProcessInfo processInfo] systemUptime];
+    NSEvent* down = [NSEvent mouseEventWithType: NSEventTypeLeftMouseDown location: at modifierFlags: 0 timestamp: t
+                                   windowNumber: [w windowNumber] context: nil eventNumber: 0 clickCount: clickCount pressure: 1.0f];
+    NSEvent* up = [NSEvent mouseEventWithType: NSEventTypeLeftMouseUp location: at modifierFlags: 0 timestamp: t + 0.05
+                                 windowNumber: [w windowNumber] context: nil eventNumber: 0 clickCount: clickCount pressure: 0.0f];
+    [NSApp postEvent: down atStart: NO];
+    [NSApp postEvent: up atStart: NO];
+}
+
+void devSetActive (bool active)
+{
+    if (! active) { [NSApp deactivate]; return; }
+    if (@available (macOS 14.0, *))
+        [NSApp activate];
+    else
+    {
+       #pragma clang diagnostic push
+       #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [NSApp activateIgnoringOtherApps: YES];
+       #pragma clang diagnostic pop
+    }
 }
 
 } // namespace meon::chrome

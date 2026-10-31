@@ -55,9 +55,11 @@ public:
 
     //==============================================================================
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;   // 개발용 (--chrome=mac): 온보딩 위의 가짜 신호등
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void parentHierarchyChanged() override;
 
 private:
     SonobusAudioProcessor& processor;
@@ -88,6 +90,15 @@ private:
     std::unique_ptr<ui::LookAndFeel> newLookAndFeel;
     std::unique_ptr<ui::OnboardingScreen> onboarding;
     std::unique_ptr<ui::AppRoot> appRoot;   // 로그인 뒤: 홈 ↔ 합주
+
+    // 맥 독립 앱 창 (MeonWindowChrome): 제목 줄 없이 내용이 창 맨 위까지. 창이 뜨기 전에 붙여서 온보딩부터 앱을 끌 때까지 같다
+    bool chromeTried = false, chromeInstalled = false;
+    bool devMockChrome = false;   // 개발용 --chrome=mac: 맥이 아닌 곳에서 온보딩도 맥 창 배치로 (가짜 신호등)
+    void ensureWindowChrome();
+    void windowChromeChanged();   // 붙은 뒤·전체 화면에 들어가고 나온 뒤
+    /** 맨 위 신호등 줄 높이: 맥 창 모드면 52, 아니면(윈도우·플러그인·맥 전체 화면) 0 */
+    int titleBarInset() const;
+    void titleBarMouseDown();
     void authStepChanged (core::AuthController::Step) override;
     void updateOnboarding();
     void showAppRoot();

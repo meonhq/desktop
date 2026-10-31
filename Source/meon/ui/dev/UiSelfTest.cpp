@@ -31,6 +31,7 @@ void UiSelfTest::start()
     if (want ("rooms"))    addRoomListTests();
     if (want ("sidebar") || which == "roomsidebar") addRoomSidebarTests();   // roomsidebar: 이 구역만 (CI 창 폭별 확인)
     if (want ("sidebar"))  addSidebarTests();
+    if (want ("chrome"))   addChromeTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -55,6 +56,12 @@ void UiSelfTest::waitUntil (const juce::String& label, std::function<bool()> con
     steps.push_back (std::move (s));
 }
 
+void UiSelfTest::waitUntilOr (const juce::String& label, std::function<bool()> cond, int timeoutMs, std::function<void()> onTimeout)
+{
+    waitUntil (label, std::move (cond), timeoutMs);
+    steps.back().onTimeout = std::move (onTimeout);
+}
+
 void UiSelfTest::begin (const juce::String& name)
 {
     add ([this, name] { section = name; std::cerr << "UITEST SECTION " << name << std::endl; }, 0);
@@ -76,7 +83,8 @@ void UiSelfTest::timerCallback()
         }
         if (now - waitStart > s.timeoutMs)
         {
-            expect (false, TXT ("시간 초과: ") + s.label);
+            if (s.onTimeout) s.onTimeout();
+            else expect (false, TXT ("시간 초과: ") + s.label);
             waitStart = 0;
             ++index;
         }
@@ -1304,6 +1312,211 @@ void UiSelfTest::addSidebarTests()
 // AOO 서버에 닿지 못하는 곳에서 방을 빠르게 나갔다 들어가기 (E8·E9). 이름을 찾을 수 없는 AOO 서버로 보낸다.
 // E9 전에는 AOO 가 이름 조회 실패를 연결된 것으로 보고 연결되지 않은 소켓에 썼다 (E8 없이는 SIGPIPE 로 앱이 끝났다).
 // 이제는 붙기 실패로 오고, 앱은 끊김("연결이 끊겼어요")을 보이고 3초마다 다시 시도한다
+juce::String UiSelfTest::describe (const meon::chrome::Probe& p)
+{
+    const auto box = [] (const double (&b)[4]) { return "(" + juce::String (b[0], 1) + "," + juce::String (b[1], 1) + " " + juce::String (b[2], 1) + "x" + juce::String (b[3], 1) + ")"; };
+    return "macOS " + juce::String (p.os) + " installed=" + juce::String ((int) p.installed) + " fullscreen=" + juce::String ((int) p.fullScreen)
+         + " toolbar=" + juce::String ((int) p.toolbar) + " unified=" + juce::String ((int) p.unified) + " fullsize=" + juce::String ((int) p.fullSizeContent)
+         + " bar=" + juce::String (p.barH, 1)
+         + " close=" + box (p.lights[0]) + " mini=" + box (p.lights[1]) + " zoom=" + box (p.lights[2])
+         + " hit[toggle]=" + juce::String (p.hitToggle) + " hit[empty]=" + juce::String (p.hitEmpty) + " hit[close]=" + juce::String (p.hitClose)
+         + " forwarded=" + juce::String (p.forwarded) + " presses=" + juce::String (p.titleBarPresses);
+}
+
+void UiSelfTest::addChromeTests()
+{
+    // 맥 독립 앱 창: 빈 툴바 + unified 스타일이면 macOS 가 신호등을 52pt 윗줄의 세로 가운데에 놓는다 (버튼을 직접 옮기지 않는다).
+    // 창 크기·위치·사이드바 접기·앱 전환·더블클릭 확대·전체 화면 전후에 신호등이 같은 자리인지, 맨 윗줄 누름이 앱 화면으로 오는지 본다.
+    // 마우스 누름은 AppKit 이벤트 줄에 넣는다 (실제 클릭과 같은 길: 창 → 누를 뷰 찾기 → 앱 화면)
+    begin (TXT ("맥 창: 신호등 (빈 툴바 + unified)"));
+   #if ! JUCE_MAC
+    add ([this]
+    {
+        // 맥에서 "빈 곳"으로 누르는 점이 공개 방 제목 줄의 빈 곳인지만 본다 (JUCE 쪽 판정은 플랫폼과 같다)
+        const int x = root.sidebar->currentWidth() + (root.getWidth() - root.sidebar->currentWidth()) / 2;
+        auto* hit = root.getComponentAt (juce::Point<int> (x, 26));
+        expect (hit == root.home.get(), TXT ("제목 줄 가운데는 빈 곳 (") + (hit != nullptr ? juce::String (typeid (*hit).name()) : juce::String ("없음")) + ")");
+        std::cerr << "UITEST INFO chrome: macOS 가 아니라 나머지는 건너뜀" << std::endl;
+    }, 0);
+   #else
+    if (core.isPlugin()) { add ([] { std::cerr << "UITEST INFO chrome: 플러그인이라 건너뜀" << std::endl; }, 0); return; }
+    struct Shared { meon::chrome::Probe first; juce::Rectangle<int> bounds; int presses = 0; bool wasCollapsed = false, fullScreen = false; };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    // 창 왼쪽 위 기준 점 (peer 좌표 = 창 좌표: 내용이 창 맨 위까지)
+    auto togglePoint = [this]() -> juce::Point<int> { return toPeer (*root.toggle, centre()).roundToInt(); };
+    auto emptyPoint = [this]() -> juce::Point<int>
+    {
+        // 공개 방 제목 줄의 빈 곳 (제목과 오른쪽 버튼 사이)
+        const int x = root.sidebar->currentWidth() + (root.getWidth() - root.sidebar->currentWidth()) / 2;
+        return root.getPeer() != nullptr ? root.getPeer()->getComponent().getLocalPoint (&root, juce::Point<int> (x, 26)) : juce::Point<int>();
+    };
+    auto probeNow = [this, handle, togglePoint, emptyPoint]
+    {
+        const auto t = togglePoint();
+        const auto e = emptyPoint();
+        return meon::chrome::probe (handle(), t.x, t.y, e.x, e.y);
+    };
+    auto log = [] (const juce::String& when, const meon::chrome::Probe& p) { std::cerr << "UITEST INFO chrome " << when << ": " << describe (p) << std::endl; };
+    auto same = [this, sh, log] (const juce::String& when, const meon::chrome::Probe& p)
+    {
+        log (when, p);
+        bool ok = true;
+        for (int i = 0; i < 3; ++i)
+            for (int k = 0; k < 4; ++k)
+                ok = ok && std::abs (p.lights[i][k] - sh->first.lights[i][k]) < 0.5;
+        expect (ok, when + TXT (": 신호등이 처음과 같은 자리"));
+    };
+    auto peerBounds = [this] { return peer() != nullptr ? peer()->getBounds() : juce::Rectangle<int>(); };
+
+    add ([this, sh, probeNow, log, togglePoint]
+    {
+        closeToasts();
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+        const auto p = probeNow();
+        sh->first = p;
+        log (TXT ("시작"), p);
+        expect (p.installed && p.fullSizeContent && ! p.fullScreen, TXT ("제목 줄 없음 (내용이 창 맨 위까지)"));
+        expect (p.toolbar, TXT ("빈 툴바"));
+        const bool modern = juce::SystemStats::getOperatingSystemType() >= juce::SystemStats::MacOS_11;
+        if (modern)
+        {
+            expect (p.unified, TXT ("툴바 스타일 unified"));
+            expect (std::abs (p.barH - 52.0) < 0.5, TXT ("윗줄 높이 52 (지금 ") + juce::String (p.barH, 1) + ")");
+        }
+        bool centred = true;
+        for (auto& b : p.lights) centred = centred && std::abs ((b[1] + b[3] * 0.5) - p.barH * 0.5) <= 1.0;
+        expect (centred, TXT ("신호등이 윗줄 세로 가운데"));
+        expect (p.lights[0][0] < p.lights[1][0] && p.lights[1][0] < p.lights[2][0], TXT ("닫기·최소화·확대 순서"));
+        expect (root.chromeMode() == Sidebar::Chrome::macWindow, TXT ("사이드바: 맥 창 배치"));
+        const auto t = root.toggle->getBounds();
+        std::cerr << "UITEST INFO chrome 신호등 간격: 버튼 틀 x " << p.lights[0][0] << " / " << p.lights[1][0] << " / " << p.lights[2][0]
+                  << " (간격 " << (p.lights[1][0] - p.lights[0][0]) << "), 확대 버튼 오른쪽 끝 " << (p.lights[2][0] + p.lights[2][2])
+                  << ", 접기 버튼 x " << t.getX() << " (사이 " << (t.getX() - (p.lights[2][0] + p.lights[2][2])) << ")"
+                  << ", 접기 버튼 가운데 y " << togglePoint().y << std::endl;
+        expect (p.hitClose == "button", TXT ("신호등 누름은 신호등이 받음 (") + juce::String (p.hitClose) + ")");
+    }, 0);
+
+    // 창 크기·위치
+    add ([this, sh, peerBounds] { sh->bounds = peerBounds(); peer()->setBounds (sh->bounds.withSizeKeepingCentre (sh->bounds.getWidth() - 160, sh->bounds.getHeight() - 80), false); }, 700);
+    add ([probeNow, same] { same (TXT ("창 크기 줄임"), probeNow()); }, 0);
+    add ([this, sh] { peer()->setBounds (sh->bounds.translated (60, 40), false); }, 700);
+    add ([probeNow, same] { same (TXT ("창 옮김"), probeNow()); }, 0);
+    add ([this, sh] { peer()->setBounds (sh->bounds, false); }, 700);
+    add ([probeNow, same] { same (TXT ("창 원래대로"), probeNow()); }, 0);
+
+    // 사이드바 접기·펼치기
+    add ([this] { root.sidebar->setCollapsed (true); }, 0);
+    waitUntil (TXT ("접힘"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    add ([probeNow, same] { same (TXT ("사이드바 접음"), probeNow()); }, 100);
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("펼침"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    add ([probeNow, same] { same (TXT ("사이드바 펼침"), probeNow()); }, 100);
+
+    // 다른 앱으로 갔다가 돌아옴 (키 창이 바뀐다)
+    add ([] { meon::chrome::devSetActive (false); }, 900);
+    add ([probeNow, same] { same (TXT ("앱 비활성"), probeNow()); }, 0);
+    add ([] { meon::chrome::devSetActive (true); }, 900);
+    add ([probeNow, same] { same (TXT ("앱 다시 활성"), probeNow()); }, 0);
+
+    // 맨 윗줄 누름 (AppKit 이벤트): 접기 버튼은 버튼으로, 빈 곳은 창 끌기로
+    add ([this, sh, handle, togglePoint]
+    {
+        sh->wasCollapsed = root.sidebar->isCollapsed();
+        const auto t = togglePoint();
+        meon::chrome::devPostClick (handle(), t.x, t.y, 1);
+    }, 0);
+    waitUntilOr (TXT ("윗줄 접기 버튼 누름"), [this, sh] { return root.sidebar->isCollapsed() != sh->wasCollapsed; }, 3000,
+                 [this] { expect (false, TXT ("윗줄의 접기 버튼을 눌러도 사이드바가 접히지 않음")); });
+    add ([this, sh, handle, togglePoint, probeNow, log]
+    {
+        log (TXT ("접기 버튼 누른 뒤"), probeNow());
+        if (root.sidebar->isCollapsed() != sh->wasCollapsed)
+        {
+            expect (true, TXT ("윗줄의 접기 버튼이 눌림"));
+            const auto t = togglePoint();
+            meon::chrome::devPostClick (handle(), t.x, t.y, 1);   // 다시 펼친다
+        }
+    }, 0);
+    waitUntilOr (TXT ("다시 펼침"), [this, sh] { return root.sidebar->isCollapsed() == sh->wasCollapsed; }, 3000,
+                 [this, sh] { root.sidebar->setCollapsed (sh->wasCollapsed); });
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    add ([this, sh, handle, emptyPoint, probeNow]
+    {
+        auto* hit = root.getComponentAt (root.getLocalPoint (&root.getPeer()->getComponent(), emptyPoint()));
+        expect (hit == root.home.get(), TXT ("빈 곳 점이 제목 줄 빈 곳 (") + (hit != nullptr ? hit->getName() + " " + juce::String (typeid (*hit).name()) : juce::String ("없음")) + ")");
+        sh->presses = probeNow().titleBarPresses;
+        sh->bounds = peer()->getBounds();
+        const auto e = emptyPoint();
+        meon::chrome::devPostClick (handle(), e.x, e.y, 1);
+    }, 800);
+    add ([this, sh, probeNow, same]
+    {
+        const auto p = probeNow();
+        expect (p.titleBarPresses > sh->presses, TXT ("빈 곳 누름 → 창 끌기 (titleBarMouseDown ") + juce::String (p.titleBarPresses - sh->presses) + TXT ("번)"));
+        std::cerr << "UITEST INFO chrome 빈 곳 누른 뒤 창 " << sh->bounds.toString() << " → " << peer()->getBounds().toString() << std::endl;
+        same (TXT ("빈 곳 누른 뒤"), p);
+    }, 0);
+    // 더블클릭 → 시스템 설정(기본: 확대)
+    add ([this, sh, handle, emptyPoint]
+    {
+        sh->bounds = peer()->getBounds();
+        const auto e = emptyPoint();
+        meon::chrome::devPostClick (handle(), e.x, e.y, 1);
+        meon::chrome::devPostClick (handle(), e.x, e.y, 2);
+    }, 0);
+    waitUntilOr (TXT ("더블클릭 확대"), [this, sh] { return peer()->getBounds() != sh->bounds; }, 3000,
+                 [this] { std::cerr << "UITEST INFO chrome 더블클릭 뒤 창 크기 그대로 (시스템 설정이 '아무것도 안 함'이거나 이미 최대)" << std::endl; });
+    add ({}, 600);
+    add ([this, sh, handle, emptyPoint, probeNow, same]
+    {
+        std::cerr << "UITEST INFO chrome 더블클릭 뒤 창 " << sh->bounds.toString() << " → " << peer()->getBounds().toString() << std::endl;
+        same (TXT ("더블클릭 확대 뒤"), probeNow());
+        if (peer()->getBounds() != sh->bounds)
+        {
+            const auto e = emptyPoint();
+            meon::chrome::devPostClick (handle(), e.x, e.y, 1);
+            meon::chrome::devPostClick (handle(), e.x, e.y, 2);
+        }
+    }, 0);
+    waitUntilOr (TXT ("더블클릭 되돌림"), [this, sh] { return peer()->getBounds() == sh->bounds; }, 3000,
+                 [this, sh] { std::cerr << "UITEST INFO chrome 두 번째 더블클릭 뒤 창 " << peer()->getBounds().toString() << " (처음 " << sh->bounds.toString() << ")" << std::endl;
+                              peer()->setBounds (sh->bounds, false); });
+    add ({}, 600);
+    add ([probeNow, same] { same (TXT ("더블클릭 되돌린 뒤"), probeNow()); }, 0);
+
+    // 전체 화면: 툴바를 떼고 신호등 없는 배치 → 나오면 다시 같은 자리
+    add ([this, sh] { sh->bounds = peer()->getBounds(); peer()->setFullScreen (true); }, 0);
+    waitUntilOr (TXT ("전체 화면"), [this] { return peer()->isFullScreen(); }, 8000,
+                 [] { std::cerr << "UITEST INFO chrome 전체 화면에 들어가지 못함 (러너)" << std::endl; });
+    add ({}, 1200);
+    add ([this, sh, probeNow, log]
+    {
+        sh->fullScreen = peer()->isFullScreen();
+        if (! sh->fullScreen) return;
+        const auto p = probeNow();
+        log (TXT ("전체 화면"), p);
+        expect (! p.toolbar, TXT ("전체 화면: 툴바 뗌"));
+        expect (root.chromeMode() == Sidebar::Chrome::flat, TXT ("전체 화면: 신호등 없는 배치"));
+        peer()->setFullScreen (false);
+    }, 0);
+    waitUntilOr (TXT ("전체 화면 나옴"), [this] { return ! peer()->isFullScreen(); }, 8000,
+                 [] { std::cerr << "UITEST INFO chrome 전체 화면에서 나오지 못함" << std::endl; });
+    add ({}, 1500);
+    add ([this, sh, probeNow, same]
+    {
+        if (! sh->fullScreen) return;
+        const auto p = probeNow();
+        same (TXT ("전체 화면에서 나온 뒤"), p);
+        expect (p.toolbar && p.fullSizeContent, TXT ("나온 뒤: 툴바·제목 줄 없음 다시"));
+        expect (root.chromeMode() == Sidebar::Chrome::macWindow, TXT ("나온 뒤: 맥 창 배치"));
+        const auto b = peer()->getBounds();
+        expect (std::abs (b.getWidth() - sh->bounds.getWidth()) <= 1 && std::abs (b.getHeight() - sh->bounds.getHeight()) <= 1,
+                TXT ("나온 뒤 창 크기 그대로 (") + sh->bounds.toString() + " → " + b.toString() + ")");
+    }, 0);
+   #endif
+}
+
 void UiSelfTest::addAooDropTests()
 {
     begin (TXT ("AOO 끊김: 빠르게 나갔다 들어가기"));

@@ -7,8 +7,12 @@ namespace meon::chrome
 {
 
 bool install (void*, std::function<void()>) { return false; }
-void remove (void*) {}
+void detach() {}
+bool installedOn (void*) { return false; }
 void titleBarMouseDown (void*) {}
+Probe probe (void*, int, int, int, int) { return {}; }
+void devPostClick (void*, int, int, int) {}
+void devSetActive (bool) {}
 
 } // namespace meon::chrome
 

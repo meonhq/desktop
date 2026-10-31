@@ -1161,7 +1161,7 @@ void OnboardingScreen::layout()
     const int columnH = metric::logoH + blockGap + cardH;
 
     // 스크롤 영역 안에서 세로 가운데 (margin: auto 0), 위아래 여백 18
-    const int areaH = juce::jmax (getHeight(), columnH + 36);
+    const int areaH = juce::jmax (viewport.getHeight(), columnH + 36);
     content.setSize (getWidth(), areaH);
     const int top = (areaH - columnH) / 2;
     const int x = (getWidth() - w) / 2;
@@ -1178,8 +1178,22 @@ void OnboardingScreen::layout()
 
 void OnboardingScreen::resized()
 {
-    viewport.setBounds (getLocalBounds());
+    viewport.setBounds (getLocalBounds().withTrimmedTop (titleInset));
     layout();
+}
+
+void OnboardingScreen::setTitleBarInset (int inset)
+{
+    if (inset == titleInset) return;
+    titleInset = inset;
+    resized();
+}
+
+void OnboardingScreen::mouseDown (const juce::MouseEvent& e)
+{
+    // 맨 윗줄(신호등 줄)의 빈 곳: 창 끌기·더블클릭 (내용은 그 아래 viewport 안이라 여기로 오지 않는다)
+    if (e.eventComponent == this && e.y < titleInset && onTitleBarMouseDown)
+        onTitleBarMouseDown();
 }
 
 void OnboardingScreen::paint (juce::Graphics& g)

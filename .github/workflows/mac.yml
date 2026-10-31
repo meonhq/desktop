@@ -114,6 +114,20 @@ jobs:
             grep -E "^UITEST (INFO room sidebar|FAIL|DONE)" "uitest-$w.log" || { echo "결과 없음 (폭 $w)"; tail -20 "uitest-$w.log"; }
           done
 
+      - name: 맥 창 신호등 확인 (화면 자가 테스트)
+        # 빈 툴바 + unified 스타일로 macOS 가 신호등을 52pt 윗줄 세로 가운데에 놓는지, 켤 때(온보딩)·창 크기·위치·사이드바 접기·앱 전환·
+        # 더블클릭 확대·전체 화면 전후에 같은 자리인지, 맨 윗줄 누름(AppKit 이벤트)이 앱 화면으로 오는지 본다 (--uitest=chrome, 빌드 0 전용).
+        # 결과는 "UITEST INFO chrome" 줄 (버튼 틀 좌표·윗줄 높이·누른 곳을 받는 뷰). 빌드를 막지는 않는다
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: |
+          EXE=build/MEON_artefacts/Release/Standalone/Meon.app/Contents/MacOS/Meon
+          "$EXE" --allow-multi --no-input --fake-script=0 --uitest=chrome --window=0,0,1280,800 > uitest-chrome.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 300); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+          kill $pid 2>/dev/null || true
+          grep -E "^UITEST (INFO chrome|PASS|FAIL|DONE)" uitest-chrome.log || { echo "결과 없음"; tail -30 uitest-chrome.log; }
+
       - name: macOS 26 아이콘 (Icon Composer)
         # images/icons/AppIcon.icon 을 Xcode 26 의 actool 로 Assets.car 로 만들어 앱에 넣고 CFBundleIconName 을 적는다.
         # macOS 26 은 이것을 쓰고(예전 .icns 만 있으면 회색 틀에 가둘 수 있다), 그 아래 버전은 지금처럼 Icon.icns 를 쓴다.

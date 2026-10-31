@@ -9,6 +9,7 @@
 #include "ui/Messages.h"
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
+#include "MeonWindowChrome.h"
 
 namespace meon
 {
@@ -88,6 +89,7 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     updater->onDownloaded = [this] { installUpdate(); };
 
    #if MEON_DEV_OPTIONS
+    devMockChrome = ! pluginMode && meon::devOptions()["chrome"] == "mac";
     devJam = meon::devOptions().getAllKeys().contains ("dev-jam");
     {
         const auto scr = meon::devOptions()["screen"];
@@ -153,6 +155,7 @@ void MeonEditor::stateChanged (core::StateKey k)
 MeonEditor::~MeonEditor()
 {
     stopTimer();
+    if (chromeInstalled) chrome::detach();   // 창 모양은 그대로 (앱을 끄는 중). 창 크기는 창이 먼저 저장했다
     core.store().removeListener (this);
     core.auth().removeListener (this);
     appRoot.reset();
@@ -346,6 +349,8 @@ void MeonEditor::updateOnboarding()
         {
             onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
             onboarding->setLookAndFeel (newLookAndFeel.get());
+            onboarding->setTitleBarInset (titleBarInset());
+            onboarding->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
             addAndMakeVisible (*onboarding);
             onboarding->setBounds (getLocalBounds());
         }
@@ -796,6 +801,8 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
             {
                 onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
                 onboarding->setLookAndFeel (newLookAndFeel.get());
+                onboarding->setTitleBarInset (titleBarInset());
+                onboarding->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
                 addAndMakeVisible (*onboarding);
                 onboarding->setBounds (getLocalBounds());
             }
@@ -824,6 +831,70 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
 void MeonEditor::paint (juce::Graphics& g)
 {
     g.fillAll (col::white);
+}
+
+void MeonEditor::paintOverChildren (juce::Graphics& g)
+{
+    // 개발용 (--chrome=mac): 온보딩에도 신호등 자리를 그린다 (앱 화면은 AppRoot 가 그린다)
+    if (devMockChrome && onboarding != nullptr && onboarding->isVisible())
+        ui::AppRoot::drawMockLights (g);
+}
+
+//==============================================================================
+// 맥 독립 앱 창 (MeonWindowChrome)
+void MeonEditor::parentHierarchyChanged()
+{
+    // 창에 들어온 때 (독립 앱은 창이 화면에 뜨기 전): 바로 붙여서 처음부터 제목 줄이 없게 한다. 창이 아직 없으면 다음 메시지에서
+    ensureWindowChrome();
+    if (! chromeTried && ! pluginMode)
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->ensureWindowChrome(); });
+    }
+}
+
+void MeonEditor::ensureWindowChrome()
+{
+    if (chromeTried || pluginMode) return;
+    auto* peer = getPeer();
+    if (peer == nullptr) return;
+    chromeTried = true;
+    juce::Component::SafePointer<MeonEditor> safe (this);
+    chromeInstalled = chrome::install (peer->getNativeHandle(), [safe] { if (safe != nullptr) safe->windowChromeChanged(); });
+    windowChromeChanged();
+   #if MEON_DEV_OPTIONS
+    // 화면 자가 테스트(--uitest): 켠 직후 신호등 자리 (아무것도 움직이기 전, 온보딩 화면)
+    if (chromeInstalled && meon::devOptions().containsKey ("uitest"))
+        for (int ms : { 0, 1500 })
+            juce::Timer::callAfterDelay (ms, [safe, ms]
+            {
+                if (safe == nullptr || safe->getPeer() == nullptr) return;
+                const auto p = chrome::probe (safe->getPeer()->getNativeHandle(), 100, 26, 600, 26);
+                std::cerr << "UITEST INFO chrome launch+" << ms << "ms (" << (safe->onboarding != nullptr ? "onboarding" : "app") << ") "
+                          << ui::UiSelfTest::describe (p) << std::endl;
+            });
+   #endif
+}
+
+void MeonEditor::windowChromeChanged()
+{
+    if (onboarding != nullptr) onboarding->setTitleBarInset (titleBarInset());
+    if (appRoot != nullptr) appRoot->windowChromeChanged();
+    repaint();
+}
+
+int MeonEditor::titleBarInset() const
+{
+    if (devMockChrome) return chrome::barHeight;
+    auto* peer = getPeer();
+    return chromeInstalled && peer != nullptr && chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen() ? chrome::barHeight : 0;
+}
+
+void MeonEditor::titleBarMouseDown()
+{
+    if (titleBarInset() <= 0) return;
+    if (auto* peer = getPeer())
+        chrome::titleBarMouseDown (peer->getNativeHandle());
 }
 
 void MeonEditor::resized()

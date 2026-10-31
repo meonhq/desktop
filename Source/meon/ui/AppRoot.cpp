@@ -81,9 +81,6 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 
 AppRoot::~AppRoot()
 {
-    // 앱 화면이 사라지면(로그아웃) 맥 창의 제목 줄을 되돌린다 (로그인 화면은 보통 창)
-    if (chromeInstalled)
-        meon::chrome::remove (getPeer() != nullptr ? getPeer()->getNativeHandle() : nullptr);
     if (home != nullptr) home->onOverlayChanged = nullptr;
     if (auto* screen = getJamScreen()) screen->onOverlayChanged = nullptr;
     core.store().removeListener (this);
@@ -106,8 +103,13 @@ void AppRoot::paint (juce::Graphics& g)
 
 void AppRoot::paintOverChildren (juce::Graphics& g)
 {
-    // 개발용 (--chrome=mac, 리눅스·윈도우에서 맥 창 모드 미리 보기): 디자인의 신호등 자리 (12px, 왼쪽 20, 위 20, 사이 8)
-    if (! hasForcedChrome || forcedChrome != Sidebar::Chrome::macWindow) return;
+    if (hasForcedChrome && forcedChrome == Sidebar::Chrome::macWindow)
+        drawMockLights (g);
+}
+
+void AppRoot::drawMockLights (juce::Graphics& g)
+{
+    // 52px 윗줄의 세로 가운데, 원 12. 자리는 macOS 가 정한다 (빈 툴바 + unified): 여기 값은 미리 보기용 근사치
     const juce::uint32 fills[] = { 0xFFFF5F57, 0xFFFEBC2E, 0xFF28C840 }, rims[] = { 0xFFE2463F, 0xFFE1A116, 0xFF1AAB29 };
     for (int i = 0; i < 3; ++i)
     {
@@ -119,40 +121,20 @@ void AppRoot::paintOverChildren (juce::Graphics& g)
     }
 }
 
-void AppRoot::parentHierarchyChanged()
-{
-    // 창에 붙은 뒤 (맥 독립 앱: 제목 줄을 없앤다). 붙는 중에는 창 크기가 바뀌므로 다음 메시지에서
-    juce::Component::SafePointer<AppRoot> safe (this);
-    juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->ensureWindowChrome(); });
-}
-
-void AppRoot::ensureWindowChrome()
-{
-    if (chromeTried || core.isPlugin() || hasForcedChrome) return;
-    auto* peer = getPeer();
-    if (peer == nullptr) return;
-    chromeTried = true;
-    juce::Component::SafePointer<AppRoot> safe (this);
-    chromeInstalled = meon::chrome::install (peer->getNativeHandle(), [safe] { if (safe != nullptr) { safe->resized(); safe->repaint(); } });
-    resized();
-    repaint();
-}
-
 Sidebar::Chrome AppRoot::chromeMode() const
 {
     if (hasForcedChrome) return forcedChrome;
     if (core.isPlugin()) return Sidebar::Chrome::legacy;   // 플러그인은 이번에 바꾸지 않는다
     // 맥 독립 앱 창 모드: 신호등이 있다. 전체 화면이면 신호등이 사라지므로 디자인 fullscreen 켜짐 배치.
     // 윈도우·리눅스는 제목 줄을 그대로 두고 사이드바 윗부분은 신호등이 없는 배치 (사용자 결정 2026-10-30)
-    if (chromeInstalled)
-        if (auto* peer = getPeer(); peer != nullptr && ! peer->isFullScreen())
-            return Sidebar::Chrome::macWindow;
+    if (auto* peer = getPeer(); peer != nullptr && meon::chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen())
+        return Sidebar::Chrome::macWindow;
     return Sidebar::Chrome::flat;
 }
 
 void AppRoot::titleBarMouseDown()
 {
-    if (chromeInstalled && chromeMode() == Sidebar::Chrome::macWindow)
+    if (chromeMode() == Sidebar::Chrome::macWindow)
         if (auto* peer = getPeer())
             meon::chrome::titleBarMouseDown (peer->getNativeHandle());
 }
