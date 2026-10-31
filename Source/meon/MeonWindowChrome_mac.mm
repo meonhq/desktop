@@ -356,6 +356,28 @@ void devPostDrag (void* nsView, int x, int y, int dx, int dy)
     post (NSEventTypeLeftMouseUp, x + dx, y + dy, 0.15, 0.0f);
 }
 
+bool devCornerPoint (void* nsView, bool right, int& x, int& y)
+{
+    // 위 모서리 근처에서 창 틀 뷰(NSThemeFrame)가 받는 점 (macOS 가 크기 조절 자리로 보는 곳). 둥근 모서리 바깥은 창이 아니므로
+    // 모서리에서 안쪽으로: 맨 윗줄(위에서 1pt)을 따라, 그다음 옆 끝(1pt)을 따라 찾는다. 없으면 false
+    NSWindow* w = windowFor (nsView);
+    if (w == nil) return false;
+    NSView* frameView = [[w contentView] superview];
+    const CGFloat W = NSWidth ([w frame]), H = NSHeight ([w frame]);
+    auto isFrame = [&] (int px, int py) { return hitAt (w, NSMakePoint ((CGFloat) px + 0.5, H - (CGFloat) py - 0.5)) == frameView; };
+    for (int d = 0; d < 40; ++d)
+    {
+        const int px = right ? (int) W - 1 - d : d;
+        if (isFrame (px, 1)) { x = px; y = 1; return true; }
+    }
+    for (int d = 0; d < 40; ++d)
+    {
+        const int px = right ? (int) W - 1 : 0;
+        if (isFrame (px, d)) { x = px; y = d; return true; }
+    }
+    return false;
+}
+
 void devWindowFrame (void* nsView, double out[4])
 {
     out[0] = out[1] = out[2] = out[3] = 0;

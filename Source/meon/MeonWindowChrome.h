@@ -59,6 +59,8 @@ Probe probe (void* nsView, int toggleX, int toggleY, int emptyX, int emptyY);
 void devPostClick (void* nsView, int x, int y, int clickCount);
 /** 개발용: (x, y) 에서 눌러 (dx, dy) 만큼 끌고 뗀 것처럼 AppKit 이벤트 줄에 넣는다 (창 왼쪽 위 기준 pt) */
 void devPostDrag (void* nsView, int x, int y, int dx, int dy);
+/** 개발용: 위 모서리(왼쪽·오른쪽) 근처에서 창 틀 뷰가 받는 점 = macOS 의 크기 조절 자리 (창 왼쪽 위 기준 pt). 없으면 false */
+bool devCornerPoint (void* nsView, bool right, int& x, int& y);
 /** 개발용: 창 틀 (AppKit 화면 좌표: x, 아래 y, 폭, 높이) */
 void devWindowFrame (void* nsView, double out[4]);
 /** 개발용: 앱을 비활성(다른 앱으로 간 것처럼)·활성으로 */

@@ -1471,7 +1471,7 @@ void UiSelfTest::addChromeTests()
    #else
     if (core.isPlugin()) { add ([] { std::cerr << "UITEST INFO chrome: 플러그인이라 건너뜀" << std::endl; }, 0); return; }
     struct Shared { meon::chrome::Probe first; juce::Rectangle<int> bounds; int presses = 0, edgePasses = 0; bool wasCollapsed = false, fullScreen = false;
-                    double frame[4] {}; juce::Rectangle<int> beforeZoom, zoomBounds; bool zoomed = false; };
+                    double frame[4] {}; juce::Rectangle<int> beforeZoom, zoomBounds, edgeBounds; bool zoomed = false; };
     auto sh = std::make_shared<Shared>();
     auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
     // 창 왼쪽 위 기준 점 (peer 좌표 = 창 좌표: 내용이 창 맨 위까지)
@@ -1602,7 +1602,7 @@ void UiSelfTest::addChromeTests()
         const auto p = probeNow();
         sh->presses = p.titleBarPresses;
         sh->edgePasses = p.edgePasses;
-        sh->bounds = peer()->getBounds();
+        sh->edgeBounds = peer()->getBounds();   // sh->bounds 는 다른 확인(전체 화면 전 크기 등)이 쓴다
         meon::chrome::devWindowFrame (handle(), sh->frame);
         meon::chrome::devPostDrag (handle(), x, y, dx, dy);
     };
@@ -1627,15 +1627,30 @@ void UiSelfTest::addChromeTests()
         {
             expect (passes == 0, name + TXT (": 크기 조절 없음 (macOS 에 맡김 ") + juce::String (passes) + TXT ("번)"));
         }
-        if (peer()->getBounds() != sh->bounds) peer()->setBounds (sh->bounds, false);   // 다음 확인을 위해 원래 자리로
+        if (peer()->getBounds() != sh->edgeBounds) peer()->setBounds (sh->edgeBounds, false);   // 다음 확인을 위해 원래 자리로
     };
     add ([this, probeNow] { std::cerr << "UITEST INFO chrome 위 가장자리 누름 자리: " << probeNow().hitEdges << std::endl; }, 0);
     add ([edgeDrag, emptyPoint] { edgeDrag (emptyPoint().x, 1, 0, -40); }, 0);
     add ([edgeResult] { edgeResult (TXT ("위 가장자리 끌기"), true); }, 1200);
-    add ([edgeDrag] { edgeDrag (1, 1, -30, -30); }, 400);
-    add ([edgeResult] { edgeResult (TXT ("왼쪽 위 모서리 끌기"), true); }, 1200);
-    add ([this, edgeDrag] { edgeDrag (root.getPeer()->getComponent().getWidth() - 2, 1, 30, -30); }, 400);
-    add ([edgeResult] { edgeResult (TXT ("오른쪽 위 모서리 끌기"), true); }, 1200);
+    // 모서리: 둥근 모서리 바깥(창이 아닌 곳)이 아니라, 모서리에서 가장 가까운 macOS 크기 조절 자리 (창 틀 뷰가 받는 점)를 누른다
+    for (const bool right : { false, true })
+    {
+        auto found = std::make_shared<bool> (false);
+        add ([this, handle, edgeDrag, right, found]
+        {
+            int x = 0, y = 0;
+            *found = meon::chrome::devCornerPoint (handle(), right, x, y);
+            std::cerr << "UITEST INFO chrome " << (right ? "오른쪽" : "왼쪽") << " 위 모서리 크기 조절 자리: "
+                      << (*found ? juce::String (x) + "," + juce::String (y) : juce::String ("없음")) << std::endl;
+            if (*found) edgeDrag (x, y, right ? 30 : -30, -30);
+        }, 400);
+        add ([this, edgeResult, right, found]
+        {
+            const juce::String name = right ? TXT ("오른쪽 위 모서리 끌기") : TXT ("왼쪽 위 모서리 끌기");
+            if (*found) edgeResult (name, true);
+            else expect (false, name + TXT (": 모서리 근처에 macOS 크기 조절 자리가 없음"));
+        }, 1200);
+    }
     add ([this, togglePoint, probeNow]
     {
         // 위 가장자리 바로 아래의 빈 곳·접기 버튼·신호등은 그대로

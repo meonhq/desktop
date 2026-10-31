@@ -14,6 +14,7 @@ int lightsRight (void*) { return 0; }
 Probe probe (void*, int, int, int, int) { return {}; }
 void devPostClick (void*, int, int, int) {}
 void devPostDrag (void*, int, int, int, int) {}
+bool devCornerPoint (void*, bool, int&, int&) { return false; }
 void devWindowFrame (void*, double out[4]) { out[0] = out[1] = out[2] = out[3] = 0; }
 void devSetActive (bool) {}
 void installFullScreenShortcuts() {}
