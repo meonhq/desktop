@@ -26,8 +26,16 @@ public:
     void showStepForPreview (core::AuthController::Step);
 
 
+    /** 맥 독립 앱 창 (MeonWindowChrome): 맨 위 inset(52) 은 신호등 줄이라 비워 둔다. 내용은 그 아래에서 세로 가운데.
+        그 줄을 누르면 onTitleBarMouseDown (창 끌기·더블클릭). 0 이면 창 전체 (윈도우·플러그인·맥 전체 화면) */
+    void setTitleBarInset (int inset);
+    std::function<void()> onTitleBarMouseDown;
+    /** 맨 윗줄의 빈 곳인지 (mouseDown 의 맥 창 끌기와 같은 조건. 윈도우는 이 자리를 운영체제 제목 줄로 판정한다) */
+    bool titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const;
+
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
 
     struct StepView;
 
@@ -39,6 +47,7 @@ private:
     std::unique_ptr<StepView> view;
     core::AuthController::Step shown = core::AuthController::Step::loading;
     bool previewOnly = false;
+    int titleInset = 0;
     juce::Rectangle<int> cardBounds, logoBounds;
     juce::Viewport viewport;
     struct Canvas : juce::Component

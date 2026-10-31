@@ -13,7 +13,7 @@
 namespace meon::ui
 {
 
-class SettingsModal : public juce::Component, private juce::Timer
+class SettingsModal : public ModalBase, private juce::Timer
 {
 public:
     /** 업데이트 (독립 앱의 지금 업데이터). 플러그인은 비워 둔다 (Q18: 버튼 없이 안내만) */
@@ -37,8 +37,13 @@ public:
     std::function<void()> onClose;
     void showTab (Tab);
     Tab currentTab() const { return tab; }
+    /** 개발용 (화면 자가 테스트): 프로필 탭에서 파일을 고른 것처럼 (파일 선택 창 없이) */
+    void devPickPhoto (const juce::File&);
+    /** 개발용: 프로필 사진 줄의 설명·버튼 글자 ("설명|올리기|기본 이미지로 보임 0/1") */
+    juce::String devPhotoRow() const;
 
-    void paint (juce::Graphics&) override;
+    juce::Rectangle<int> dialogBounds() const override { return box(); }
+    void paintDialog (juce::Graphics&) override;   // 덮개·애니메이션은 공통 래퍼 (ModalBase)
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
@@ -51,6 +56,7 @@ public:
     struct Page;
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (닫기 버튼)
     core::MeonCore& core;
     UpdateHooks update;
     const bool plugin;

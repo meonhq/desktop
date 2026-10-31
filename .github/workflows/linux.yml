@@ -61,12 +61,18 @@ jobs:
         run: |
           APP=build/MEON_artefacts/RelWithDebInfo/Standalone/meon
           status=0
-          for mode in app plugin; do
+          # wingui: 윈도우 독립 앱 배치 미리 보기 (--chrome=win: 창 버튼 138×51 맨 위, 제목 줄 오른쪽 여백 150, 제목 줄 영역 판정. 실제 창 동작은 windows.yml)
+          # motion: 운영체제 동작 줄이기가 켜진 것처럼 (MEON_REDUCE_MOTION=1, 빌드 0 전용): 모달·카드 전환·사이드바 접기가 애니메이션 없이 바로
+          for mode in app plugin wingui motion; do
             export HOME="$RUNNER_TEMP/uitest-$mode"
             mkdir -p "$HOME"
+            which=all
+            reduce=0
             if [ "$mode" = plugin ]; then args="--as-plugin --window=0,0,900,600"; else args="--window=0,0,1280,800"; fi
+            if [ "$mode" = wingui ]; then args="--chrome=win --window=0,0,1280,800"; which=winchrome; fi
+            if [ "$mode" = motion ]; then which=reducedmotion; reduce=1; fi
             code=0
-            timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --fake-script=0 --uitest=all $args > "uitest-$mode.log" 2>&1 || code=$?
+            MEON_REDUCE_MOTION=$reduce timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --fake-script=0 --uitest=$which $args > "uitest-$mode.log" 2>&1 || code=$?
             grep "^UITEST" "uitest-$mode.log" || true
             if [ $code -ne 0 ] || ! grep -q "^UITEST DONE .* 0 failed" "uitest-$mode.log"; then
               echo "::error::화면 자가 테스트 실패 ($mode, 종료 코드 $code)"
@@ -84,7 +90,7 @@ jobs:
           mkdir -p "$HOME"
           for size in 1280x800 900x600; do
             W=${size%x*}; H=${size#*x}
-            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:toastline home:ping home:fold=friends:0.5 home:sendoff home:homemon home:friendreq home:profile home:profilereq home:disc home:discinvite home:discback home:discbackinvite home:roomlost home:roomlostinvite jam jam:host jam:headerarm jam:mini jam:minihost jam:miniarm jam:miniconfirm jam:minicreate jam:wide jam:chatwide jam:input jam:input=scroll jam:input=962 jam:input=over jam:sendoff jam:disc jam:discback jam:ping jam:chat jam:links jam:fold=chat:0.5 jam:fold=send:0.5 settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+            for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast home:toastline home:ping home:fold=friends:0.5 home:sendoff home:homemon home:friendreq home:profile home:profilereq home:disc home:discinvite home:discback home:discbackinvite home:roomlost home:roomlostinvite jam jam:host jam:headerarm jam:mini jam:minihost jam:miniarm jam:miniconfirm jam:minicreate jam:wide jam:chatwide jam:input jam:input=scroll jam:input=962 jam:input=over jam:sendoff jam:disc jam:discback jam:ping jam:chat jam:links jam:invite jam:invite=pending jam:fold=chat:0.5 jam:fold=send:0.5 settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
               # 연결 끊김 토스트: discback 은 4초 끊겼다 다시 붙은 뒤 "다시 연결됐어요" 가 떠 있는 동안, invite 는 초대 토스트가 4초 먼저
               D=3000; case "$s" in home:toast|home:toastline) D=6000;; esac
               case "$s" in home:discback|jam:discback) D=9500;; jam:ping) D=6000;; home:discbackinvite) D=13500;; home:discinvite) D=8000;; home:roomlostinvite) D=7000;; jam:miniarm) D=3300;; jam*|settings*|home:disc) D=5000;; esac

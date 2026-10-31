@@ -1,4 +1,6 @@
 #include "JamScreen.h"
+#include "../dev/RepaintProbe.h"
+#include "../theme/Hairline.h"
 #include "../Messages.h"
 #include "../../core/api/ApiJson.h"
 #include "../../core/util/ChatLinks.h"
@@ -13,7 +15,6 @@ namespace meon::ui
 
 namespace
 {
-    constexpr int headerLineY = metric::headerH;
     constexpr int bottomCardH = 48 + 1 + 43;
 
     juce::String nameOf (const core::UserPublic& u) { return u.nickname.value_or (u.username); }
@@ -46,12 +47,12 @@ namespace
     struct Separator : juce::Component
     {
         Separator() { setInterceptsMouseClicks (false, false); }
-        void paint (juce::Graphics& g) override { g.fillAll (col::line); }
+        void paint (juce::Graphics& g) override { g.setColour (col::borderSubtle); hairline::line (g, *this, getLocalBounds().toFloat()); }
     };
 }
 
 //==============================================================================
-/** 입장 코드 상자 (높이 32, 테두리 #E0E0E0, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
+/** 입장 코드 상자 (높이 32, 테두리 #EBEBEB, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
 struct JamScreen::CodeBox : juce::Component
 {
     CodeBox()
@@ -78,8 +79,8 @@ struct JamScreen::CodeBox : juce::Component
         auto r = getLocalBounds().toFloat();
         g.setColour (col::softBg);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, *this, r, metric::radius);
         const auto lf = font (400, 12.0f);
         const int lw = (int) std::ceil (textWidth (lf, TXT ("입장 코드")));
         g.setColour (col::inkSub);
@@ -105,7 +106,7 @@ struct JamScreen::MemberRow : juce::Component
 {
     MemberRow (JamScreen& o, const core::JamSession::Member& m) : owner (o), member (m), meter (TXT ("레벨"))
     {
-        avatar.setPart (m.part.isNotEmpty() ? m.part : juce::String ("other"));
+        avatar.setUser (m.userId);
         avatar.setInterceptsMouseClicks (false, false);
         for (auto* c : std::initializer_list<juce::Component*> { &avatar, &mute, &volume, &pan, &reset, &ping, &meter })
             addAndMakeVisible (c);
@@ -201,7 +202,7 @@ struct JamScreen::MemberRow : juce::Component
         manage.setVisible (host && ! member.isMe);
         hostLayout = host;
         avatar.setDimmed (muted);
-        avatar.setPart (member.part.isNotEmpty() ? member.part : juce::String ("other"));   // 가짜 기간: 프로필은 입장 뒤에 온다
+        avatar.setUser (member.userId);
         if (member.isMe) ping.setText (TXT ("나"));
         else ping.setPing (member.pingMs);
         meter.meter.setActive (! muted);
@@ -255,10 +256,10 @@ struct JamScreen::MemberRow : juce::Component
                 g.drawText (t, cx, 9, 120, 17, juce::Justification::centredLeft, true);
             }
         }
-        if (getY() > 0)
+        if (getY() > 0)   // 첫 행 위에는 없다
         {
-            g.setColour (col::line);
-            g.fillRect (0, 0, getWidth(), 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
         }
     }
 
@@ -498,11 +499,11 @@ struct JamScreen::ChatView : juce::Component
             }
             else
             {
-                // 아바타: 테두리 1px #E0E0E0, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음.
-                // 파트·이름은 받은 순간의 값 (보낸 사람이 바꾸거나 나가도 그대로. 모르면 빈 원·"멤버")
-                Avatar::paintCircle (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
-                                                                (float) avatarSize, (float) avatarSize),
-                                     m.senderPart, 16.0f, col::ink, true);
+                // 아바타: 보낸 사람의 프로필 사진 (없으면 기본 이미지, 테두리 1px #EBEBEB). 눌러도 아무 동작 없음.
+                // 이름은 받은 순간의 값 (보낸 사람이 바꾸거나 나가도 그대로. 모르면 "멤버")
+                Avatar::paintPhoto (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
+                                                               (float) avatarSize, (float) avatarSize),
+                                    m.fromUser);
                 g.setColour (col::inkSub);
                 g.setFont (font (600, 13.0f));
                 g.drawText (senderName (m), it.bounds.withHeight (16), juce::Justification::centredLeft, true);
@@ -596,7 +597,7 @@ struct JamScreen::ChatView : juce::Component
 };
 
 //==============================================================================
-/** 채팅 카드 위에 겹쳐 그리는 것: 목록과 입력 줄 사이 구분선(디자인 border-top 1px #E0E0E0),
+/** 채팅 카드 위에 겹쳐 그리는 것: 목록과 입력 줄 사이 구분선 (#EBEBEB),
     입력 남은 글자(100 B 미만일 때)·안내 문구. 채팅 카드의 자식이라 화면 위 모달·덮개보다 아래에 그려진다 */
 struct JamScreen::ChatDecor : juce::Component
 {
@@ -608,8 +609,8 @@ struct JamScreen::ChatDecor : juce::Component
         if (owner.chatViewport.isVisible())   // resized() 가 목록 아래 1px 를 비워 둔다
         {
             const auto vb = owner.chatViewport.getBounds();
-            g.setColour (col::line);
-            g.fillRect (vb.getX(), vb.getBottom(), vb.getWidth(), 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, (float) vb.getX(), (float) vb.getBottom(), (float) vb.getWidth());
         }
         // 바이트 수: 900 부터 "962 / 1000" (400 12 #767676, 고정폭), 1000 을 넘으면 #D92D20 (합주 최종 디자인 7. 남은 글자 표시 대신)
         if (! owner.chatCounterArea.isEmpty())
@@ -642,7 +643,7 @@ struct JamScreen::FriendList : juce::Component
         {
             using S = Avatar::Status;
             const auto st = fr.status == "in_room" ? S::inRoom : (fr.status == "online" ? S::online : S::offline);
-            avatar.setPart (fr.user.part.value_or ("other"));
+            avatar.setUser (fr.user.id);
             avatar.setStatus (st);
             avatar.setDimmed (st == S::offline);
             avatar.setInterceptsMouseClicks (false, false);
@@ -824,8 +825,8 @@ struct JamScreen::FilePlayer : juce::Component
         auto r = getLocalBounds().toFloat();
         g.setColour (col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, *this, r, metric::radius);
         if (! loaded())
         {
             const int w = emptyTextW (getWidth());
@@ -996,6 +997,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
 
     // 헤더
     addAndMakeVisible (roomTitle);
+    roomTitle.addMouseListener (this, false);   // 방 이름을 잡아도 창 끌기 (맥 창 모드)
     privateTag = std::make_unique<Tag> (TXT ("비공개"));
     addChildComponent (*privateTag);
     codeBox = std::make_unique<CodeBox>();
@@ -1018,18 +1020,12 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     bell.onClick = [this] { toggleNotifications(); };
     settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
     lobby.onClick = [this] { tip.hide(); closePopover(); if (onMinimize) onMinimize(); };
-    // 방 나가기: 두 번 눌러 확정 (팝업 없음). 바깥을 누르거나 3초가 지나면 원래대로 (다른 확인 버튼과 같은 Button::setConfirm).
-    // 방장이면 확인 상태일 때 버튼 아래에 "돌아올 때까지 방장 자리가 비어요"
-    leave.setConfirm (TXT ("한 번 더 누르면 나가요"));
-    leave.onStateChange = [this]
-    {
-        resized();
-        if (leave.isArmed() && core.store().state().amHost())
-            tip.show (*this, leave, TXT ("돌아올 때까지 방장 자리가 비어요"), Tip::Place::belowRight);
-        else if (tip.getTarget() == &leave)
-            tip.hide();
-    };
-    leave.onPress = [this]
+    // 방 나가기 (홈·사이드바 디자인 v2.1 최신): 로그아웃 아이콘, 두 번 눌러 확정 (팝업 없음). 마우스를 올리면 "방 나가기".
+    // 첫 클릭: 연한 빨강 면 + 버튼 아래 말풍선 (syncLeaveNote).
+    // 바깥을 누르거나 3초가 지나면 원래대로 (디자인에 없는 규칙, 사용자 결정. 다른 확인 버튼과 같다)
+    leave.setNormalTooltip (TXT ("방 나가기"));
+    leave.onStateChange = [this] { syncLeaveNote(); };
+    leave.onConfirm = [this]
     {
         juce::Component::SafePointer<JamScreen> safe (this);
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->core.home().leaveRoom(); });   // 이 화면이 지워진다
@@ -1043,29 +1039,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     memberViewport.setScrollBarThickness (8);
     membersCard.addAndMakeVisible (memberViewport);
 
-    // 내 오디오 · 모니터 (옆으로 접기)
-    addAndMakeVisible (sendCard);
-    addAndMakeVisible (monCard);
-    sendCard.setTitle (TXT ("내 오디오"), true, true);
-    monCard.setTitle (TXT ("모니터"), true, true);
-    sendCard.onToggle = [this] (bool o) { sendOpen = o; toggleFold (foldSend, o); };
-    monCard.onToggle = [this] (bool o) { monOpen = o; toggleFold (foldMon, o); };
-    for (auto* comp : std::initializer_list<juce::Component*> { &sendMute, &sendGain, &inputMeter })
-        sendCard.addAndMakeVisible (comp);
-    for (auto* comp : std::initializer_list<juce::Component*> { &monMute, &master, &outputMeter })
-        monCard.addAndMakeVisible (comp);
-    sendMute.setTooltip (TXT ("다른 사람에게 보내는 내 소리"));
-    monMute.setTooltip (TXT ("내가 듣는 모든 소리"));
-    sendGain.setTitle (TXT ("송출 레벨 · 더블클릭하면 0 dB"));
-    master.setTitle (TXT ("마스터 볼륨 · 더블클릭하면 0 dB"));
-    sendMute.onPress = [this] { jam.setSendMuted (! jam.isSendMuted()); refreshAudio(); };
-    monMute.onPress = [this] { jam.setMonitorMuted (! jam.isMonitorMuted()); refreshAudio(); };
-    sendGain.onChange = [this] (float db) { jam.setSendGainDb (db); };
-    master.onChange = [this] (float db) { jam.setMasterDb (db); };
-    // 송출 정지 중에는 보내는 신호가 0 이므로 입력 레벨을 회색으로 보여 준다 (refreshAudio)
-    inputMeter.meter.setSource (juce::jlimit (1, 2, jam.sendChannelCount()),
-                                [this] (int ch) { return jam.isSendMuted() ? jam.inputLevel (ch) : jam.sendLevel (ch); });
-    outputMeter.meter.setSource (2, [this] (int ch) { return jam.monitorLevel (ch); });
+    // 내 오디오 · 모니터: 카드 묶음(AudioDock)은 AppRoot 가 갖고 이 화면의 자리(dockSlot)에 둔다 (공개 방과 같이 쓴다)
 
     // 채팅
     addAndMakeVisible (chatCard);
@@ -1101,8 +1075,9 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     };
     chatSend.onPress = [this] { sendChat(); };
 
-    // 친구
-    addAndMakeVisible (friendsCard);
+    // 친구: 홈·사이드바 디자인 v2.1 은 방 화면에 친구 패널이 없다 (사이드바 친구 목록, 친구 초대는 프로필 창의 "방 초대").
+    // 패널은 만들되 보이지 않게 둔다 (사용자 결정 2026-10-30)
+    addChildComponent (friendsCard);
     friendsCard.setTitle (TXT ("친구"), true);
     friendsCard.onToggle = [this] (bool o) { friendsOpen = o; toggleFold (foldFriends, o); };
     friendList = std::make_unique<FriendList>();
@@ -1128,6 +1103,7 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
 
 JamScreen::~JamScreen()
 {
+    onOverlayChanged = nullptr;   // 아래에서 겹침을 지우는 동안 AppRoot 를 부르지 않는다
     stopTimer();
     jam.chat().removeListener (this);
     jam.removeListener (this);
@@ -1184,8 +1160,7 @@ void JamScreen::rebuildMembers()
 
 void JamScreen::jamStatsChanged()
 {
-    // 송출 정지·전체 음소거가 이 화면 밖에서 바뀌면(홈, 단축키 처리 전, 플러그인의 DAW 상태) 0.4초 안에 따라간다
-    if (sendMute.isOn() != jam.isSendMuted() || monMute.isOn() != jam.isMonitorMuted()) refreshAudio();
+    // 송출 정지·전체 음소거가 바뀌면 카드 묶음(AudioDock)이 스스로 따라간다 (같은 0.4초 알림)
     const auto list = jam.members();
     if ((int) list.size() != memberList->rows.size()) { rebuildMembers(); return; }
     for (size_t i = 0; i < list.size(); ++i)
@@ -1198,6 +1173,7 @@ void JamScreen::jamStatsChanged()
 
 void JamScreen::rebuildFriends()
 {
+    if (! friendsCard.isVisible()) return;   // v2.1: 친구 패널 없음
     auto list = core.store().state().friends;
     auto rank = [] (const core::Friend& f) { return f.status == "online" ? 0 : (f.status == "in_room" ? 1 : 2); };
     std::stable_sort (list.begin(), list.end(), [&] (const core::Friend& a, const core::Friend& b) { return rank (a) < rank (b); });
@@ -1210,17 +1186,13 @@ void JamScreen::rebuildFriends()
 
 void JamScreen::refreshAudio()
 {
-    const bool sm = jam.isSendMuted(), mm = jam.isMonitorMuted();
-    sendMute.setOn (sm);
-    sendMute.setButtonText (sm ? TXT ("송출 재개") : TXT ("송출 정지"));
-    sendGain.setMuted (sm);
-    inputMeter.meter.setGreyed (sm);
-    if (! sendGain.isDragging()) sendGain.setValue (jam.getSendGainDb());
-    monMute.setOn (mm);
-    monMute.setButtonText (mm ? TXT ("음소거 해제") : TXT ("전체 음소거"));
-    master.setMuted (mm);
-    if (! master.isDragging()) master.setValue (jam.getMasterDb());
-    outputMeter.meter.setActive (! mm);
+    // 단축키 (M·N·⌘↑↓) 로 바꾼 뒤: 카드 묶음이 다시 읽는다
+    if (dock != nullptr) dock->refresh();
+}
+
+void JamScreen::setDock (AudioDock* d)
+{
+    dock = d;
     resized();
 }
 
@@ -1275,6 +1247,7 @@ void JamScreen::stateChanged (core::StateKey k)
 {
     using K = core::StateKey;
     if (k == K::currentRoom || k == K::joinRequests || k == K::me) { refreshHeader(); jamStatsChanged(); }
+    if (k == K::currentRoom && leave.isArmed()) syncLeaveNote();   // 확인 중에 누가 들어오거나 나가면 둘째 줄을 다시
     else if (k == K::friendRequests || k == K::notifications) refreshHeader();
     else if (k == K::friends) rebuildFriends();
     else if (k == K::link) { resized(); repaint(); }
@@ -1287,22 +1260,78 @@ void JamScreen::timerCallback()
     if (jam.hasFile()) filePlayer->refresh();
 }
 
+void JamScreen::setHeaderInset (int px)
+{
+    if (px == headerInset) return;
+    headerInset = px;
+    resized();
+}
+
+void JamScreen::mouseDown (const juce::MouseEvent& e)
+{
+    // 윗줄의 빈 곳이나 방 이름 (버튼은 각자 받는다)
+    if (titleBarDragAt (e.eventComponent, e.getEventRelativeTo (this).getPosition()) && onTitleBarMouseDown)
+        onTitleBarMouseDown();
+}
+
+void JamScreen::setHeaderRightInset (int px)
+{
+    if (px == headerRightInset) return;
+    headerRightInset = px;
+    resized();
+}
+
+void JamScreen::setSidebarShown (bool b)
+{
+    if (b == sidebarShown) return;
+    sidebarShown = b;
+    for (auto* c : { &lobby, &settings, &bell }) c->setVisible (! b);
+    if (b) { tip.hide(); if (popover != nullptr && notifications != nullptr) closePopover(); }
+    resized();
+    repaint();
+}
+
 //==============================================================================
+int JamScreen::devPaints = 0;
+
 void JamScreen::paint (juce::Graphics& g)
 {
+    ++devPaints;   // 개발용: 다시 그리기 확인
+    devprobe::note (*this, g, "JamScreen");
     g.fillAll (col::white);
     // 상단 바 아래 작업 영역 (패널들을 감싸는 곳)
-    const int canvasTop = headerLineY + 1;
+    const int canvasTop = headerLine() + 1;
     g.setColour (col::surfaceCanvas);
     g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
     const float logoW = meon::logoWidth (metric::logoDrawH);
-    meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
-                    juce::Justification::centredLeft);
+    if (! sidebarShown)   // 사이드바가 있으면 로고는 사이드바에
+        meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
+                        juce::Justification::centredLeft);
     // 로고 오른쪽 세로 구분선은 없다 (디자인 파일과 다른 결정, REMAKE_PLAN 3.6). 로고 끝에서 18px 뒤에 방 제목
-    g.setColour (col::line);
-    g.fillRect (0, headerLineY, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, (float) headerLine(), (float) getWidth());   // 제목 줄 아래
 
 
+}
+
+void JamScreen::syncLeaveNote()
+{
+    if (! leave.isArmed())
+    {
+        if (tip.getTarget() == &leave) tip.hide();
+        return;
+    }
+    // 서버 규칙 (API 5.6): 방장이 나가도 권한은 그대로 남고 방장 자리 하나가 예약된다 (자동 위임 없음).
+    // 단, 마지막 사람이 나가면 방이 닫힌다 (24시간 410). 사용자 결정 2026-10-31: 혼자면 "나가면 방이 닫혀요"
+    const auto& st = core.store().state();
+    juce::String sub;
+    if (st.amHost())
+    {
+        const auto& r = *st.currentRoom;
+        const int people = juce::jmax (r.memberCount, (int) r.members.size());
+        sub = people <= 1 ? TXT ("나가면 방이 닫혀요") : TXT ("돌아올 때까지 방장 자리가 비어요");
+    }
+    tip.showNote (*this, leave, TXT ("한 번 더 누르면 나가요"), sub, Tip::Place::belowRight);
 }
 
 void JamScreen::resized()
@@ -1311,12 +1340,12 @@ void JamScreen::resized()
     // 헤더
     {
         const float logoW = meon::logoWidth (metric::logoDrawH);
-        auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
+        auto h = area.withHeight (headerLine()).withTrimmedLeft (metric::padX).withTrimmedRight (headerRightInset);   // 윈도우: 오른쪽 150 (창 버튼 + 12)
         // 오른쪽부터: 방 나가기 · 로비 · 설정 · 알림 · 입장 요청(방장) · 입장 코드(비공개), 간격 9. 버튼은 줄지 않고 방 이름이 먼저 줄어든다
-        const int lw = leave.getIdealWidth();
-        leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));
+        leave.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         for (auto* b : { &lobby, &settings, &bell })
         {
+            if (! b->isVisible()) continue;   // 사이드바가 있으면 숨김 (setSidebarShown)
             h.removeFromRight (metric::gap);
             b->setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         }
@@ -1331,55 +1360,41 @@ void JamScreen::resized()
             const int cw = codeBox->idealWidth();
             codeBox->setBounds (h.removeFromRight (cw).withSizeKeepingCentre (cw, metric::buttonH));
         }
-        const int tx = (int) (metric::padX + logoW + 18.0f);
+        const int tx = sidebarShown ? headerInset : (int) (metric::padX + logoW + 18.0f);   // 디자인: 방 이름은 왼쪽 18 (맥 창 모드에서 사이드바를 접으면 접기 버튼 x - 12, 디자인 72)
         const int tagW = (privateTag->isVisible() ? privateTag->getIdealWidth() + 6 : 0) + (gear.isVisible() ? 24 + 6 : 0);
         const int titleMax = juce::jmax (40, h.getRight() - 18 - tx - tagW);
         const int tw = juce::jmin (titleMax, roomTitle.getIdealWidth() + 2);
-        roomTitle.setBounds (tx, 0, tw, metric::headerH);
+        roomTitle.setBounds (tx, 0, tw, headerLine());
         int gx = tx + tw + 6;
         if (privateTag->isVisible())
         {
-            privateTag->setBounds (gx, (metric::headerH - 17) / 2, privateTag->getIdealWidth(), 17);
+            privateTag->setBounds (gx, (headerLine() - 17) / 2, privateTag->getIdealWidth(), 17);
             gx += privateTag->getIdealWidth() + 6;
         }
-        gear.setBounds (gx, (metric::headerH - 24) / 2, 24, 24);
+        gear.setBounds (gx, (headerLine() - 24) / 2, 24, 24);
     }
-    area.removeFromTop (headerLineY + 1);
+    area.removeFromTop (headerLine() + 1);
     area.reduce (metric::padX, metric::padX);
 
     // 오른쪽: 채팅 · 친구 · 파일. 너비는 끌어서 바꾼다 (앱 320~, 플러그인 240~, 최대 min(창 50%, 창 − 54 − 566))
     const int sideW = sidePanelWidth();
     auto side = area.removeFromRight (sideW);
     area.removeFromRight (metric::padX);
-    sideResizer->setBounds (side.getX() - metric::padX, headerLineY + 1, metric::padX, getHeight() - headerLineY - 1);
+    sideResizer->setBounds (side.getX() - metric::padX, headerLine() + 1, metric::padX, getHeight() - headerLine() - 1);
     const bool vMoving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
-    const bool hMoving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
+    const bool hMoving = false;   // 아래쪽 카드 묶음은 AudioDock 이 접는다 (이 화면 배치는 그대로)
     {
         filePlayer->setBounds (side.removeFromBottom (filePlayer->preferredHeight (side.getWidth())));
         side.removeFromBottom (metric::gap);
+        // v2.1: 친구 패널이 없으므로 채팅이 세로 전체. 접으면 머리만 (48), 움직이는 동안은 e 로 보간
         const int closedH = 48;
-        const int avail = side.getHeight() - metric::gap;
+        const int avail = side.getHeight();
         sideAvail = avail;
-        const float eChat = fold.value (foldChat), eFr = fold.value (foldFriends);
-        core::FoldLayout::Pair hs;
-        if (! vMoving)
-            hs = core::FoldLayout::verticalPair (avail, closedH, chatOpen, friendsOpen);
-        else
-        {
-            // 움직이는 동안: 네 끝 상태(둘 다 열림·하나만 열림 ×2·둘 다 닫힘)를 두 e 로 이중 선형 보간
-            core::FoldLayout::Pair L[2][2];
-            for (int a = 0; a < 2; ++a)
-                for (int b = 0; b < 2; ++b)
-                    L[a][b] = core::FoldLayout::verticalPair (avail, closedH, a == 1, b == 1);
-            hs = core::FoldLayout::blend (L, eChat, eFr, foldFillV);
-        }
-        chatCard.setBounds (side.removeFromTop (hs.first));
-        side.removeFromTop (metric::gap);
-        friendsCard.setBounds (side.removeFromTop (hs.second));
+        const float eChat = fold.value (foldChat);
+        const int chatH = vMoving ? juce::roundToInt ((float) closedH + (float) (avail - closedH) * eChat) : (chatOpen ? avail : closedH);
+        chatCard.setBounds (side.removeFromTop (chatH));
         chatCard.setOpen (chatOpen);
         chatCard.setFoldProgress (eChat);
-        friendsCard.setOpen (friendsOpen);
-        friendsCard.setFoldProgress (eFr);
 
         // 채팅 안: 목록 + 입력 줄 (12·18, 높이 44)
         auto chatContent = [this] (bool visible, float alpha)
@@ -1402,7 +1417,7 @@ void JamScreen::resized()
         else if (fold.isMoving (foldChat))
         {
             // 접히는·펼쳐지는 채팅: 내용은 시작·끝 중 큰 크기로 한 번만 배치하고 카드가 잘라 보인다. 완전히 접히면 숨긴다
-            const juce::Point<int> size (chatCard.getWidth(), juce::jmax (foldChatH, hs.first));
+            const juce::Point<int> size (chatCard.getWidth(), juce::jmax (foldChatH, chatH));
             if (size != laidChat) { laidChat = size; layoutChatContent (size.x, size.y); fitChatView(); }
             chatContent (eChat > 0.0f, eChat);
         }
@@ -1415,121 +1430,17 @@ void JamScreen::resized()
             fitChatView();
         }
 
-        if (! vMoving)
-        {
-            laidFriends = {};
-            friendViewport.setVisible (friendsOpen);
-            friendViewport.setAlpha (1.0f);
-            if (! hMoving) layoutFriendsContent (friendsCard.getWidth(), friendsCard.getHeight());
-        }
-        else if (fold.isMoving (foldFriends))
-        {
-            const juce::Point<int> size (friendsCard.getWidth(), juce::jmax (foldFriendsH, hs.second));
-            if (size != laidFriends) { laidFriends = size; layoutFriendsContent (size.x, size.y); }
-            friendViewport.setVisible (eFr > 0.0f);
-            friendViewport.setAlpha (eFr);
-        }
-        else
-        {
-            laidFriends = {};
-            friendViewport.setVisible (friendsOpen);
-            friendViewport.setAlpha (1.0f);
-            friendViewport.setBounds (friendsCard.contentBounds());   // 목록은 그대로 (끝나면 기존 배치)
-        }
     }
 
-    // 왼쪽: 멤버 (위) · 내 오디오 + 모니터 (아래)
+    // 왼쪽: 멤버 (위) · 내 오디오 + 모니터 (아래). 아래 자리는 카드 묶음(AudioDock, AppRoot 가 갖는다)이 쓰고 이 화면은 비워 둔다
     {
-        const int availW = area.getWidth() - metric::gap;
-        bottomAvail = availW;
-        const float eSend = fold.value (foldSend), eMon = fold.value (foldMon);
-        // 미터 폭: 열리면 150, 폭이 모자라면 슬라이더가 먼저 60 까지 줄고 그다음 미터가 84 까지 (멤버 행과 같은 규칙,
-        // 합주 최종 디자인 6). 접히면 행 전체. bw: 그 줄 왼쪽 버튼 (송출 정지 · 전체 음소거)
-        auto meterW = [] (int rowW, bool open, int bw)
-        {
-            return open ? core::panel::shrink (rowW - bw - 12 - 12, std::numeric_limits<int>::max()).meter : rowW;
-        };
-        const int sendBw = sendMute.getIdealWidth(), monBw = monMute.getIdealWidth();
-        static constexpr int rowInset = 2 + metric::padX * 2;   // 카드 테두리 + 좌우 여백
-        core::FoldLayout::Pair ws;
-        int sendMeterW, monMeterW;
-        if (! hMoving)
-        {
-            ws = core::FoldLayout::horizontalPair (availW, sendOpen, monOpen);
-            sendMeterW = meterW (ws.first - rowInset, sendOpen, sendBw);
-            monMeterW = meterW (ws.second - rowInset, monOpen, monBw);
-        }
-        else
-        {
-            // 움직이는 동안: 폭·미터 폭을 네 끝 상태에서 이중 선형 보간 (e 가 0·1 이면 기존 값 그대로)
-            core::FoldLayout::Pair L[2][2];
-            int MS[2][2], MM[2][2];
-            for (int a = 0; a < 2; ++a)
-                for (int b = 0; b < 2; ++b)
-                {
-                    L[a][b] = core::FoldLayout::horizontalPair (availW, a == 1, b == 1);
-                    MS[a][b] = meterW (L[a][b].first - rowInset, a == 1, sendBw);
-                    MM[a][b] = meterW (L[a][b].second - rowInset, b == 1, monBw);
-                }
-            ws = core::FoldLayout::blend (L, eSend, eMon, foldFillH);
-            sendMeterW = core::FoldLayout::blendValue (MS, eSend, eMon);
-            monMeterW = core::FoldLayout::blendValue (MM, eSend, eMon);
-        }
-        const int sendW = ws.first, monW = ws.second;
-        auto bottom = area.removeFromBottom (bottomCardH);
+        auto bottom = area.removeFromBottom (AudioDock::cardsHeight);
         area.removeFromBottom (metric::padX);
-        sendCard.setBounds (bottom.removeFromLeft (sendW));
-        bottom.removeFromLeft (metric::gap);
-        monCard.setBounds (bottom.removeFromLeft (monW));
-        sendCard.setOpen (sendOpen);
-        sendCard.setFoldProgress (eSend);
-        monCard.setOpen (monOpen);
-        monCard.setFoldProgress (eMon);
-
-        auto layoutRow = [] (juce::Rectangle<int> row, bool open, int mw, Button& b, DbSlider& s, MeterBox& m)
+        if (bottom != dockSlotRect)
         {
-            row = row.reduced (metric::padX, 12);
-            m.setBounds (row.removeFromRight (mw).withSizeKeepingCentre (mw, metric::smallH));
-            b.setVisible (open);
-            s.setVisible (open);
-            b.setAlpha (1.0f);
-            s.setAlpha (1.0f);
-            if (! open) return;
-            row.removeFromRight (12);
-            const int bw = b.getIdealWidth();
-            b.setBounds (row.removeFromLeft (bw).withSizeKeepingCentre (bw, metric::smallH));
-            row.removeFromLeft (12);
-            s.setBounds (row.withSizeKeepingCentre (row.getWidth(), metric::smallH));
-        };
-        // 접히는·펼쳐지는 카드: 내용 행을 카드 오른쪽 끝에 붙인다. 미터는 끝까지 보이고(투명도 그대로),
-        // 버튼·슬라이더는 시작·끝 중 넓은 쪽의 열린 배치 크기 그대로 미터 왼쪽에 붙어 잘려 들어가며 투명도 e
-        auto layoutRowFolding = [&meterW] (juce::Rectangle<int> row, float e, int mw, int contentW, Button& b, DbSlider& s, MeterBox& m)
-        {
-            row = row.reduced (metric::padX, 12);
-            const auto meter = juce::Rectangle<int> (row.getRight() - mw, row.getY(), mw, row.getHeight()).withSizeKeepingCentre (mw, metric::smallH);
-            m.setBounds (meter);
-            const int openRowW = contentW - rowInset;
-            const int bw = b.getIdealWidth();
-            const int sw = juce::jmax (0, openRowW - meterW (openRowW, true, bw) - 12 - bw - 12);
-            const int sx = meter.getX() - 12 - sw;
-            s.setBounds (sx, meter.getY(), sw, metric::smallH);
-            b.setBounds (sx - 12 - bw, meter.getY(), bw, metric::smallH);
-            b.setVisible (e > 0.0f);
-            s.setVisible (e > 0.0f);
-            b.setAlpha (e);
-            s.setAlpha (e);
-        };
-        auto sc = sendCard.contentBounds();
-        const auto sendRow = sc.removeFromTop (43);
-        if (fold.isMoving (foldSend))
-            layoutRowFolding (sendRow, eSend, sendMeterW, juce::jmax (foldSendW, sendW), sendMute, sendGain, inputMeter);
-        else
-            layoutRow (sendRow, sendOpen, sendMeterW, sendMute, sendGain, inputMeter);
-        const auto monRow = monCard.contentBounds().removeFromTop (43);
-        if (fold.isMoving (foldMon))
-            layoutRowFolding (monRow, eMon, monMeterW, juce::jmax (foldMonW, monW), monMute, master, outputMeter);
-        else
-            layoutRow (monRow, monOpen, monMeterW, monMute, master, outputMeter);
+            dockSlotRect = bottom;
+            if (onDockSlotChanged) onDockSlotChanged();
+        }
 
         const int listH = memberList->rows.size() * rowH;
         membersCard.setBounds (area.withHeight (juce::jmin (area.getHeight(), listH + 2)));
@@ -1537,11 +1448,11 @@ void JamScreen::resized()
         memberList->setSize (memberViewport.getWidth() - (listH + 2 > area.getHeight() ? memberViewport.getScrollBarThickness() : 0), listH);
         if (! (vMoving || hMoving)) memberList->resized();   // 움직이는 동안은 크기가 바뀔 때만 (setSize 가 부른다)
     }
-    if (modal != nullptr) modal->setBounds (getLocalBounds());
+    if (modal != nullptr && ! hostOverlay) modal->setBounds (getLocalBounds());   // 모달 층이면 AppRoot 가 창 전체로
     if (popover != nullptr && requestList != nullptr)
-        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + requestList->getPreferredHeight());
+        popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + requestList->getPreferredHeight());
     if (popover != nullptr && notifications != nullptr)
-        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, 44 + notifications->getPreferredHeight());
+        popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + notifications->getPreferredHeight());
     // 움직이는 동안은 화면 전체를 다시 그리지 않는다 (옮겨진 카드 자리만 JUCE 가 다시 그린다)
     if (! (vMoving || hMoving)) repaint();
 }
@@ -1596,19 +1507,9 @@ void JamScreen::toggleFold (int panel, bool open)
     // 움직이는 동안 내용을 배치할 크기 = 지금 크기와 끝 크기 중 큰 쪽 (이미 움직이는 중이면 그때 정한 크기와도)
     if (panel == foldChat || panel == foldFriends)
     {
-        const bool moving = fold.isMoving (foldChat) || fold.isMoving (foldFriends);
-        const auto end = core::FoldLayout::verticalPair (sideAvail, 48, chatOpen, friendsOpen);
-        foldChatH = juce::jmax (moving ? foldChatH : 0, chatCard.getHeight(), end.first);
-        foldFriendsH = juce::jmax (moving ? foldFriendsH : 0, friendsCard.getHeight(), end.second);
-        foldFillV = chatCard.getHeight() + friendsCard.getHeight() == sideAvail && (chatOpen || friendsOpen);
-    }
-    else
-    {
-        const bool moving = fold.isMoving (foldSend) || fold.isMoving (foldMon);
-        const auto end = core::FoldLayout::horizontalPair (bottomAvail, sendOpen, monOpen);
-        foldSendW = juce::jmax (moving ? foldSendW : 0, sendCard.getWidth(), end.first);
-        foldMonW = juce::jmax (moving ? foldMonW : 0, monCard.getWidth(), end.second);
-        foldFillH = sendCard.getWidth() + monCard.getWidth() == bottomAvail && (sendOpen || monOpen);
+        if (panel == foldFriends) return;   // v2.1: 방 화면에 친구 패널 없음
+        const bool moving = fold.isMoving (foldChat);
+        foldChatH = juce::jmax (moving ? foldChatH : 0, chatCard.getHeight(), chatOpen ? sideAvail : 48);   // 채팅 혼자 세로 전체
     }
     fold.setOpen (panel, open);
 }
@@ -1616,20 +1517,17 @@ void JamScreen::toggleFold (int panel, bool open)
 void JamScreen::devToggleFold (const juce::String& panel)
 {
     if (panel == "chat")         { chatOpen = ! chatOpen; toggleFold (foldChat, chatOpen); }
-    else if (panel == "friends") { friendsOpen = ! friendsOpen; toggleFold (foldFriends, friendsOpen); }
-    else if (panel == "send")    { sendOpen = ! sendOpen; toggleFold (foldSend, sendOpen); }
-    else if (panel == "mon")     { monOpen = ! monOpen; toggleFold (foldMon, monOpen); }
+    // "friends": v2.1 방 화면에 친구 패널이 없어 아무 일 없음
+    else if ((panel == "send" || panel == "mon") && dock != nullptr) dock->devToggleFold (panel);   // 카드 묶음
 }
 
 void JamScreen::previewFold (const juce::String& panel, float e)
 {
-    const int i = panel == "chat" ? foldChat : panel == "friends" ? foldFriends : panel == "send" ? foldSend : panel == "mon" ? foldMon : -1;
+    if ((panel == "send" || panel == "mon") && dock != nullptr) { dock->previewFold (panel, e); return; }   // 카드 묶음
+    const int i = panel == "chat" ? foldChat : -1;   // 친구 패널 없음 (v2.1)
     if (i < 0) return;
     // 열린 상태에서 접기 시작한 것처럼 (내용 크기를 정한 뒤) e 에 멈춘다
     if (i == foldChat) chatOpen = false;
-    if (i == foldFriends) friendsOpen = false;
-    if (i == foldSend) sendOpen = false;
-    if (i == foldMon) monOpen = false;
     if (e < 0.0f) { fold.snap (i, false); return; }   // 비교용: 애니메이션 없이 접은 화면 (기존 레이아웃)
     toggleFold (i, false);
     fold.freeze (i, false, e);
@@ -1641,6 +1539,7 @@ void JamScreen::showModal (std::unique_ptr<Modal> m)
     modal = std::move (m);
     juce::Component::SafePointer<JamScreen> safe (this);
     modal->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
+    if (hostOverlay) { hostOverlay (*modal, true); return; }   // 창 전체 (사이드바까지 덮고 창 가운데)
     addAndMakeVisible (*modal);
     modal->setBounds (getLocalBounds());
     modal->toFront (true);
@@ -1687,6 +1586,12 @@ void JamScreen::openProfile (const juce::String& userId)
     for (auto& f : core.store().state().friends)
         if (f.user.id == userId) u = f.user;
     if (u.username.isEmpty()) u.nickname = memberName (userId);
+    showProfile (u);
+}
+
+void JamScreen::openProfile (const core::UserPublic& u)
+{
+    if (u.username.isEmpty()) { openProfile (u.id); return; }
     showProfile (u);
 }
 

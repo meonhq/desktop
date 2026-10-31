@@ -1,14 +1,14 @@
 // MEON ui - 버튼. 디자인의 버튼 모양을 종류(Kind)로 묶었다.
 //   primary      32px 포인트 (방 만들기·입장·저장)          600 13px
-//   secondary    32px 흰 면 + #D5D5D5 (방 나가기)         600 13px #1A1A1A
-//   quiet        32px 투명 + #D5D5D5 (설정)               500 13px #767676
+//   secondary    32px 흰 면 + #EBEBEB (방 나가기)         600 13px #1A1A1A
+//   quiet        32px 투명 + #EBEBEB (설정)               500 13px #767676
 //   large        40px 포인트, 폭 가득 (온보딩)               600 13px
 //   dangerOutline 32px 흰 면 + #F2C4C0, 빨간 글자 (방 닫기)
 //   small        19px #FCFCFC + #E0E0E0 (관리·거절·복사…)  400 12px #767676
 //   smallPrimary 19px 포인트 (수락·확인)                     500 12px
 //   smallDanger  19px 빨간 글자 (친구 삭제·차단·내보내기)
-//   largeSecondary 40px 흰 면 + #D5D5D5 (온보딩 "이전")      600 13px #767676
-//   cancel       32px 흰 면 + #D5D5D5 (취소·거절·중복 확인)  600 13px #767676 → 호버 #1A1A1A
+//   largeSecondary 40px 흰 면 + #EBEBEB (온보딩 "이전")      600 13px #767676
+//   cancel       32px 흰 면 + #EBEBEB (취소·공개 방 보기·중복 확인) 600 13px #767676 → 호버 #1A1A1A, 면 #F5F5F5
 //   link         글자만 (전송)                             500 13px #767676 → 호버 #1A1A1A
 //   linkSmall    글자만 (비밀번호를 잊었나요?)             500 12px #767676 → 호버 #1A1A1A
 //   linkUnderline 밑줄 글자 (회원가입·로그인·코드 다시 받기) 500 12px #1A1A1A
@@ -46,6 +46,8 @@ public:
 
     /** 비활성 모양 (클릭은 막지 않는다. 막으려면 setEnabled) */
     void setDimmed (bool);
+    /** 흐린 모양이어도 누르면 onPress (디자인: 친구 추가 '요청' 은 비어 있으면 흐리지만 누르면 안내 문구) */
+    void setClickableWhenDimmed (bool b) { clickWhenDimmed = b; }
 
     /** 두 번 눌러 확정: 첫 클릭에 armedText 와 빨간(또는 포인트 색) 면으로 바뀌고, 다시 누르면 onClick.
         다른 곳을 누르거나 3초가 지나면 되돌아간다. */
@@ -78,6 +80,7 @@ protected:
 private:
     Kind kind;
     bool on = false, pending = false, dimmed = false, armed = false, confirm = false, confirmAccent = false, flashing = false;
+    bool clickWhenDimmed = false;
     juce::String normalText, armedText;
     int fixedWidth = 0;
 
@@ -123,7 +126,9 @@ private:
 class IconButton : public juce::Button
 {
 public:
-    enum class Style { plain24, bordered32, bare19 };
+    /** ghost32: 헤더 아이콘 (홈·사이드바 디자인 v2.1 최신: 방 만들기·입장 요청). 테두리·면 없이 아이콘만, 누르는 영역 32×32 모서리 6,
+                 아이콘 #767676 → 마우스를 올리면 면 #F5F5F5·아이콘 #1A1A1A. 알림 점 테두리도 면 색을 따른다 (흰색 → #F5F5F5) */
+    enum class Style { plain24, bordered32, bare19, ghost32 };
     IconButton (int iconId, Style, float iconPx);
     void setDot (bool);
     void setInk (juce::Colour normal, juce::Colour hover) { ink = normal; inkHover = hover; repaint(); }
@@ -135,6 +140,37 @@ private:
     float iconPx;
     bool dot = false;
     juce::Colour ink, inkHover;
+};
+
+/** 아이콘만 있는 두 번 눌러 확정 버튼 (방 나가기, 합주 헤더. 홈·사이드바 디자인 v2.1 최신).
+    누르는 영역 32×32 모서리 6, 아이콘 18. 평소: 면 없음·아이콘 #767676. 첫 클릭(확인 상태): 면 #FDECEA·아이콘 #D92D20.
+    마우스를 올리면 지금 면 위에 검정 4% 를 덧칠한다 (두 상태 모두, 아이콘 색은 그대로).
+    다른 곳을 누르거나 3초가 지나면 되돌아간다 (Button::setConfirm 과 같은 규칙). 확인 상태에서 다시 누르면 onConfirm */
+class ConfirmIconButton : public juce::Button, private juce::Timer
+{
+public:
+    explicit ConfirmIconButton (int iconId);
+    ~ConfirmIconButton() override;
+    std::function<void()> onConfirm;
+    std::function<void()> onStateChange;   // 확인 상태가 바뀔 때
+    bool isArmed() const { return armed; }
+    void disarm();
+    /** 평소 툴팁 (확인 상태에서는 말풍선이 대신하므로 비운다) */
+    void setNormalTooltip (const juce::String& t) { normalTip = t; if (! armed) setTooltip (t); }
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    void clicked() override;
+
+private:
+    int icon;
+    bool armed = false;
+    juce::String normalTip;
+    void timerCallback() override { disarm(); }
+    struct Outside : juce::MouseListener
+    {
+        explicit Outside (ConfirmIconButton& o) : owner (o) {}
+        void mouseDown (const juce::MouseEvent&) override;
+        ConfirmIconButton& owner;
+    } outside { *this };
 };
 
 } // namespace meon::ui

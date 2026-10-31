@@ -2,11 +2,22 @@
 #include "../AppRoot.h"
 #include "../screens/HomeScreen.h"
 #include "../screens/JamScreen.h"
+#include "../overlays/JamOverlays.h"
 #include "../../core/api/fake/FakeMeonServer.h"
 #include "../../core/model/RoomFilter.h"
 #include "../../core/model/PanelWidth.h"
 #include "../../MeonSettings.h"
 #include "../../core/util/ChatInput.h"
+#include "../../MeonWindowFrame.h"
+#include "../shell/WindowChromeView.h"
+#include "../overlays/SettingsModal.h"
+#include "../../MeonReduceMotion.h"
+#include "RepaintProbe.h"
+#include "../../shell/ShellHooks.h"
+#include "../../MeonEditor.h"
+#include "../ProfilePhoto.h"
+#include "../theme/Avatars.h"
+#include <climits>
 
 namespace meon::ui
 {
@@ -28,6 +39,23 @@ void UiSelfTest::start()
     if (want ("chat"))     addChatInputTests();
     if (want ("aoodrop"))  addAooDropTests();
     if (want ("rooms"))    addRoomListTests();
+    if (want ("sidebar") || which == "roomsidebar") addRoomSidebarTests();   // roomsidebar: 이 구역만 (CI 창 폭별 확인)
+    if (want ("sidebar"))  addSidebarTests();
+    if (want ("chrome"))   addChromeTests();
+    if (want ("popover"))  addPopoverTests();
+    if (want ("winchrome")) addWinChromeTests();
+    if (which == "winedge") addWinEdgeTests();         // 윈도우 창 가장자리 (windows.yml, all 에 없음: 바탕 창을 띄운다)
+    if (which == "fullscreen") addFullscreenTests();   // 실제 창 (windows.yml·mac.yml), all 에 없음
+    if (which == "winstates") addWinStatesTests();     // 윈도우 창 상태별 (windows.yml, all 에 없음: 실제 창을 여러 상태로)
+    if (want ("overlay"))  addOverlayTests();
+    if (want ("dock"))     addDockTests();
+    if (want ("modalanim")) addModalAnimTests();
+    if (which == "reducedmotion") addReducedMotionTests();   // MEON_REDUCE_MOTION=1 로 돌린다 (all 에 없음)
+    if (want ("profilefooter")) addProfileFooterTests();
+    if (want ("codeinput")) addCodeInputTests();
+    if (want ("friendadd")) addFriendAddTests();
+    if (want ("photo"))     addPhotoTests();
+    if (want ("modallines")) addModalLineTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -52,6 +80,12 @@ void UiSelfTest::waitUntil (const juce::String& label, std::function<bool()> con
     steps.push_back (std::move (s));
 }
 
+void UiSelfTest::waitUntilOr (const juce::String& label, std::function<bool()> cond, int timeoutMs, std::function<void()> onTimeout)
+{
+    waitUntil (label, std::move (cond), timeoutMs);
+    steps.back().onTimeout = std::move (onTimeout);
+}
+
 void UiSelfTest::begin (const juce::String& name)
 {
     add ([this, name] { section = name; std::cerr << "UITEST SECTION " << name << std::endl; }, 0);
@@ -73,7 +107,8 @@ void UiSelfTest::timerCallback()
         }
         if (now - waitStart > s.timeoutMs)
         {
-            expect (false, TXT ("시간 초과: ") + s.label);
+            if (s.onTimeout) s.onTimeout();
+            else expect (false, TXT ("시간 초과: ") + s.label);
             waitStart = 0;
             ++index;
         }
@@ -197,6 +232,38 @@ juce::Button* UiSelfTest::findButton (juce::Component& c, const juce::String& te
     return nullptr;
 }
 
+juce::String UiSelfTest::dockOverlaps() const
+{
+    // 카드 묶음: 카드 안 버튼·슬라이더와 (형제인) 미터 상자가 겹치지 않고 카드 안에 있는지
+    juce::String bad;
+    auto* d = root.dock.get();
+    if (d == nullptr) return TXT ("카드 묶음 없음");
+    auto one = [&] (Card& card, juce::Component& meter, const juce::String& name)
+    {
+        juce::Array<juce::Rectangle<int>> rs;
+        juce::StringArray names;
+        for (auto* c : card.getChildren())
+            if (c->isVisible() && ! c->getBounds().isEmpty() && c->getY() > 40) { rs.add (c->getBounds()); names.add (c->getName()); }
+        const auto m = meter.getBounds() - d->getPosition() - card.getPosition();
+        if (meter.isVisible()) { rs.add (m); names.add ("meter"); }
+        for (int i = 0; i < rs.size(); ++i)
+        {
+            if (! card.getLocalBounds().contains (rs[i])) bad << name << " " << names[i] << TXT (" 카드 밖 ");
+            for (int k = i + 1; k < rs.size(); ++k)
+                if (rs[i].intersects (rs[k])) bad << name << " " << names[i] << "/" << names[k] << " ";
+        }
+    };
+    one (d->sendCard, d->inputMeter, TXT ("내 오디오"));
+    one (d->monCard, d->outputMeter, TXT ("모니터"));
+    return bad;
+}
+
+juce::Button* UiSelfTest::confirmButton (const juce::String& text) const
+{
+    // 홈의 확인 모달 (모달 층: AppRoot 의 자식)
+    return home().confirm != nullptr ? findButton (*home().confirm, text) : nullptr;
+}
+
 juce::Button* UiSelfTest::firstButton (juce::Component& c)
 {
     for (auto* child : c.getChildren())
@@ -221,10 +288,41 @@ void UiSelfTest::enterNewRoom (bool approval)
     wait (300);
 }
 
+void UiSelfTest::closeToasts()
+{
+    add ([this] { for (auto* t : root.toasts) root.removeToast (t); }, 0);
+    waitUntil (TXT ("토스트 닫힘"), [this] { return root.toasts.isEmpty(); });
+}
+
 void UiSelfTest::minimize()
 {
-    add ([this] { if (auto* j = jam()) click (j->lobby); }, 0);
-    waitUntil (TXT ("최소화 (홈 + 막대)"), [this] { return root.isMinimized() && home().isShowing() && home().hasRoomBar(); });
+    // 홈·사이드바 디자인 v2: 방 화면 윗줄의 로비 보기 버튼은 없다. 사이드바 "공개 방" 을 누르면 방은 그대로 두고 공개 방으로 (최소화.
+    // v2.1 최신: 메뉴에 홈이 없다). 창이 좁아 방 화면에서 사이드바가 숨으면(플러그인 900) 예전 윗줄의 로비 보기
+    add ([this]
+    {
+        if (auto* j = jam(); j != nullptr && j->lobby.isVisible()) { click (j->lobby); return; }
+        const auto r = root.sidebar->devRow (TXT ("공개 방"));
+        expect (root.sidebar->isVisible() && ! r.isEmpty(), TXT ("사이드바 \"공개 방\""));
+        click (*root.sidebar, r.getCentre());
+    }, 0);
+    // 홈·사이드바 디자인: 최소화 막대 없이 사이드바 "참여 중" 항목이 방을 보여 준다
+    waitUntil (TXT ("최소화 (홈 + 사이드바 참여 중)"), [this]
+    {
+        const auto& s = core.store().state();
+        return root.isMinimized() && home().isShowing() && ! home().hasRoomBar()
+            && s.currentRoom && ! root.sidebar->devRow (s.currentRoom->title).isEmpty();
+    });
+    wait (200);
+}
+
+void UiSelfTest::clickSidebar (const juce::String& text)
+{
+    add ([this, text]
+    {
+        const auto r = root.sidebar->devRow (text);
+        expect (! r.isEmpty(), TXT ("사이드바에 \"") + text + "\"");
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+    }, 0);
     wait (200);
 }
 
@@ -239,8 +337,11 @@ void UiSelfTest::addLeaveTests()
     {
         auto* j = jam();
         expect (j->leave.isArmed() && inRoom(), TXT ("첫 클릭: 나가지 않고 확인 상태"));
-        expect (j->leave.getButtonText() == TXT ("한 번 더 누르면 나가요"), TXT ("확인 문구"));
-        expect (j->tip.isVisible() && j->tip.getTarget() == &j->leave, TXT ("방장: 확인 상태에서 툴팁"));
+        expect (j->leave.getWidth() == 32 && j->leave.getHeight() == 32, TXT ("방 나가기: 아이콘 버튼 32×32"));
+        expect (j->tip.isVisible() && j->tip.getTarget() == &j->leave, TXT ("방장: 확인 상태에서 말풍선"));
+        expect (j->tip.getText() == TXT ("한 번 더 누르면 나가요") && j->tip.getSubText() == TXT ("나가면 방이 닫혀요"),
+                TXT ("말풍선: 방장이고 혼자면 \"나가면 방이 닫혀요\" (") + j->tip.getSubText() + ")");
+        expect (j->leave.getTooltip().isEmpty(), TXT ("확인 상태: 툴팁 대신 말풍선"));
         if (j->tip.isVisible())
             expect (j->tip.getY() == j->leave.getBottom() + 6 && j->tip.getRight() == j->leave.getRight(), TXT ("툴팁: 버튼 아래 6, 오른쪽 끝 맞춤"));
         click (j->membersCard, { 40, 120 });   // 바깥
@@ -249,14 +350,55 @@ void UiSelfTest::addLeaveTests()
     {
         auto* j = jam();
         expect (! j->leave.isArmed() && inRoom(), TXT ("바깥 클릭: 원래대로"));
-        expect (! j->tip.isVisible(), TXT ("바깥 클릭: 툴팁 사라짐"));
+        expect (! j->tip.isVisible(), TXT ("바깥 클릭: 말풍선 사라짐"));
+        expect (j->leave.getTooltip() == TXT ("방 나가기"), TXT ("평소 툴팁 \"방 나가기\""));
         click (j->leave);
     }, 3300);
-    add ([this] { expect (! jam()->leave.isArmed() && inRoom(), TXT ("3초가 지나면 원래대로")); });
+    add ([this] { expect (! jam()->leave.isArmed() && ! jam()->tip.isVisible() && inRoom(), TXT ("3초가 지나면 원래대로 (말풍선도 사라짐)")); });
+
+    // 방장이고 다른 사람이 있으면 "돌아올 때까지 방장 자리가 비어요" (가짜 사용자의 입장 요청을 받아 들인다)
+    add ([this] { if (auto* f = core.fakeServer()) f->devJoinRequest(); }, 0);
+    waitUntil (TXT ("입장 요청"), [this] { return ! core.store().state().joinRequests.empty(); });
+    add ([this] { core.room().acceptJoinRequest (core.store().state().joinRequests.front().id); }, 0);
+    waitUntil (TXT ("두 사람"), [this]
+    {
+        const auto& r = core.store().state().currentRoom;
+        return r && juce::jmax (r->memberCount, (int) r->members.size()) >= 2;
+    });
     add ([this] { click (jam()->leave); });
-    add ([this] { click (jam()->leave); }, 0);
+    add ([this]
+    {
+        auto* j = jam();
+        expect (j->leave.isArmed() && j->tip.getSubText() == TXT ("돌아올 때까지 방장 자리가 비어요"),
+                TXT ("말풍선: 방장이고 다른 사람이 있으면 \"돌아올 때까지 방장 자리가 비어요\" (") + j->tip.getSubText() + ")");
+        click (j->leave);   // 두 번째: 나간다
+    }, 0);
     waitUntil (TXT ("두 번째 클릭으로 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
     add ([this] { expect (! inRoom() && ! home().hasRoomBar(), TXT ("두 번째 클릭: 방에서 나가 홈")); });
+
+    // 방장이 아니면 둘째 줄 없음 (가짜 방장의 공개 방)
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        for (auto& r : s.publicRooms)
+            if (! r.isApproval() && core::rooms::hasRoomFor (r, s.me ? s.me->id : juce::String()) && ! kickedRooms.contains (r.id))
+            {
+                core.home().joinRoom (r.id, [] (core::Result<core::JoinResult>) {});
+                return;
+            }
+    }, 0);
+    waitUntil (TXT ("가짜 방장의 방에 들어감"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); }, 6000);
+    closeToasts();
+    add ([this] { click (jam()->leave); }, 300);
+    add ([this]
+    {
+        auto* j = jam();
+        expect (! core.store().state().amHost() && j->leave.isArmed() && j->tip.isVisible() && j->tip.getText() == TXT ("한 번 더 누르면 나가요")
+                    && j->tip.getSubText().isEmpty(),
+                TXT ("방장이 아니면 둘째 줄 없음 (") + j->tip.getSubText() + ")");
+        click (j->leave);
+    }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
 }
 
 //==============================================================================
@@ -277,7 +419,7 @@ void UiSelfTest::addMinimizeTests()
     add ([this] { type (TXT ("draft 쓰는 중")); });
     add ([this]
     {
-        if (auto* b = firstButton (jam()->friendsCard)) click (*b);   // 친구 패널 접기
+        if (auto* b = firstButton (root.dock->monCard)) click (*b);   // 모니터 패널 접기 (v2.1: 방 화면에 친구 패널 없음)
     }, 700);
     add ([this] { jam()->chatViewport.setViewPosition (0, 120); });   // 채팅을 위로 올려 둔다 (맨 아래가 아니면 새 메시지를 따라가지 않는다)
     add ([this, state]
@@ -287,11 +429,13 @@ void UiSelfTest::addMinimizeTests()
         (*state)["room"] = roomId();
         (*state)["text"] = j->chatInput.getText();
         (*state)["scroll"] = j->chatViewport.getViewPositionY();
-        (*state)["friendsOpen"] = j->friendsOpen;
+        (*state)["monOpen"] = root.dock->monOpen;
         (*state)["phase"] = (int) session->getPhase();
         (*state)["msgs"] = (int) session->chat().getMessages().size();
         expect ((*state)["text"].toString() == TXT ("draft 쓰는 중"), TXT ("채팅 입력에 글을 써 둠"));
-        expect (! j->friendsOpen, TXT ("친구 패널을 접어 둠"));
+        expect (! root.dock->monOpen, TXT ("모니터 패널을 접어 둠"));
+        expect (! j->friendsCard.isVisible(), TXT ("방 화면에 친구 패널 없음 (v2.1)"));
+        expect (! j->chatOpen || j->chatCard.getHeight() == j->sideAvail, TXT ("채팅이 반주 위까지 세로 전체 (") + juce::String (j->chatCard.getHeight()) + " / " + juce::String (j->sideAvail) + ")");
         // 셀프 모니터: 끈 채로, 입장 전 듣기는 켠 채로 (최소화한 홈에서 이것으로 바뀌면 안 된다)
         session->setSelfMonitor (false);
         session->setHomeMonitor (true);
@@ -308,9 +452,6 @@ void UiSelfTest::addMinimizeTests()
                 TXT ("오디오 연결 그대로 (단계 ") + juce::String ((int) (*state)["phase"]) + " -> " + juce::String ((int) session->getPhase()) + ")");
         expect (session->isSelfMonitorAudible() == (bool) (*state)["selfMon"] && ! session->isHomeMonitorAudible(), TXT ("셀프 모니터 같음 (끔)"));
         expect (! home().monitorTag.isVisible(), TXT ("홈의 \"내 소리 듣는 중\" 표시 없음"));
-        expect (home().devRoomBar()->getHeight() == HomeScreen::roomBarH && home().devRoomBar()->getBottom() == home().getHeight(), TXT ("막대 57, 아래에 붙음"));
-        expect (home().roomsCard.getBottom() <= home().devRoomBar()->getY(), TXT ("목록은 막대 위로 줄어듦"));
-        expect (home().devRoomBarUnread() == 0, TXT ("새 채팅 0 부터"));
         // 최소화 중 받은 채팅 2개
         auto& chat = session->chat();
         chat.received ({ chat.group(), "u_left_preview", "id:uitest1", TXT ("최소화 중 1") });
@@ -319,62 +460,46 @@ void UiSelfTest::addMinimizeTests()
     }, 300);
     add ([this]
     {
-        expect (home().devRoomBarUnread() == 2, TXT ("막대: 새 채팅 2"));
         bool found = false;
         for (auto* t : root.toasts)
             if (t->getTitle() == TXT ("자가 테스트 토스트"))
             {
                 found = true;
-                expect (t->getBottom() == root.getHeight() - 69, TXT ("토스트 아래 여백 69"));
+                expect (t->getPanelBounds().getBottom() == root.getHeight() - 12, TXT ("토스트 아래 여백 12 (막대 없음)"));
             }
         expect (found, TXT ("토스트가 뜸"));
         // 셀프 모니터를 켜도 같은 값
         core.jam()->setSelfMonitor (true);
         expect (core.jam()->isSelfMonitorAudible(), TXT ("최소화 중 셀프 모니터 켬 → 들림"));
-        click (*home().devRoomBar(), { 60, 28 });   // 막대 왼쪽 (방 이름)
     }, 0);
-    waitUntil (TXT ("막대를 누르면 합주 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
+    clickSidebar (TXT ("자가 테스트 방"));   // 사이드바 참여 중 항목
+    waitUntil (TXT ("참여 중 항목을 누르면 합주 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
     add ([this, state]
     {
         auto* j = jam();
         auto* session = core.jam();
-        expect (! home().isVisible() && ! home().hasRoomBar(), TXT ("돌아오면 홈·막대 숨김"));
+        expect (! home().isVisible() && ! home().hasRoomBar(), TXT ("돌아오면 홈 숨김"));
         expect (session->chat().getUnread() == 0, TXT ("돌아오면 새 채팅 읽음"));
         expect (j->chatInput.getText() == (*state)["text"].toString(), TXT ("입력 중인 글 그대로"));
         expect (std::abs (j->chatViewport.getViewPositionY() - (int) (*state)["scroll"]) <= 1,
                 TXT ("채팅 스크롤 그대로 (") + (*state)["scroll"].toString() + " -> " + juce::String (j->chatViewport.getViewPositionY()) + ")");
-        expect (j->friendsOpen == (bool) (*state)["friendsOpen"], TXT ("접기 상태 그대로"));
+        expect (root.dock->monOpen == (bool) (*state)["monOpen"], TXT ("접기 상태 그대로"));
         expect ((int) session->chat().getMessages().size() == (int) (*state)["msgs"] + 2, TXT ("최소화 중 받은 채팅이 목록에"));
         expect (session->isSelfMonitorAudible(), TXT ("돌아와도 셀프 모니터 같음 (켬)"));
         session->setSelfMonitor (false);
         session->setHomeMonitor (false);
     });
 
-    begin (TXT ("5 최소화: 막대의 나가기"));
-    minimize();
-    add ([this] { click ((*home().devRoomBarLeave())); });
-    add ([this]
-    {
-        auto& bar = *home().devRoomBar();
-        auto& leaveB = *home().devRoomBarLeave();
-        expect (leaveB.isArmed() && root.isMinimized() && inRoom(), TXT ("첫 클릭: 막대 그대로, 확인 상태 (막대는 돌아가지 않음)"));
-        expect (leaveB.getButtonText() == TXT ("한 번 더 누르면 나가요"), TXT ("확인 문구"));
-        expect (home().tip.isVisible() && home().tip.getBottom() == home().getLocalPoint (&bar, leaveB.getPosition()).y - 6,
-                TXT ("방장 툴팁: 버튼 위 6"));
-        click (home().roomsCard, { 30, 24 });   // 바깥 (공개 방 제목)
-    });
-    add ([this]
-    {
-        expect (! (*home().devRoomBarLeave()).isArmed() && root.isMinimized(), TXT ("바깥 클릭: 원래대로"));
-        click ((*home().devRoomBarLeave()));
-    });
-    add ([this] { click ((*home().devRoomBarLeave())); }, 0);
-    waitUntil (TXT ("막대에서 두 번 눌러 나감"), [this] { return ! inRoom() && ! home().hasRoomBar(); });
-    add ([this] { expect (! root.isMinimized() && home().isShowing() && jam() == nullptr, TXT ("나가면 막대 사라지고 보통 홈")); });
+    // 막대의 나가기는 없다 (최소화 막대를 뺐다): 합주 화면에서 나간다
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("합주 화면에서 두 번 눌러 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
 
     begin (TXT ("5 최소화: 다른 방 확인 모달"));
     enterNewRoom();
     minimize();
+    clickSidebar (TXT ("공개 방"));   // 방 목록은 공개 방 쪽에
+    add ([this] { expect (root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("공개 방 쪽")); });
     auto target = std::make_shared<juce::String>();
     auto pickCard = [this, target] () -> juce::Button*
     {
@@ -396,7 +521,7 @@ void UiSelfTest::addMinimizeTests()
     add ([this]
     {
         expect (home().confirm != nullptr, TXT ("'바로 입장' → 확인 모달"));
-        expect (findButton (home(), TXT ("나가고 들어가기")) != nullptr && findButton (home(), TXT ("취소")) != nullptr, TXT ("[취소] [나가고 들어가기]"));
+        expect (confirmButton (TXT ("나가고 들어가기")) != nullptr && confirmButton (TXT ("취소")) != nullptr, TXT ("[취소] [나가고 들어가기]"));
         key (juce::KeyPress (juce::KeyPress::escapeKey));
     }, 300);
     add ([this, pickCard]
@@ -413,7 +538,7 @@ void UiSelfTest::addMinimizeTests()
         expect (home().confirm == nullptr && inRoom(), TXT ("바깥 클릭 = 취소"));
         if (auto* b = pickCard()) click (*b);
     }, 300);
-    add ([this] { if (auto* ok = findButton (home(), TXT ("나가고 들어가기"))) click (*ok); }, 0);
+    add ([this] { if (auto* ok = confirmButton (TXT ("나가고 들어가기"))) click (*ok); }, 0);
     waitUntil (TXT ("나간 뒤 다른 방으로"), [this, target] { return inRoom() && roomId() == *target && jam() != nullptr && jam()->isShowing(); }, 6000);
     add ([this] { expect (! root.isMinimized() && ! home().hasRoomBar(), TXT ("새 방은 합주 화면으로 (최소화 아님)")); });
 
@@ -421,16 +546,28 @@ void UiSelfTest::addMinimizeTests()
     minimize();
     add ([this]
     {
-        // 친구 목록의 참여·요청 (승인 방에 있는 친구는 "요청")
-        auto* b = findButton (home().friendsCard, TXT ("요청"));
-        if (b == nullptr) b = findButton (home().friendsCard, TXT ("참여"));
-        expect (b != nullptr, TXT ("친구 목록에 참여·요청 버튼"));
-        if (b != nullptr) click (*b);
-    }, 300);
+        // 다른 방에서 합주 중인 친구: 사이드바 친구 줄 → 프로필 창의 참여·요청 (홈의 "합주 중인 친구" 카드는 홈을 꺼 둬서 없다)
+        const auto& s = core.store().state();
+        for (auto& f : s.friends)
+            if (f.status == "in_room" && f.room && (! s.currentRoom || f.room->id != s.currentRoom->id))
+            {
+                const auto r = root.sidebar->devRow (f.user.nickname.value_or (f.user.username));
+                if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+                else home().openProfile (f.user);
+                return;
+            }
+        expect (false, TXT ("다른 방에서 합주 중인 친구"));
+    }, 0);
+    waitUntil (TXT ("프로필 창에 참여·요청"), [this]
+    {
+        auto* m = dynamic_cast<ProfileModal*> (home().modal.get());
+        return m != nullptr && m->joinRoom.isVisible();
+    });
+    add ([this] { if (auto* m = dynamic_cast<ProfileModal*> (home().modal.get())) click (m->joinRoom); }, 300);
     add ([this]
     {
-        expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 들어가기")) != nullptr, TXT ("친구 참여 → 확인 모달"));
-        if (auto* c = findButton (home(), TXT ("취소"))) click (*c);
+        expect (home().confirm != nullptr && confirmButton (TXT ("나가고 들어가기")) != nullptr, TXT ("친구 참여 → 확인 모달"));
+        if (auto* c = confirmButton (TXT ("취소"))) click (*c);
     }, 300);
     add ([this]
     {
@@ -451,20 +588,29 @@ void UiSelfTest::addMinimizeTests()
     }, 300);
     add ([this] { expect (home().modal == nullptr && inRoom() && root.isMinimized(), TXT ("한 번 더 Esc: 코드 창 닫힘, 방 그대로")); });
 
-    begin (TXT ("5 최소화: 새 방 확인 모달"));
+    // v2.1 최신: 공개 방 머리말의 방 만들기(+ 아이콘)는 방에 있으면 숨는다 (사이드바 방 만들기와 같은 규칙)
+    begin (TXT ("5 최소화: 머리말 방 만들기 숨김"));
     minimize();
-    add ([this] { click (home().createRoom); }, 300);
+    clickSidebar (TXT ("공개 방"));
     add ([this]
     {
-        expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 만들기")) != nullptr, TXT ("'방 만들기' → [취소] [나가고 만들기]"));
-        if (auto* ok = findButton (home(), TXT ("나가고 만들기"))) click (*ok);
-    }, 0);
-    waitUntil (TXT ("나간 뒤 방 만들기 모달"), [this] { return ! inRoom() && dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr; }, 6000);
+        expect (inRoom() && root.isMinimized() && ! home().createIcon.isVisible(), TXT ("방에 있으면 머리말 방 만들기 없음"));
+        core.home().leaveRoom();
+    }, 300);
+    waitUntil (TXT ("방에서 나감"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
     add ([this]
     {
-        expect (! home().hasRoomBar() && home().confirm == nullptr, TXT ("막대·확인 모달 닫힘, 방 만들기 모달 열림"));
+        auto& c = home().createIcon;
+        expect (c.isVisible() && c.getTooltip() == TXT ("방 만들기") && c.getWidth() == 32 && c.getHeight() == 32
+                    && c.getRight() == home().getWidth() - metric::padX,
+                TXT ("방 밖: 머리말 방 만들기 아이콘 32×32, 오른쪽 18, 툴팁 (") + c.getBounds().toString() + ")");
+        click (c);
+    }, 300);
+    add ([this]
+    {
+        expect (dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr, TXT ("+ 아이콘 → 방 만들기 창"));
         home().closeOverlays();
-    });
+    }, 0);
 
     begin (TXT ("5 최소화: 내보내짐·방 닫힘"));
     auto joinFakeRoom = [this, target]
@@ -485,7 +631,7 @@ void UiSelfTest::addMinimizeTests()
     };
     joinFakeRoom();
     minimize();
-    add ([this] { if (auto* f = core.fakeServer()) f->devKickMe(); }, 0);
+    add ([this] { kickedRooms.add (roomId()); if (auto* f = core.fakeServer()) f->devKickMe(); }, 0);   // 내보내진 방은 다시 못 들어간다 (403 kicked)
     waitUntil (TXT ("최소화 중 내보내짐"), [this] { return ! inRoom(); });
     add ([this]
     {
@@ -540,7 +686,7 @@ void UiSelfTest::addResizeTests()
     // 끌어서 바꾼 너비는 지금 창의 최대에서 멈춘다 (플러그인 900: 240 ~ 280)
     auto widened = [this, plugin] (int w) { return core::panel::clampWidth (plugin, jam()->getWidth(), w); };
     // 멤버 행·내 오디오·모니터에서 볼륨이 60, 미터가 84 아래로 줄어든 곳 (없으면 빈 문자열)
-    auto tooSmall = [] (JamScreen& j)
+    auto tooSmall = [this] (JamScreen& j)
     {
         juce::String small;
         auto check = [&small] (juce::Component& c, const juce::String& where)
@@ -555,8 +701,14 @@ void UiSelfTest::addResizeTests()
         };
         if (auto* list = j.memberViewport.getViewedComponent())
             for (auto* row : list->getChildren()) check (*row, TXT ("멤버 행"));
-        check (j.sendCard, TXT ("내 오디오"));
-        check (j.monCard, TXT ("모니터"));
+        // 내 오디오·모니터: 카드 묶음 (미터 상자는 카드 묶음의 형제)
+        if (auto* d = root.dock.get())
+        {
+            check (d->sendCard, TXT ("내 오디오"));
+            check (d->monCard, TXT ("모니터"));
+            for (auto* m : std::initializer_list<juce::Component*> { &d->inputMeter, &d->outputMeter })
+                if (m->isVisible() && m->getWidth() < 84) small << TXT ("미터 ") << m->getWidth() << " ";
+        }
         return small;
     };
     add ([this, def]
@@ -565,7 +717,7 @@ void UiSelfTest::addResizeTests()
         auto* rz = j->devSideResizer();
         expect (j->sidePanelWidth() == def, TXT ("처음: 기본 너비 ") + juce::String (j->sidePanelWidth()));
         expect (rz->getWidth() == 18 && rz->getRight() == j->chatCard.getX() && rz->getX() == j->membersCard.getRight(), TXT ("끄는 자리: 멤버·패널 사이 18 전체"));
-        expect (rz->getY() == metric::headerH + 1 && rz->getBottom() == j->getHeight(), TXT ("끄는 자리: 본문 높이 전체"));
+        expect (rz->getY() == j->headerLine() + 1 && rz->getBottom() == j->getHeight(), TXT ("끄는 자리: 본문 높이 전체"));
         expect (rz->getMouseCursor() == juce::MouseCursor (juce::MouseCursor::LeftRightResizeCursor), TXT ("커서 col-resize"));
         expect (j->devSideLineColour().isTransparent(), TXT ("선: 평소 안 보임"));
         moveTo (*rz, { 9, rz->getHeight() / 2 });
@@ -602,7 +754,7 @@ void UiSelfTest::addResizeTests()
         juce::String bad;
         if (auto* list = j->memberViewport.getViewedComponent()) for (auto* row : list->getChildren()) bad << overlaps (*row);
         expect (bad.isEmpty(), TXT ("최대 너비: 멤버 행 겹침 없음 ") + bad);
-        bad = overlaps (j->sendCard) + overlaps (j->monCard);
+        bad = dockOverlaps();
         expect (bad.isEmpty(), TXT ("최대 너비: 내 오디오·모니터 겹침 없음 ") + bad);
         const auto small = tooSmall (*j);
         expect (small.isEmpty(), TXT ("최대 너비: 볼륨 60·미터 84 이상 ") + small);
@@ -667,6 +819,7 @@ void UiSelfTest::addChatInputTests()
     namespace ci = core::chatinput;
     begin (TXT ("7 채팅 입력"));
     enterNewRoom();
+    closeToasts();   // 친구 패널이 빠져 채팅 입력이 아래로 내려왔다. 앞 섹션 토스트 두 개가 쌓이면 입력 칸을 가린다
     // 입력 줄 높이 = 카드 안쪽 아래 − (목록 아래 + 구분선 1)
     auto rowH = [this] { auto* j = jam(); return j->chatCard.contentBounds().getBottom() - (j->chatViewport.getBottom() + 1); };
     auto lastText = [this] { const auto& m = core.jam()->chat().getMessages(); return m.empty() ? juce::String() : m.back().text; };
@@ -828,6 +981,7 @@ void UiSelfTest::addRoomListTests()
     add ([this, listed, cardButton] { expect (! listed ("r_zero_selftest") && cardButton ("r_zero_selftest") == nullptr, TXT ("0명 방은 보이지 않음")); });
 
     begin (TXT ("방 목록: 닫힌 방 카드를 누르면"));
+    clickSidebar (TXT ("공개 방"));   // 방 카드는 공개 방 쪽에 (홈·사이드바 디자인)
     add ([this, saved] { core.store().upsertPublicRoom (*saved); }, 300);   // rooms.removed 를 놓친 목록
     waitUntil (TXT ("닫힌 방 카드가 보임"), [saved, cardButton] { return cardButton (saved->id) != nullptr; });
     add ([this, saved, cardButton] { if (auto* b = cardButton (saved->id)) click (*b); }, 0);
@@ -865,7 +1019,8 @@ void UiSelfTest::addFriendRequestTests()
     };
     auto list = [this]() -> juce::Component*
     {
-        if (auto* j = jam(); j != nullptr && j->isShowing()) return j->notifications.get();
+        // 방 화면 윗줄 알림 버튼(사이드바가 숨은 좁은 창)의 목록, 아니면 프로필 › 알림 (홈이 띄우는 모달 층 팝오버: 방 화면 위에도 뜬다)
+        if (auto* j = jam(); j != nullptr && j->isShowing() && j->notifications != nullptr) return j->notifications.get();
         return home().notifications.get();
     };
     auto press = [this, list] (const juce::String& text) { if (auto* l = list()) if (auto* b = findButton (*l, text)) click (*b); };
@@ -880,7 +1035,7 @@ void UiSelfTest::addFriendRequestTests()
             f->onRequestForTest = [sent] (const core::HttpRequest& q) { if (q.path.startsWith ("/friends/requests/")) sent->add (q.method + " " + q.path); };
     }, 0);
     waitUntil (TXT ("받은 친구 요청 2개"), [this] { return core.store().state().friendRequests.size() == 2; });
-    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (home().bell); });
+    add ([this, reqs] { *reqs = core.store().state().friendRequests; home().toggleNotifications(); });
     waitUntil (TXT ("알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
     add ([press] { press (TXT ("수락")); }, 0);
     waitUntil (TXT ("수락이 서버로"), [sent] { return sent->size() == 1; });
@@ -927,29 +1082,677 @@ void UiSelfTest::addFriendRequestTests()
     {
         expect (sent->size() == 4 && (*sent)[3] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("재시도: 같은 id"));
         expect (requestIds().isEmpty(), TXT ("목록 비움"));
-        click (home().bell);   // 닫기
+        home().toggleNotifications();   // 닫기
     }, 300);
 
-    begin (TXT ("친구 요청: 합주 화면 알림 목록"));
+    // 홈·사이드바 디자인 v2: 방 화면 윗줄에 알림 버튼이 없다. 내 프로필 줄 → 메뉴 "알림" → (방은 그대로 두고) 홈 위 알림 목록
+    begin (TXT ("친구 요청: 방 안에서 내 프로필 › 알림"));
     enterNewRoom();
-    add ([this] { if (auto* f = core.fakeServer()) f->devFriendRequest(); }, 0);
+    add ([this]
+    {
+        auto* j = jam();
+        if (root.sidebar->isVisible())
+        {
+            expect (! j->lobby.isVisible() && ! j->bell.isVisible() && ! j->settings.isVisible(), TXT ("방 화면 윗줄: 로비·알림·설정 버튼 없음"));
+            expect (j->leave.isVisible() && j->roomTitle.getX() == metric::padX, TXT ("방 이름은 왼쪽 18, 방 나가기는 그대로"));
+        }
+        else   // 창이 좁아 사이드바가 숨으면 예전 윗줄 (갈 곳이 없어지지 않게)
+            expect (j->lobby.isVisible() && j->bell.isVisible() && j->settings.isVisible(), TXT ("사이드바가 숨으면 로비·알림·설정 버튼"));
+        if (auto* f = core.fakeServer()) f->devFriendRequest();
+    }, 0);
     waitUntil (TXT ("방 안에서 새 친구 요청"), [this] { return core.store().state().friendRequests.size() == 1; });
-    add ([this, reqs] { *reqs = core.store().state().friendRequests; click (jam()->bell); });
-    waitUntil (TXT ("합주 화면 알림 목록 열림"), [list] { return list() != nullptr && list()->isShowing(); });
+    add ([this, reqs]
+    {
+        *reqs = core.store().state().friendRequests;
+        if (root.sidebar->isVisible()) click (*root.sidebar, root.sidebar->devProfileRow().getCentre());
+        else click (jam()->bell);
+    });
+    add ([this]
+    {
+        if (root.profileMenu == nullptr) return;   // 알림 버튼으로 연 경우
+        const auto b = root.profileMenu->box;
+        click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + 16 });   // 첫 줄 "알림"
+    }, 300);
+    waitUntil (TXT ("알림 목록 열림 (방 화면 그대로)"), [this, list]
+    {
+        return list() != nullptr && list()->isShowing() && inRoom() && ! root.isMinimized() && jam() != nullptr && jam()->isShowing();
+    });
     add ([press] { press (TXT ("수락")); }, 0);
-    waitUntil (TXT ("합주 화면에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
+    waitUntil (TXT ("방 안에서 수락"), [reqs, isFriend] { return isFriend ((*reqs)[0].from.id); });
     add ([this, sent, reqs, requestIds]
     {
-        expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("합주 화면 줄 수락: 그 줄의 id"));
+        expect (sent->size() == 5 && (*sent)[4] == "POST /friends/requests/" + (*reqs)[0].id + "/accept", TXT ("알림 목록 줄 수락: 그 줄의 id"));
         expect (requestIds().isEmpty(), TXT ("목록 비움"));
         if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
     }, 300);
 }
 
 //==============================================================================
+// 홈·사이드바 디자인 v2.1: 접은 사이드바의 아이콘 순서와 동작. 방 칸은 방이 없으면 방 만들기, 있으면 그 방 (입장 요청 점).
+// 친구 칸은 친구 추가 (펼친 "친구 +" 와 같은 창). 접고 펴는 폭은 애니메이션 (180ms)
+void UiSelfTest::addRoomSidebarTests()
+{
+    // 방 화면에 들어가도 사이드바는 사용자가 둔 상태 그대로 (펼침/접힘). 창 폭이 좁을 때만 잠시 접힌다
+    // (독립 앱 1180 미만). 독립 앱에서는 사이드바가 통째로 숨지 않는다 (숨김은 좁은 플러그인 창 900~915 만)
+    auto expectRoomSidebar = [this] (bool userCollapsed, const juce::String& how)
+    {
+        const int w = root.getWidth();
+        const bool plugin = core.isPlugin();
+        const int need = core::panel::chrome + core::panel::membersMin + core::panel::defaultWidth (plugin);
+        const bool hidden = plugin && w - Sidebar::closedW < need;
+        const bool narrow = w - Sidebar::openW < need;
+        const int want = hidden ? 0 : ((userCollapsed || narrow) ? Sidebar::closedW : Sidebar::openW);
+        std::cerr << "UITEST INFO room sidebar (" << how << ") window " << w << (plugin ? " plugin" : " app")
+                  << " visible=" << root.sidebar->isVisible() << " width=" << root.sidebar->currentWidth() << " want=" << want << std::endl;
+        expect (root.sidebar->isVisible() == ! hidden, how + TXT (": 사이드바 ") + (hidden ? TXT ("숨김 (좁은 플러그인 창)") : TXT ("보임")));
+        if (! hidden)
+            expect (root.sidebar->currentWidth() == want, how + TXT (": 폭 ") + juce::String (want) + TXT (" (지금 ") + juce::String (root.sidebar->currentWidth()) + ")");
+        if (! hidden && want == Sidebar::closedW)
+            expect (inRoom() && ! root.sidebar->devRow (TXT ("공개 방")).isEmpty() && ! root.sidebar->devRow (core.store().state().currentRoom->title).isEmpty(),
+                    how + TXT (": 접혀도 아이콘 줄 (공개 방·방)"));
+        expect (jam() != nullptr && jam()->getX() == (hidden ? 0 : root.sidebar->currentWidth()), how + TXT (": 방 화면은 사이드바 오른쪽"));
+    };
+
+    begin (TXT ("사이드바: 방 화면에서 상태 유지"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    // 마우스 대신 공개 방 카드의 "바로 입장" 과 같은 기능을 부른다 (HomeScreen::enterRoom → joinRoom). macOS 러너에서는
+    // 가짜 마우스 클릭이 먹지 않는 곳이 있어, 창 폭별 확인(CI)이 클릭에 기대지 않게 한다. 카드 클릭은 방 목록 시험이 본다
+    auto joinable = [this]
+    {
+        const auto& s = core.store().state();
+        for (auto& r : s.publicRooms)
+            if (! r.isApproval() && core::rooms::hasRoomFor (r, s.me ? s.me->id : juce::String()) && ! kickedRooms.contains (r.id)) return r.id;
+        return juce::String();
+    };
+    waitUntil (TXT ("바로 입장할 공개 방"), [joinable] { return joinable().isNotEmpty(); });
+    add ([this, joinable] { const auto id = joinable(); if (id.isNotEmpty()) core.home().joinRoom (id, [] (core::Result<core::JoinResult>) {}); }, 0);
+    waitUntil (TXT ("공개 방에서 바로 입장 → 방 화면"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); }, 6000);
+    wait (600);   // 접히는 애니메이션(180ms)이 끝난 뒤
+    add ([this, expectRoomSidebar] { expectRoomSidebar (false, TXT ("펼친 채 입장")); }, 0);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (true); }, 0);
+    waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    enterNewRoom();
+    wait (600);
+    add ([this, expectRoomSidebar] { expectRoomSidebar (true, TXT ("접은 채 입장")); }, 0);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("다시 펼침"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+}
+
+void UiSelfTest::addSidebarTests()
+{
+    // 방 화면에 친구 패널이 없으므로(v2.1) 방 안 초대는 프로필 창의 "방 초대" 로 한다.
+    // 친구 패널의 "초대" 와 같은 동작: 누르면 3초 동안 "취소", 그 뒤 "초대됨"
+    begin (TXT ("프로필: 방 초대 (v2.1)"));
+    auto friendId = std::make_shared<juce::String>();
+    enterNewRoom();
+    waitUntil (TXT ("초대할 수 있는 친구 (온라인·방 밖)"), [this, friendId]
+    {
+        for (auto& f : core.store().state().friends)
+            if (f.canInvite) { *friendId = f.user.id; return true; }
+        return false;
+    }, 6000);
+    add ([this, friendId]
+    {
+        auto* j = jam();
+        expect (j != nullptr && ! j->friendsCard.isVisible(), TXT ("방 화면에 친구 패널 없음"));
+        const auto* f = core.store().state().findFriend (*friendId);
+        if (j == nullptr || f == nullptr) return;
+        // 사이드바 친구 줄을 누른다 (좁은 플러그인 창에서 사이드바가 숨으면 같은 길인 openProfile)
+        const auto row = root.sidebar->isVisible() ? root.sidebar->devRow (f->user.nickname.value_or (f->user.username)) : juce::Rectangle<int>();
+        if (! row.isEmpty()) click (*root.sidebar, row.getCentre());
+        else j->openProfile (*friendId);
+    }, 0);
+    auto profileModal = [this] { auto* j = jam(); return j != nullptr ? dynamic_cast<ProfileModal*> (j->modal.get()) : nullptr; };
+    waitUntil (TXT ("프로필 창에 \"방 초대\""), [profileModal] { auto* m = profileModal(); return m != nullptr && m->invite.isVisible(); });
+    add ([this, profileModal]
+    {
+        auto* m = profileModal();
+        if (m == nullptr) return;
+        expect (m->invite.getButtonText() == TXT ("방 초대"), TXT ("버튼 글자 \"방 초대\""));
+        expect (! m->request.isVisible() && ! m->joinRoom.isVisible(), TXT ("아래 버튼은 \"방 초대\" 하나"));
+        click (m->invite);
+    }, 200);
+    add ([this, profileModal, friendId]
+    {
+        auto* m = profileModal();
+        if (m == nullptr) { expect (false, TXT ("프로필 창이 그대로")); return; }
+        using P = core::HomeController::InviteState::Phase;
+        expect (core.home().inviteState (*friendId).phase == P::pending && m->invite.getButtonText() == TXT ("취소"), TXT ("누르면 3초 동안 \"취소\""));
+    });
+    waitUntil (TXT ("3초 뒤 \"초대됨\""), [this, profileModal, friendId]
+    {
+        auto* m = profileModal();
+        using P = core::HomeController::InviteState::Phase;
+        return m != nullptr && core.home().inviteState (*friendId).phase == P::sent && m->invite.getButtonText() == TXT ("초대됨");
+    }, 6000);
+    add ([this] { if (auto* j = jam()) j->closeOverlays(); }, 200);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+
+    // v2.1 최신: 창 윗부분 배치 (chromeVals A안). 맥 창 모드 = 신호등 오른쪽 접기 버튼(신호등 끝 + 12, 디자인 84)·로고 아래 줄(32)·
+    // 접히면 제목 줄 왼쪽 = 접기 버튼 - 12 (디자인 72). 미리 보기(--chrome=mac)의 신호등은 macOS 26 자리라 91·79,
+    // 신호등 없음(맥 전체 화면·윈도우·리눅스) = 펼침 접기 버튼 196·맨 윗줄 42, 접힘 12·52, 제목 줄 왼쪽 18. 접는 동안 같이 움직인다
+    begin (TXT ("사이드바: 창 배치 (v2.1 최신)"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    auto chromeCheck = [this] (const juce::String& how, int toggleX, int bodyTop, int titleInset)
+    {
+        auto* sb = root.sidebar.get();
+        const auto ta = root.toggle->getBounds();
+        expect (root.toggle->isVisible() && ta == juce::Rectangle<int> (toggleX, 10, 32, 32),
+                how + TXT (": 접기 버튼 (") + juce::String (toggleX) + TXT (", 10) (지금 ") + ta.toString() + ")");
+        expect (sb->viewport.getY() == bodyTop, how + TXT (": 메뉴 시작 ") + juce::String (bodyTop) + TXT (" (지금 ") + juce::String (sb->viewport.getY()) + ")");
+        expect (sb->headerInset() == titleInset && home().titleInset == titleInset,
+                how + TXT (": 제목 줄 왼쪽 ") + juce::String (titleInset) + TXT (" (지금 ") + juce::String (home().titleInset) + ")");
+        expect (sb->devRow (TXT ("홈")).isEmpty(), how + TXT (": 메뉴에 홈 없음"));
+    };
+    add ([this, chromeCheck]
+    {
+       #if JUCE_MAC
+        const auto native = Sidebar::Chrome::macWindow;   // 맥 독립 앱 창 모드 (전체 화면이 아니면)
+       #else
+        const auto native = Sidebar::Chrome::flat;        // 윈도우·리눅스: 제목 줄은 그대로, 신호등 없는 배치
+       #endif
+        expect (root.chromeMode() == (core.isPlugin() ? Sidebar::Chrome::flat : native), TXT ("이 플랫폼의 창 배치 (플러그인은 신호등 없는 배치)"));
+        root.devForceChrome (Sidebar::Chrome::macWindow);
+        chromeCheck (TXT ("맥 창 모드 펼침"), AppRoot::mockLightsRight + 12, 52 + 32, 18);
+        root.sidebar->setCollapsed (true);
+    }, 0);
+    add ([this]
+    {
+        // 접는 중: 로고 줄·제목 줄 여백이 끝 값 사이이고, 마지막 프레임의 폭과 같은 진행값으로 움직인다
+        auto* sb = root.sidebar.get();
+        const float e = (float) (sb->getWidth() - Sidebar::closedW) / (float) (Sidebar::openW - Sidebar::closedW);   // 마지막 프레임
+        const int logoRow = sb->viewport.getY() - 52, inset = home().titleInset;
+        expect (e > 0.02f && e < 0.98f, TXT ("접는 중 (진행값 ") + juce::String (e, 2) + ")");
+        expect (std::abs (logoRow - juce::roundToInt (32.0f * e)) <= 1 && std::abs (inset - juce::roundToInt (18.0f + (float) (AppRoot::mockLightsRight - 18) * (1.0f - e))) <= 1,
+                TXT ("접는 중: 폭 ") + juce::String (sb->getWidth()) + TXT (", 로고 줄 ") + juce::String (logoRow) + TXT (", 제목 줄 왼쪽 ") + juce::String (inset));
+    }, 60);
+    waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    add ([this, chromeCheck]
+    {
+        chromeCheck (TXT ("맥 창 모드 접힘"), AppRoot::mockLightsRight + 12, 52, AppRoot::mockLightsRight);
+        root.devForceChrome (Sidebar::Chrome::flat);
+        chromeCheck (TXT ("신호등 없음 접힘"), 12, 52, 18);
+        root.sidebar->setCollapsed (false);
+    }, 0);
+    add ([this]
+    {
+        // 펼치는 중 (신호등 없음): 접기 버튼 12 → 196, 맨 윗줄 52 → 42 가 폭과 같은 진행값으로 움직인다
+        auto* sb = root.sidebar.get();
+        const float e = (float) (sb->getWidth() - Sidebar::closedW) / (float) (Sidebar::openW - Sidebar::closedW);
+        const int tx = root.toggle->getX(), top = sb->viewport.getY();
+        expect (e > 0.02f && e < 0.98f, TXT ("펼치는 중 (진행값 ") + juce::String (e, 2) + ")");
+        expect (std::abs (tx - juce::roundToInt (12.0f + 184.0f * e)) <= 1 && std::abs (top - juce::roundToInt (52.0f - 10.0f * e)) <= 1,
+                TXT ("펼치는 중: 폭 ") + juce::String (sb->getWidth()) + TXT (", 접기 버튼 x ") + juce::String (tx) + TXT (", 맨 윗줄 ") + juce::String (top));
+    }, 60);
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    add ([this, chromeCheck]
+    {
+        chromeCheck (TXT ("신호등 없음 펼침"), 196, 42, 18);
+        root.devResetChrome();
+    }, 0);
+
+    // 참여 중·친구 섹션 접기 (디자인: 내용 높이 grid-template-rows 1fr ↔ 0fr, 화살표 0° ↔ -90°, 180ms 같은 곡선)
+    begin (TXT ("사이드바: 섹션 접기 애니메이션"));
+    add ([this]
+    {
+        auto* sb = root.sidebar.get();
+        const auto f = sb->devSection ("friends");
+        expect (f.full > 0 && f.visible == f.full && std::abs (f.angle) < 0.001f, TXT ("친구: 펼침 (") + juce::String (f.visible) + "/" + juce::String (f.full) + ")");
+        // 친구 머리말 누름
+        const auto h = sb->devSectionHeader (TXT ("친구"));
+        expect (! h.isEmpty(), TXT ("친구 머리말"));
+        if (! h.isEmpty()) click (*sb, h.getPosition().translated (12, 14));
+    }, 0);
+    // 접는 중 (180ms): 높이와 화살표가 끝 값 사이 (같은 진행값). 프레임 사이에서 한 번은 보인다
+    waitUntil (TXT ("접는 중: 높이·화살표가 끝 값 사이"), [this]
+    {
+        const auto f = root.sidebar->devSection ("friends");
+        const float e = (float) f.visible / (float) juce::jmax (1, f.full);
+        const float a = -juce::MathConstants<float>::halfPi * (1.0f - e);
+        return f.visible > 0 && f.visible < f.full && f.angle < -0.0001f && f.angle > -juce::MathConstants<float>::halfPi + 0.0001f
+            && std::abs (f.angle - a) < 0.05f;
+    }, 1000);
+    wait (400);
+    add ([this]
+    {
+        const auto f = root.sidebar->devSection ("friends");
+        expect (f.visible == 0 && std::abs (f.angle + juce::MathConstants<float>::halfPi) < 0.001f, TXT ("접힘: 높이 0, 화살표 -90°"));
+        if (const auto h = root.sidebar->devSectionHeader (TXT ("친구")); ! h.isEmpty()) click (*root.sidebar, h.getPosition().translated (12, 14));
+    }, 400);
+    add ([this]
+    {
+        const auto f = root.sidebar->devSection ("friends");
+        expect (f.visible == f.full && std::abs (f.angle) < 0.001f, TXT ("다시 펼침"));
+        const auto r = root.sidebar->devSection ("rooms");
+        expect (r.visible == r.full, TXT ("참여 중: 펼침"));
+    });
+
+    // 방에 있을 때 사이드바 친구 줄 "초대" (방 화면에서 뺀 친구 패널의 초대를 대신한다. 디자인 screen=방)
+    begin (TXT ("사이드바: 친구 줄 초대 (v2.1 최신)"));
+    auto invitee = std::make_shared<juce::String>();
+    enterNewRoom();
+    waitUntil (TXT ("초대할 수 있는 친구 (온라인·방 밖)"), [this, invitee]
+    {
+        for (auto& f : core.store().state().friends)
+            if (f.canInvite && f.status == "online" && core.home().inviteState (f.user.id).phase == core::HomeController::InviteState::Phase::none)
+            { *invitee = f.user.id; return true; }
+        return false;
+    }, 6000);
+    add ([this, invitee]
+    {
+        auto* sb = root.sidebar.get();
+        auto* b = sb->devInviteButton (*invitee);
+        const bool sidebarOpen = sb->isVisible() && ! sb->isCollapsed();
+        if (! sidebarOpen) { expect (b == nullptr || ! b->isVisible(), TXT ("접힌 사이드바에는 초대 버튼 없음")); return; }
+        expect (b != nullptr && b->isVisible() && b->getButtonText() == TXT ("초대"), TXT ("온라인 친구 줄 오른쪽 \"초대\""));
+        // 합주 중인 친구(같은 방·다른 방)는 버튼 없음
+        for (auto& f : core.store().state().friends)
+            if (f.status == "in_room")
+                expect (sb->devInviteButton (f.user.id) == nullptr, TXT ("합주 중인 친구는 초대 버튼 없음 (") + f.user.nickname.value_or (f.user.username) + ")");
+        if (b != nullptr) click (*b);
+    }, 200);
+    add ([this, invitee]
+    {
+        auto* b = root.sidebar->devInviteButton (*invitee);
+        if (b == nullptr) return;
+        using P = core::HomeController::InviteState::Phase;
+        expect (core.home().inviteState (*invitee).phase == P::pending && b->getButtonText() == TXT ("취소") && b->getTooltip().contains (TXT ("초 뒤 초대가 가요")),
+                TXT ("누르면 3초 동안 \"취소\" (") + b->getTooltip() + ")");
+    }, 300);
+    waitUntil (TXT ("3초 뒤 \"초대됨\""), [this, invitee]
+    {
+        auto* b = root.sidebar->devInviteButton (*invitee);
+        using P = core::HomeController::InviteState::Phase;
+        return b == nullptr || (core.home().inviteState (*invitee).phase == P::sent && b->getButtonText() == TXT ("초대됨"));
+    }, 6000);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+
+    begin (TXT ("사이드바: 접은 상태 (v2.1)"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (true); }, 0);
+    waitUntil (TXT ("접힘 (56)"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    add ([this]
+    {
+        auto* sb = root.sidebar.get();
+        const auto rooms = sb->devRow (TXT ("공개 방")), code = sb->devRow (TXT ("코드로 입장"));
+        const auto make = sb->devRow (TXT ("방 만들기")), add_ = sb->devRow (TXT ("친구 추가"));
+        expect (sb->devRow (TXT ("홈")).isEmpty(), TXT ("메뉴에 홈 없음 (v2.1 최신 homeMenu 숨김)"));
+        expect (! rooms.isEmpty() && ! make.isEmpty() && ! add_.isEmpty(), TXT ("아이콘: 공개 방·코드로 입장·방 만들기·친구 추가"));
+        expect (rooms.getY() < code.getY() && code.getY() < make.getY() && make.getY() < add_.getY(), TXT ("순서: 메뉴 → 방 칸 → 친구 추가"));
+        expect (code.getBottom() + 2 + 10 + 9 == make.getY() && make.getBottom() + 2 + 10 + 9 == add_.getY(), TXT ("간격: 구분선 위 -2, 아래 8 (v2.1)"));
+        click (*sb, make.getCentre());
+    });
+    add ([this]
+    {
+        expect (dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr, TXT ("방 만들기 아이콘 → 방 만들기 창"));
+        home().closeOverlays();   // (방 이름 칸에 포커스가 있으면 Esc 가 창을 닫지 않는다: main 과 같은 기존 동작)
+    }, 400);
+    add ([this] { click (*root.sidebar, root.sidebar->devRow (TXT ("친구 추가")).getCentre()); }, 300);
+    add ([this]
+    {
+        expect (home().modal != nullptr && dynamic_cast<CreateRoomModal*> (home().modal.get()) == nullptr
+                && findButton (*home().modal, TXT ("요청")) != nullptr, TXT ("친구 추가 아이콘 → 친구 추가 창"));
+        home().closeOverlays();
+    }, 400);
+    enterNewRoom (true);
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        expect (root.sidebar->devRow (TXT ("방 만들기")).isEmpty() && ! root.sidebar->devRow (s.currentRoom->title).isEmpty(), TXT ("방에 있으면 방 칸 = 참여 중인 방"));
+        expect (root.sidebar->currentWidth() == Sidebar::closedW, TXT ("방 화면에서도 접힌 채"));
+        if (auto* f = core.fakeServer()) f->devJoinRequest();
+    }, 0);
+    waitUntil (TXT ("입장 요청"), [this] { return ! core.store().state().joinRequests.empty(); });
+    add ([this]
+    {
+        expect (core.store().state().amHost(), TXT ("방장"));
+        // 방은 그대로, 공개 방으로 (좁은 플러그인 창은 방 화면에서 사이드바가 숨으므로 예전 로비 보기)
+        if (root.sidebar->isVisible()) click (*root.sidebar, root.sidebar->devRow (TXT ("공개 방")).getCentre());
+        else click (jam()->lobby);
+    });
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        expect (root.isMinimized(), TXT ("공개 방 아이콘: 방은 그대로 공개 방으로"));
+        click (*root.sidebar, root.sidebar->devRow (s.currentRoom->title).getCentre());
+    }, 300);
+    waitUntil (TXT ("방 아이콘 → 방 화면"), [this] { return ! root.isMinimized() && jam() != nullptr && jam()->isShowing(); });
+    add ([this] { click (jam()->leave); }, 300);
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); });
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("다시 펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+}
+
+//==============================================================================
 // AOO 서버에 닿지 못하는 곳에서 방을 빠르게 나갔다 들어가기 (E8·E9). 이름을 찾을 수 없는 AOO 서버로 보낸다.
 // E9 전에는 AOO 가 이름 조회 실패를 연결된 것으로 보고 연결되지 않은 소켓에 썼다 (E8 없이는 SIGPIPE 로 앱이 끝났다).
 // 이제는 붙기 실패로 오고, 앱은 끊김("연결이 끊겼어요")을 보이고 3초마다 다시 시도한다
+juce::String UiSelfTest::describe (const meon::chrome::Probe& p)
+{
+    const auto box = [] (const double (&b)[4]) { return "(" + juce::String (b[0], 1) + "," + juce::String (b[1], 1) + " " + juce::String (b[2], 1) + "x" + juce::String (b[3], 1) + ")"; };
+    return "macOS " + juce::String (p.os) + " installed=" + juce::String ((int) p.installed) + " fullscreen=" + juce::String ((int) p.fullScreen)
+         + " toolbar=" + juce::String ((int) p.toolbar) + " unified=" + juce::String ((int) p.unified) + " fullsize=" + juce::String ((int) p.fullSizeContent)
+         + " bar=" + juce::String (p.barH, 1)
+         + " close=" + box (p.lights[0]) + " mini=" + box (p.lights[1]) + " zoom=" + box (p.lights[2])
+         + " hit[toggle]=" + juce::String (p.hitToggle) + " hit[empty]=" + juce::String (p.hitEmpty) + " hit[close]=" + juce::String (p.hitClose)
+         + " forwarded=" + juce::String (p.forwarded) + " presses=" + juce::String (p.titleBarPresses)
+         + " edgePasses=" + juce::String (p.edgePasses) + " zoomed=" + juce::String ((int) p.zoomed) + " edges[" + juce::String (p.hitEdges) + "]";
+}
+
+void UiSelfTest::addChromeTests()
+{
+    // 맥 독립 앱 창: 빈 툴바 + unified 스타일이면 macOS 가 신호등을 52pt 윗줄의 세로 가운데에 놓는다 (버튼을 직접 옮기지 않는다).
+    // 창 크기·위치·사이드바 접기·앱 전환·더블클릭 확대·전체 화면 전후에 신호등이 같은 자리인지, 맨 윗줄 누름이 앱 화면으로 오는지 본다.
+    // 마우스 누름은 AppKit 이벤트 줄에 넣는다 (실제 클릭과 같은 길: 창 → 누를 뷰 찾기 → 앱 화면)
+    begin (TXT ("맥 창: 신호등 (빈 툴바 + unified)"));
+   #if ! JUCE_MAC
+    add ([this]
+    {
+        // 맥에서 "빈 곳"으로 누르는 점이 공개 방 제목 줄의 빈 곳인지만 본다 (JUCE 쪽 판정은 플랫폼과 같다)
+        const int x = root.sidebar->currentWidth() + (root.getWidth() - root.sidebar->currentWidth()) / 2;
+        auto* hit = root.getComponentAt (juce::Point<int> (x, 26));
+        expect (hit == root.home.get(), TXT ("제목 줄 가운데는 빈 곳 (") + (hit != nullptr ? juce::String (typeid (*hit).name()) : TXT ("없음")) + ")");
+        std::cerr << "UITEST INFO chrome: macOS 가 아니라 나머지는 건너뜀" << std::endl;
+    }, 0);
+   #else
+    if (core.isPlugin()) { add ([] { std::cerr << "UITEST INFO chrome: 플러그인이라 건너뜀" << std::endl; }, 0); return; }
+    struct Shared { meon::chrome::Probe first; juce::Rectangle<int> bounds; int presses = 0, edgePasses = 0; bool wasCollapsed = false, fullScreen = false;
+                    double frame[4] {}; juce::Rectangle<int> beforeZoom, zoomBounds, edgeBounds; bool zoomed = false; };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    // 창 왼쪽 위 기준 점 (peer 좌표 = 창 좌표: 내용이 창 맨 위까지)
+    auto togglePoint = [this]() -> juce::Point<int> { return toPeer (*root.toggle, centre()).roundToInt(); };
+    auto emptyPoint = [this]() -> juce::Point<int>
+    {
+        // 공개 방 제목 줄의 빈 곳 (제목과 오른쪽 버튼 사이)
+        const int x = root.sidebar->currentWidth() + (root.getWidth() - root.sidebar->currentWidth()) / 2;
+        return root.getPeer() != nullptr ? root.getPeer()->getComponent().getLocalPoint (&root, juce::Point<int> (x, 26)) : juce::Point<int>();
+    };
+    auto probeNow = [this, handle, togglePoint, emptyPoint]
+    {
+        const auto t = togglePoint();
+        const auto e = emptyPoint();
+        return meon::chrome::probe (handle(), t.x, t.y, e.x, e.y);
+    };
+    auto log = [] (const juce::String& when, const meon::chrome::Probe& p) { std::cerr << "UITEST INFO chrome " << when << ": " << describe (p) << std::endl; };
+    auto same = [this, sh, log] (const juce::String& when, const meon::chrome::Probe& p)
+    {
+        log (when, p);
+        bool ok = true;
+        for (int i = 0; i < 3; ++i)
+            for (int k = 0; k < 4; ++k)
+                ok = ok && std::abs (p.lights[i][k] - sh->first.lights[i][k]) < 0.5;
+        expect (ok, when + TXT (": 신호등이 처음과 같은 자리"));
+    };
+    auto peerBounds = [this] { return peer() != nullptr ? peer()->getBounds() : juce::Rectangle<int>(); };
+
+    closeToasts();
+    add ([this, sh, probeNow, log, togglePoint]
+    {
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+        const auto p = probeNow();
+        sh->first = p;
+        log (TXT ("시작"), p);
+        expect (p.installed && p.fullSizeContent && ! p.fullScreen, TXT ("제목 줄 없음 (내용이 창 맨 위까지)"));
+        expect (p.toolbar, TXT ("빈 툴바"));
+        const bool modern = juce::SystemStats::getOperatingSystemType() >= juce::SystemStats::MacOS_11;
+        if (modern)
+        {
+            expect (p.unified, TXT ("툴바 스타일 unified"));
+            expect (std::abs (p.barH - 52.0) < 0.5, TXT ("윗줄 높이 52 (지금 ") + juce::String (p.barH, 1) + ")");
+        }
+        bool centred = true;
+        for (auto& b : p.lights) centred = centred && std::abs ((b[1] + b[3] * 0.5) - p.barH * 0.5) <= 1.0;
+        expect (centred, TXT ("신호등이 윗줄 세로 가운데"));
+        expect (p.lights[0][0] < p.lights[1][0] && p.lights[1][0] < p.lights[2][0], TXT ("닫기·최소화·확대 순서"));
+        expect (root.chromeMode() == Sidebar::Chrome::macWindow, TXT ("사이드바: 맥 창 배치"));
+        const auto t = root.toggle->getBounds();
+        const int right = (int) std::ceil (p.lights[2][0] + p.lights[2][2]);
+        expect (t.getX() == right + 12, TXT ("접기 버튼 = 신호등 끝 ") + juce::String (right) + " + 12 (" + juce::String (t.getX()) + ")");
+        std::cerr << "UITEST INFO chrome 신호등 간격: 버튼 틀 x " << p.lights[0][0] << " / " << p.lights[1][0] << " / " << p.lights[2][0]
+                  << " (간격 " << (p.lights[1][0] - p.lights[0][0]) << "), 확대 버튼 오른쪽 끝 " << (p.lights[2][0] + p.lights[2][2])
+                  << ", 접기 버튼 x " << t.getX() << " (사이 " << (t.getX() - (p.lights[2][0] + p.lights[2][2])) << ")"
+                  << ", 접기 버튼 가운데 y " << togglePoint().y << std::endl;
+        expect (p.hitClose == "button", TXT ("신호등 누름은 신호등이 받음 (") + juce::String (p.hitClose) + ")");
+    }, 0);
+
+    // 창 크기·위치
+    add ([this, sh, peerBounds] { sh->bounds = peerBounds(); peer()->setBounds (sh->bounds.withSizeKeepingCentre (sh->bounds.getWidth() - 160, sh->bounds.getHeight() - 80), false); }, 700);
+    add ([probeNow, same] { same (TXT ("창 크기 줄임"), probeNow()); }, 0);
+    add ([this, sh] { peer()->setBounds (sh->bounds.translated (60, 40), false); }, 700);
+    add ([probeNow, same] { same (TXT ("창 옮김"), probeNow()); }, 0);
+    add ([this, sh] { peer()->setBounds (sh->bounds, false); }, 700);
+    add ([probeNow, same] { same (TXT ("창 원래대로"), probeNow()); }, 0);
+
+    // 사이드바 접기·펼치기
+    add ([this] { root.sidebar->setCollapsed (true); }, 0);
+    waitUntil (TXT ("접힘"), [this] { return root.sidebar->currentWidth() == Sidebar::closedW; });
+    add ([this, probeNow, same]
+    {
+        same (TXT ("사이드바 접음"), probeNow());
+        const int tx = root.toggle->getX();
+        expect (home().titleInset == tx - 12, TXT ("접힌 제목 줄 왼쪽 = 접기 버튼 - 12 (") + juce::String (home().titleInset) + " / " + juce::String (tx) + ")");
+    }, 100);
+    add ([this] { root.sidebar->setCollapsed (false); }, 0);
+    waitUntil (TXT ("펼침"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    add ([probeNow, same] { same (TXT ("사이드바 펼침"), probeNow()); }, 100);
+
+    // 다른 앱으로 갔다가 돌아옴 (키 창이 바뀐다)
+    add ([] { meon::chrome::devSetActive (false); }, 900);
+    add ([probeNow, same] { same (TXT ("앱 비활성"), probeNow()); }, 0);
+    add ([] { meon::chrome::devSetActive (true); }, 900);
+    add ([probeNow, same] { same (TXT ("앱 다시 활성"), probeNow()); }, 0);
+
+    // 맨 윗줄 누름 (AppKit 이벤트): 접기 버튼은 버튼으로, 빈 곳은 창 끌기로
+    add ([this, sh, handle, togglePoint]
+    {
+        sh->wasCollapsed = root.sidebar->isCollapsed();
+        const auto t = togglePoint();
+        meon::chrome::devPostClick (handle(), t.x, t.y, 1);
+    }, 0);
+    waitUntilOr (TXT ("윗줄 접기 버튼 누름"), [this, sh] { return root.sidebar->isCollapsed() != sh->wasCollapsed; }, 3000,
+                 [this] { expect (false, TXT ("윗줄의 접기 버튼을 눌러도 사이드바가 접히지 않음")); });
+    add ([this, sh, handle, togglePoint, probeNow, log]
+    {
+        log (TXT ("접기 버튼 누른 뒤"), probeNow());
+        if (root.sidebar->isCollapsed() != sh->wasCollapsed)
+        {
+            expect (true, TXT ("윗줄의 접기 버튼이 눌림"));
+            const auto t = togglePoint();
+            meon::chrome::devPostClick (handle(), t.x, t.y, 1);   // 다시 펼친다
+        }
+    }, 0);
+    waitUntilOr (TXT ("다시 펼침"), [this, sh] { return root.sidebar->isCollapsed() == sh->wasCollapsed; }, 3000,
+                 [this, sh] { root.sidebar->setCollapsed (sh->wasCollapsed); });
+    waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
+    add ([this, sh, handle, emptyPoint, probeNow]
+    {
+        auto* hit = root.getComponentAt (root.getLocalPoint (&root.getPeer()->getComponent(), emptyPoint()));
+        expect (hit == root.home.get(), TXT ("빈 곳 점이 제목 줄 빈 곳 (") + (hit != nullptr ? hit->getName() + " " + juce::String (typeid (*hit).name()) : TXT ("없음")) + ")");
+        sh->presses = probeNow().titleBarPresses;
+        sh->bounds = peer()->getBounds();
+        const auto e = emptyPoint();
+        meon::chrome::devPostClick (handle(), e.x, e.y, 1);
+    }, 800);
+    add ([this, sh, probeNow, same]
+    {
+        const auto p = probeNow();
+        expect (p.titleBarPresses > sh->presses, TXT ("빈 곳 누름 → 창 끌기 (titleBarMouseDown ") + juce::String (p.titleBarPresses - sh->presses) + TXT ("번)"));
+        std::cerr << "UITEST INFO chrome 빈 곳 누른 뒤 창 " << sh->bounds.toString() << " → " << peer()->getBounds().toString() << std::endl;
+        same (TXT ("빈 곳 누른 뒤"), p);
+    }, 0);
+    // 위 가장자리·위 모서리: macOS 의 크기 조절 자리 (창 틀 뷰가 받는 자리)는 앱이 끌지 않고 macOS 에 맡긴다.
+    // 예전 버그: 이 누름도 앱 화면으로 넘겨 창 끌기가 되어, 크기 조절 커서인데 창이 옮겨졌다
+    auto edgeDrag = [this, sh, handle, probeNow] (int x, int y, int dx, int dy)
+    {
+        const auto p = probeNow();
+        sh->presses = p.titleBarPresses;
+        sh->edgePasses = p.edgePasses;
+        sh->edgeBounds = peer()->getBounds();   // sh->bounds 는 다른 확인(전체 화면 전 크기 등)이 쓴다
+        meon::chrome::devWindowFrame (handle(), sh->frame);
+        meon::chrome::devPostDrag (handle(), x, y, dx, dy);
+    };
+    auto edgeResult = [this, sh, handle, probeNow] (const juce::String& name, bool expectResize)
+    {
+        const auto p = probeNow();
+        double f[4] {};
+        meon::chrome::devWindowFrame (handle(), f);
+        const int drags = p.titleBarPresses - sh->presses, passes = p.edgePasses - sh->edgePasses;
+        std::cerr << "UITEST INFO chrome " << name << ": 창 " << sh->frame[0] << "," << sh->frame[1] << " " << sh->frame[2] << "x" << sh->frame[3]
+                  << " → " << f[0] << "," << f[1] << " " << f[2] << "x" << f[3] << " (macOS 에 맡김 " << passes << ", 앱 끌기 " << drags << ")" << std::endl;
+        if (expectResize)
+        {
+            expect (drags == 0, name + TXT (": 앱이 창을 끌지 않음 (끌기 ") + juce::String (drags) + TXT ("번)"));
+            expect (passes > 0, name + TXT (": 크기 조절 자리 누름을 macOS 에 맡김 (") + juce::String (passes) + TXT ("번)"));
+            // 아래·안쪽으로 끈다: 높이가 줄고 아래 끝(AppKit y)은 그대로면 크기 조절 (옮겨졌으면 아래 끝도 움직인다)
+            if (std::abs (f[3] - sh->frame[3]) >= 1.0 || std::abs (f[2] - sh->frame[2]) >= 1.0)
+                expect (std::abs (f[1] - sh->frame[1]) < 1.0 && (f[3] < sh->frame[3] || f[2] < sh->frame[2]),
+                        name + TXT (": 크기가 바뀜 (") + juce::String (sh->frame[2], 0) + "x" + juce::String (sh->frame[3], 0) + " → "
+                        + juce::String (f[2], 0) + "x" + juce::String (f[3], 0) + TXT (", 아래 끝 그대로. 방향은 macOS 가 정함)"));
+            else
+                std::cerr << "UITEST INFO chrome " << name << ": 합성 이벤트로는 크기가 바뀌지 않음 (macOS 가 실제 마우스로 크기 조절을 따라가는 경우). 앱이 가로채지 않은 것만 확인" << std::endl;
+        }
+        else
+        {
+            expect (passes == 0, name + TXT (": 크기 조절 없음 (macOS 에 맡김 ") + juce::String (passes) + TXT ("번)"));
+        }
+        if (peer()->getBounds() != sh->edgeBounds) peer()->setBounds (sh->edgeBounds, false);   // 다음 확인을 위해 원래 자리로
+    };
+    add ([this, probeNow] { std::cerr << "UITEST INFO chrome 위 가장자리 누름 자리: " << probeNow().hitEdges << std::endl; }, 0);
+    add ([edgeDrag, emptyPoint] { edgeDrag (emptyPoint().x, 1, 0, 40); }, 0);   // 아래로 (위로 끌면 메뉴 막대에 막힌다)
+    add ([edgeResult] { edgeResult (TXT ("위 가장자리 끌기"), true); }, 1200);
+    // 모서리: 둥근 모서리 바깥(창이 아닌 곳)이 아니라, 모서리에서 가장 가까운 macOS 크기 조절 자리 (창 틀 뷰가 받는 점)를 누른다
+    for (const bool right : { false, true })
+    {
+        auto found = std::make_shared<bool> (false);
+        add ([this, handle, edgeDrag, right, found]
+        {
+            int x = 0, y = 0;
+            *found = meon::chrome::devCornerPoint (handle(), right, x, y);
+            std::cerr << "UITEST INFO chrome " << (right ? "오른쪽" : "왼쪽") << " 위 모서리 크기 조절 자리: "
+                      << (*found ? juce::String (x) + "," + juce::String (y) : juce::String ("없음")) << std::endl;
+            if (*found) edgeDrag (x, y, right ? -30 : 30, 30);   // 안쪽 아래로
+        }, 400);
+        add ([this, edgeResult, right, found]
+        {
+            const juce::String name = right ? TXT ("오른쪽 위 모서리 끌기") : TXT ("왼쪽 위 모서리 끌기");
+            if (*found) edgeResult (name, true);
+            else expect (false, name + TXT (": 모서리 근처에 macOS 크기 조절 자리가 없음"));
+        }, 1200);
+    }
+    add ([this, togglePoint, probeNow]
+    {
+        // 위 가장자리 바로 아래의 빈 곳·접기 버튼·신호등은 그대로
+        const auto p = probeNow();
+        expect (p.hitEmpty == "content" && p.hitToggle == "content" && p.hitClose == "button",
+                TXT ("가장자리 아래: 빈 곳·접기 버튼은 앱, 신호등은 신호등 (") + juce::String (p.hitEmpty) + "/" + juce::String (p.hitToggle) + "/" + juce::String (p.hitClose) + ")");
+    }, 400);
+
+    // 더블클릭 → 시스템 설정(기본: 확대)
+    add ([this, sh, handle, emptyPoint]
+    {
+        sh->bounds = peer()->getBounds();
+        sh->beforeZoom = sh->bounds;
+        const auto e = emptyPoint();
+        meon::chrome::devPostClick (handle(), e.x, e.y, 1);
+        meon::chrome::devPostClick (handle(), e.x, e.y, 2);
+    }, 0);
+    waitUntilOr (TXT ("더블클릭 확대"), [this, sh] { return peer()->getBounds() != sh->bounds; }, 3000,
+                 [this] { std::cerr << "UITEST INFO chrome 더블클릭 뒤 창 크기 그대로 (시스템 설정이 '아무것도 안 함'이거나 이미 최대)" << std::endl; });
+    add ({}, 600);
+    add ([this, sh, handle, emptyPoint, probeNow, same]
+    {
+        std::cerr << "UITEST INFO chrome 더블클릭 뒤 창 " << sh->bounds.toString() << " → " << peer()->getBounds().toString() << std::endl;
+        same (TXT ("더블클릭 확대 뒤"), probeNow());
+        sh->zoomBounds = peer()->getBounds();
+    }, 0);
+    // 확대(zoom) 상태: 위 가장자리는 크기 조절 없이 예전처럼 끌기
+    add ([this, sh, edgeDrag, emptyPoint, probeNow]
+    {
+        sh->zoomed = probeNow().zoomed;
+        if (sh->zoomed) edgeDrag (emptyPoint().x, 1, 0, 40);
+        else std::cerr << "UITEST INFO chrome 확대 상태가 아님 (isZoomed 0): 확대 상태 위 가장자리 확인 건너뜀" << std::endl;
+    }, 0);
+    add ([this, sh, edgeResult]
+    {
+        if (! sh->zoomed) return;
+        edgeResult (TXT ("확대 상태 위 가장자리"), false);
+        peer()->setBounds (sh->zoomBounds, false);
+    }, 1200);
+    add ([this, sh, handle, emptyPoint]
+    {
+        sh->bounds = sh->beforeZoom;
+        if (peer()->getBounds() != sh->bounds)
+        {
+            const auto e = emptyPoint();
+            meon::chrome::devPostClick (handle(), e.x, e.y, 1);
+            meon::chrome::devPostClick (handle(), e.x, e.y, 2);
+        }
+    }, 300);
+    waitUntilOr (TXT ("더블클릭 되돌림"), [this, sh] { return peer()->getBounds() == sh->bounds; }, 3000,
+                 [this, sh] { std::cerr << "UITEST INFO chrome 두 번째 더블클릭 뒤 창 " << peer()->getBounds().toString() << " (처음 " << sh->bounds.toString() << ")" << std::endl;
+                              peer()->setBounds (sh->bounds, false); });
+    add ({}, 600);
+    add ([probeNow, same] { same (TXT ("더블클릭 되돌린 뒤"), probeNow()); }, 0);
+
+    // 전체 화면: 툴바를 떼고 신호등 없는 배치 → 나오면 다시 같은 자리
+    add ([this, sh] { sh->bounds = peer()->getBounds(); peer()->setFullScreen (true); }, 0);
+    waitUntilOr (TXT ("전체 화면"), [this] { return peer()->isFullScreen(); }, 8000,
+                 [] { std::cerr << "UITEST INFO chrome 전체 화면에 들어가지 못함 (러너)" << std::endl; });
+    add ({}, 1200);
+    add ([this, sh, probeNow, log]
+    {
+        sh->fullScreen = peer()->isFullScreen();
+        if (! sh->fullScreen) return;
+        const auto p = probeNow();
+        log (TXT ("전체 화면"), p);
+        expect (! p.toolbar, TXT ("전체 화면: 툴바 뗌"));
+        expect (root.chromeMode() == Sidebar::Chrome::flat, TXT ("전체 화면: 신호등 없는 배치"));
+    }, 0);
+    // 전체 화면: 위 가장자리를 끌어도 크기·자리 그대로
+    add ([sh, edgeDrag, emptyPoint] { if (sh->fullScreen) edgeDrag (emptyPoint().x, 1, 0, 40); }, 400);
+    add ([this, sh, handle, edgeResult]
+    {
+        if (! sh->fullScreen) return;
+        double before[4] { sh->frame[0], sh->frame[1], sh->frame[2], sh->frame[3] }, f[4] {};
+        meon::chrome::devWindowFrame (handle(), f);
+        edgeResult (TXT ("전체 화면 위 가장자리"), false);
+        bool same = true;
+        for (int i = 0; i < 4; ++i) same = same && std::abs (f[i] - before[i]) < 1.0;
+        expect (same, TXT ("전체 화면 위 가장자리: 창 크기·자리 그대로"));
+        peer()->setFullScreen (false);
+    }, 1200);
+    waitUntilOr (TXT ("전체 화면 나옴"), [this] { return ! peer()->isFullScreen(); }, 8000,
+                 [] { std::cerr << "UITEST INFO chrome 전체 화면에서 나오지 못함" << std::endl; });
+    add ({}, 1500);
+    add ([this, sh, probeNow, same]
+    {
+        if (! sh->fullScreen) return;
+        const auto p = probeNow();
+        same (TXT ("전체 화면에서 나온 뒤"), p);
+        expect (p.toolbar && p.fullSizeContent, TXT ("나온 뒤: 툴바·제목 줄 없음 다시"));
+        expect (root.chromeMode() == Sidebar::Chrome::macWindow, TXT ("나온 뒤: 맥 창 배치"));
+        const auto b = peer()->getBounds();
+        expect (std::abs (b.getWidth() - sh->bounds.getWidth()) <= 1 && std::abs (b.getHeight() - sh->bounds.getHeight()) <= 1,
+                TXT ("나온 뒤 창 크기 그대로 (") + sh->bounds.toString() + " → " + b.toString() + ")");
+    }, 0);
+   #endif
+}
+
 void UiSelfTest::addAooDropTests()
 {
     begin (TXT ("AOO 끊김: 빠르게 나갔다 들어가기"));
@@ -986,6 +1789,2629 @@ void UiSelfTest::addAooDropTests()
         core.home().leaveRoom();
         if (auto* f = core.fakeServer()) f->devSetAoo (oldAoo->first, oldAoo->second);
     }, 300);
+}
+
+//==============================================================================
+// 팝오버 겉모양 (PopoverSurface): 판 둘레의 그림자 자리까지 그리는 구성 요소가 덮고(잘리지 않게), 그 자리는 마우스를 받지 않는다.
+// 그림자 흐림은 판 크기가 바뀔 때만 새로 계산한다 (창 크기를 바꿔 자리가 옮겨지거나 다시 그려도 그대로)
+void UiSelfTest::addPopoverTests()
+{
+    begin (TXT ("팝오버: 그림자 (프로필 메뉴·알림)"));
+    const int m = PopoverSurface::shadowMargin();
+    struct Shared { juce::Rectangle<int> bounds; };
+    auto sh = std::make_shared<Shared>();
+    closeToasts();
+    add ([this] { if (root.profileMenu == nullptr) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); }, 400);
+    waitUntil (TXT ("프로필 메뉴 열림"), [this] { return root.profileMenu != nullptr; });
+    add ([this, m]
+    {
+        auto& pm = *root.profileMenu;
+        expect (pm.getBounds() == root.getLocalBounds(), TXT ("프로필 메뉴: 창 전체를 덮는 투명 판 (창 맨 위 AppRoot 의 자식)"));
+        expect (pm.box.getWidth() == ProfileMenu::boxW && pm.box.getX() == 9, TXT ("프로필 메뉴: 폭 222, 왼쪽 9 (그대로)"));
+        expect (root.getIndexOfChildComponent (&pm) > root.getIndexOfChildComponent (root.sidebar.get())
+                 && root.getIndexOfChildComponent (&pm) > root.getIndexOfChildComponent (root.home.get()),
+                TXT ("프로필 메뉴: 사이드바·본문보다 위"));
+        if (root.sidebar->getWidth() > 0)
+            expect (pm.box.expanded (m).getRight() > root.sidebar->getRight(),
+                    TXT ("프로필 메뉴 그림자 자리가 사이드바 경계를 넘어 본문까지 (") + juce::String (pm.box.expanded (m).getRight()) + " > " + juce::String (root.sidebar->getRight()) + ")");
+        root.repaint();
+    }, 400);
+    add ([this, sh]
+    {
+        expect (root.profileMenu->getSurface().getBuildCount() == 1,
+                TXT ("프로필 메뉴 그림자: 한 번만 계산 (") + juce::String (root.profileMenu->getSurface().getBuildCount()) + ")");
+        sh->bounds = peer()->getBounds();
+        peer()->setBounds (sh->bounds.withHeight (sh->bounds.getHeight() - 60), false);   // 창 높이만 바꾼다: 메뉴는 아래에 붙어 자리만 옮겨진다
+    }, 500);
+    add ([this, sh]
+    {
+        expect (root.profileMenu != nullptr && root.profileMenu->box.getBottom() == root.getHeight() - 55, TXT ("창 높이를 바꾸면 메뉴도 따라 옮겨진다"));
+        if (root.profileMenu != nullptr)
+            expect (root.profileMenu->getSurface().getBuildCount() == 1,
+                    TXT ("창 크기를 바꿔 자리만 옮겨지면 그림자를 다시 계산하지 않는다 (") + juce::String (root.profileMenu->getSurface().getBuildCount()) + ")");
+        peer()->setBounds (sh->bounds, false);
+    }, 500);
+    // 메뉴의 "알림" 을 눌러 알림 패널 (사이드바 안, 프로필 줄 위)
+    add ([this]
+    {
+        if (root.profileMenu == nullptr) return;
+        const auto b = root.profileMenu->box;
+        click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + 16 });
+    }, 500);
+    waitUntil (TXT ("알림 패널 열림"), [this] { return root.home->popover != nullptr && root.home->popover->isShowing(); });
+    add ([this, m]
+    {
+        auto& p = *root.home->popover;
+        const auto panel = p.getPanelBounds();
+        expect (panel.getWidth() == 340 && panel.getX() == 9 && panel.getBottom() == root.home->getHeight() - 55,
+                TXT ("알림 패널: 폭 340, 왼쪽 9, 아래 55 (그대로) ") + panel.toString());
+        expect (p.getBounds() == panel.expanded (m), TXT ("알림 패널: 구성 요소는 판보다 그림자 폭만큼 크다 (") + juce::String (m) + ")");
+        // 그림자 자리 중 창 안에 있는 부분은 부모(모달 층 = AppRoot) 안: 잘리지 않는다
+        const auto inWindow = p.getBounds().getIntersection (root.getLocalBounds());
+        expect (root.getLocalBounds().contains (inWindow) && inWindow.getRight() == p.getRight() && inWindow.getY() == p.getY(),
+                TXT ("알림 패널 그림자: 위·오른쪽이 부모 안 (창 가장자리 쪽만 창 끝)"));
+        expect (p.getParentComponent() == &root && root.getIndexOfChildComponent (&p) > root.getIndexOfChildComponent (root.sidebar.get())
+                 && root.getIndexOfChildComponent (&p) > root.getIndexOfChildComponent (root.home.get()),
+                TXT ("알림 패널: 모달 층 (사이드바·본문 위) 에 있어 그림자가 사이드바 위로도 번진다"));
+        expect (! p.hitTest (panel.getRight() - p.getX() + 4, panel.getCentreY() - p.getY()), TXT ("알림 패널: 그림자 자리는 마우스를 받지 않는다"));
+        expect (p.hitTest (panel.getCentreX() - p.getX(), panel.getCentreY() - p.getY()), TXT ("알림 패널: 판 안은 받는다"));
+        root.repaint();
+    }, 400);
+    add ([this]
+    {
+        auto& p = *root.home->popover;
+        expect (p.getSurface().getBuildCount() == 1, TXT ("알림 패널 그림자: 한 번만 계산 (") + juce::String (p.getSurface().getBuildCount()) + ")");
+        root.sidebar->setCollapsed (! root.sidebar->isCollapsed());   // 사이드바 접기 (팝오버 자리·크기는 그대로)
+    }, 600);
+    add ([this]
+    {
+        auto& p = *root.home->popover;
+        expect (p.getSurface().getBuildCount() == 1, TXT ("사이드바를 접어도 그림자를 다시 계산하지 않는다 (") + juce::String (p.getSurface().getBuildCount()) + ")");
+        root.sidebar->setCollapsed (! root.sidebar->isCollapsed());
+        root.home->toggleNotifications();
+    }, 600);
+    // 토스트: 팝오버와 같은 표면 (테두리 #EBEBEB + 그림자 두 겹). 자리·크기는 그대로 (오른쪽 12, 아래 12, 폭 280)
+    closeToasts();
+    add ([this] { root.addInfoToast (TXT ("표면 확인 토스트"), TXT ("둘째 줄")); }, 500);
+    add ([this, m]
+    {
+        Toast* t = nullptr;
+        for (auto* x : root.toasts) if (x->getTitle() == TXT ("표면 확인 토스트")) t = x;
+        expect (t != nullptr, TXT ("토스트 뜸"));
+        if (t == nullptr) return;
+        const auto panel = t->getPanelBounds();
+        expect (panel.getWidth() == Toast::width && panel.getRight() == root.getWidth() - 12 && panel.getBottom() == root.getHeight() - 12,
+                TXT ("토스트: 폭 280, 오른쪽 12, 아래 12 (그대로) ") + panel.toString());
+        expect (t->getBounds() == panel.expanded (m), TXT ("토스트: 구성 요소는 판보다 그림자 폭만큼 크다 (그림자가 잘리지 않게)"));
+        expect (! t->hitTest (panel.getX() - t->getX() - 4, panel.getCentreY() - t->getY()), TXT ("토스트: 그림자 자리는 마우스를 받지 않는다"));
+        root.repaint();
+    }, 400);
+    add ([this]
+    {
+        for (auto* x : root.toasts)
+            if (x->getTitle() == TXT ("표면 확인 토스트"))
+                expect (x->getSurface().getBuildCount() == 1, TXT ("토스트 그림자: 한 번만 계산 (") + juce::String (x->getSurface().getBuildCount()) + ")");
+    }, 0);
+    closeToasts();
+}
+
+//==============================================================================
+// 윈도우 창 윗부분 (디자인 v2.1 os = 윈도우): 창 버튼 셋은 에디터 맨 위 오른쪽 끝 46×51, 제목 줄 오른쪽 여백 150.
+// 윈도우에서는 실제 창(MeonWindowFrame)으로: 영역 판정(WM_NCHITTEST), 맨 위 줄 픽셀, 최대화(화면 안에 딱), 버튼 마우스 올림 색,
+// 더블클릭 최대화·복원, Alt+Space 창 메뉴, 제목 줄 끌기, 최소화. 입력은 SendInput (실제 입력과 같은 길)
+void UiSelfTest::addWinChromeTests()
+{
+    begin (TXT ("윈도우 창 윗부분 (창 버튼 + 제목 줄)"));
+    if (core.isPlugin()) { add ([] { std::cerr << "UITEST INFO winchrome: 플러그인이라 건너뜀 (창 주인이 DAW)" << std::endl; }, 0); return; }
+    struct Shared
+    {
+        bool on = false, real = false;
+        meon::winframe::Probe before;
+        int sysMenus = 0;
+        juce::Rectangle<int> windowBefore;
+    };
+    auto sh = std::make_shared<Shared>();
+    auto caption = [this]() -> WinCaptionButtons*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (auto* w = dynamic_cast<WinCaptionButtons*> (c)) return w;
+        return nullptr;
+    };
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    // 구성 요소 좌표 → 화면 물리 좌표 (WM_NCHITTEST·SendInput 이 쓰는 좌표)
+    auto phys = [] (juce::Component& c, juce::Point<int> local)
+    {
+        return juce::Desktop::getInstance().getDisplays().logicalToPhysical (c.localPointToGlobal (local));
+    };
+    auto emptyTitle = [this]() { return juce::Point<int> (root.sidebar->getRight() + 260, 26); };   // 공개 방 제목 오른쪽 빈 곳
+    auto ht = [handle] (juce::Point<int> s) { return meon::winframe::devHitTest (handle(), s.x, s.y); };
+    auto rectStr = [] (const int r[4]) { return juce::String (r[0]) + "," + juce::String (r[1]) + " " + juce::String (r[2]) + "x" + juce::String (r[3]); };
+
+    add ([this, sh, caption, handle]
+    {
+        sh->on = caption() != nullptr;
+        if (! sh->on) { std::cerr << "UITEST INFO winchrome: 창 버튼 없음 (윈도우가 아니고 --chrome=win 도 아님). 건너뜀" << std::endl; return; }
+        sh->real = meon::winframe::installedOn (handle());
+        if (root.page != Sidebar::Page::rooms) root.showPage (Sidebar::Page::rooms);
+    }, 600);
+    closeToasts();
+    // 배치 (모든 플랫폼: 윈도우는 실제 창, 그 밖은 --chrome=win 미리 보기)
+    add ([this, sh, caption, emptyTitle]
+    {
+        if (! sh->on) return;
+        auto* cb = caption();
+        auto* editor = root.getParentComponent();
+        const int W = editor->getWidth();
+        expect (cb->getBounds() == juce::Rectangle<int> (W - 138, 0, 138, 51), TXT ("창 버튼: 오른쪽 위 끝 138×51 (버튼 46×51 셋) ") + cb->getBounds().toString());
+        const int top = editor->getNumChildComponents() - 1;
+        const int idx = editor->getIndexOfChildComponent (cb);
+        expect (idx == top || (idx == top - 1 && dynamic_cast<juce::TooltipWindow*> (editor->getChildComponent (top)) != nullptr),
+                TXT ("창 버튼은 에디터 맨 위 (툴팁 창만 그 위)"));
+        expect (root.getTitleRightInset() == 150, TXT ("제목 줄 오른쪽 여백 150 (138 + 12): ") + juce::String (root.getTitleRightInset()));
+        auto& icon = root.home->createIcon;
+        const auto iconRight = editor->getLocalPoint (root.home.get(), juce::Point<int> (icon.getRight(), 0)).x;
+        expect (icon.isVisible() && iconRight == cb->getX() - 12, TXT ("공개 방 + 아이콘: 창 버튼 왼쪽 12 (오른쪽 끝 ") + juce::String (iconRight) + " / " + juce::String (cb->getX() - 12) + ")");
+        expect (cb->buttonAt ({ 23, 25 }) == WinCaptionButtons::minimise && cb->buttonAt ({ 69, 25 }) == WinCaptionButtons::maximise
+                 && cb->buttonAt ({ 115, 25 }) == WinCaptionButtons::closeButton, TXT ("버튼 순서: 최소화 · 최대화 · 닫기"));
+        // 제목 줄 판정 (맥 창 끌기와 같은 조건): 빈 곳·사이드바 로고 줄은 끌기, 버튼·아이콘·본문은 아니다
+        expect (root.titleBarDragAt (emptyTitle()), TXT ("제목 줄 빈 곳 = 끌기 자리"));
+        expect (! root.titleBarDragAt (root.getLocalPoint (&icon, icon.getLocalBounds().getCentre())), TXT ("+ 아이콘 = 앱 버튼"));
+        expect (root.titleBarDragAt ({ 120, 26 }), TXT ("사이드바 로고 줄 빈 곳 = 끌기 자리"));
+        if (root.toggle->isVisible()) expect (! root.titleBarDragAt (root.toggle->getBounds().getCentre()), TXT ("사이드바 접기 버튼 = 앱 버튼"));
+        expect (! root.titleBarDragAt ({ emptyTitle().x, 100 }), TXT ("제목 줄 아래 = 앱 화면"));
+    }, 200);
+    // 설정 팝업이 떠 있어도 창 버튼은 맨 위에서 눌러진다
+    add ([this, sh] { if (sh->on && root.onOpenSettings) root.onOpenSettings (0); }, 700);
+    add ([this, sh, caption, handle, phys, emptyTitle, ht]
+    {
+        if (! sh->on) return;
+        auto* cb = caption();
+        auto* editor = root.getParentComponent();
+        const auto closeC = editor->getLocalPoint (cb, cb->buttonBounds (WinCaptionButtons::closeButton).getCentre());
+        expect (editor->getComponentAt (closeC) == cb, TXT ("설정 팝업 위에서도 닫기 버튼이 맨 위 (눌러진다)"));
+        if (sh->real)
+        {
+            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == (meon::winframe::probe (handle()).win11 ? 9 : 1),
+                    TXT ("설정 팝업 위: 최대화 버튼 (윈도우 11 HTMAXBUTTON, 윈도우 10 앱 화면)"));
+            const int t = ht (phys (root, emptyTitle()));
+            expect (t == 1, TXT ("설정 팝업이 떠 있으면 제목 줄은 앱 화면 (맥과 같다): ") + juce::String (t));
+        }
+        editor->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 600);
+    // 홈·방 화면의 모달(모달 층: 창 전체)이 떠 있어도 창 버튼은 맨 위에서 눌러진다 (설정 창과 같다)
+    add ([this, sh] { if (sh->on) home().openAddFriend(); }, 500);
+    add ([this, sh, caption, handle, phys, emptyTitle, ht]
+    {
+        if (! sh->on) return;
+        auto* cb = caption();
+        auto* editor = root.getParentComponent();
+        const auto closeC = editor->getLocalPoint (cb, cb->buttonBounds (WinCaptionButtons::closeButton).getCentre());
+        expect (home().modal != nullptr && home().modal->getParentComponent() == &root && home().modal->getBounds() == root.getLocalBounds(),
+                TXT ("친구 추가: 모달 층 (창 전체)"));
+        expect (editor->getComponentAt (closeC) == cb, TXT ("친구 추가 모달 위에서도 닫기 버튼이 맨 위 (눌러진다)"));
+        if (sh->real)
+        {
+            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == (meon::winframe::probe (handle()).win11 ? 9 : 1),
+                    TXT ("모달 위: 최대화 버튼 (윈도우 11 HTMAXBUTTON, 윈도우 10 앱 화면)"));
+            const int t = ht (phys (root, emptyTitle()));
+            expect (t == 1, TXT ("모달이 떠 있으면 제목 줄은 앱 화면 (설정 창과 같다): ") + juce::String (t));
+        }
+        home().closeOverlays();
+    }, 300);
+    if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
+    {
+        add ([sh] { if (sh->on) std::cerr << "UITEST INFO winchrome: 윈도우가 아니라 실제 창 확인은 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    // ── 윈도우: 실제 창 ──
+    add ([this, sh, caption, handle, phys, emptyTitle, ht, rectStr]
+    {
+        if (! sh->on) return;
+        expect (sh->real, TXT ("창 틀 붙음 (MeonWindowFrame)"));
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        sh->before = p;
+        std::cerr << "UITEST INFO winchrome: os " << p.os << " dpi " << p.dpi << " resizeBorder " << p.resizeBorder
+                  << " window " << rectStr (p.window) << " client " << rectStr (p.client) << " monitor " << rectStr (p.monitor)
+                  << " work " << rectStr (p.work) << " ncCalc " << p.ncCalc << std::endl;
+        expect (p.client[1] == p.window[1], TXT ("제목 줄 없음: 내용 위 = 창 위 (") + juce::String (p.client[1]) + " / " + juce::String (p.window[1]) + ")");
+        const int left = p.client[0] - p.window[0], right = (p.window[0] + p.window[2]) - (p.client[0] + p.client[2]);
+        const int bottom = (p.window[1] + p.window[3]) - (p.client[1] + p.client[3]);
+        expect (left == right && left == bottom && left == p.normalInsets[0] && p.normalInsets[1] == 0 && (p.win11 ? left == p.resizeBorder : left == 0),
+                TXT ("왼쪽·오른쪽·아래 틀: 윈도우 11 = 크기 조절 두께, 윈도우 10 = 0 (내용이 창 전체) (") + juce::String (left) + "/" + juce::String (right) + "/" + juce::String (bottom) + ")");
+        auto* cb = caption();
+        const int midX = p.window[0] + p.window[2] / 2;
+        struct H { const char* name; juce::Point<int> at; int want; };
+        const H checks[] = {
+            { "위 가장자리 → HTTOP 12", { midX, p.window[1] + 2 }, 12 },
+            { "제목 줄 빈 곳 → HTCAPTION 2", phys (root, emptyTitle()), 2 },
+            { "사이드바 로고 줄 빈 곳 → HTCAPTION 2", phys (root, { 120, 26 }), 2 },
+            { p.win11 ? "최대화 버튼 → HTMAXBUTTON 9 (윈도우 11 스냅 레이아웃)" : "최대화 버튼 → HTCLIENT 1 (윈도우 10: 운영체제 버튼이 그려지지 않게 앱이 받음)",
+              phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre()), p.win11 ? 9 : 1 },
+            { "최소화 버튼 → HTCLIENT 1 (앱이 받음)", phys (*cb, cb->buttonBounds (WinCaptionButtons::minimise).getCentre()), 1 },
+            { "닫기 버튼 → HTCLIENT 1 (앱이 받음)", phys (*cb, cb->buttonBounds (WinCaptionButtons::closeButton).getCentre()), 1 },
+            { "+ 아이콘 → HTCLIENT 1", phys (root.home->createIcon, root.home->createIcon.getLocalBounds().getCentre()), 1 },
+            { "제목 줄 아래 → HTCLIENT 1", phys (root, { emptyTitle().x, 100 }), 1 },
+            { "왼쪽 가장자리 → HTLEFT 10", { p.window[0] + 2, p.window[1] + p.window[3] / 2 }, 10 },
+            { "오른쪽 가장자리 → HTRIGHT 11", { p.window[0] + p.window[2] - 2, p.window[1] + p.window[3] / 2 }, 11 },
+            { "아래 가장자리 → HTBOTTOM 15", { midX, p.window[1] + p.window[3] - 2 }, 15 },
+            { "내용 왼쪽 끝 줄 → 크기 조절 (윈도우 10) / 앱 (윈도우 11)", { p.client[0], p.client[1] + p.client[3] / 2 }, p.win11 ? 1 : 10 },
+            { "내용 아래 끝 줄 → 크기 조절 (윈도우 10) / 앱 (윈도우 11)", { midX, p.client[1] + p.client[3] - 1 }, p.win11 ? 1 : 15 },
+            { "왼쪽 아래 모서리 → HTBOTTOMLEFT 16", { p.window[0] + 2, p.window[1] + p.window[3] - 2 }, 16 },
+            { "오른쪽 위 모서리 → HTTOPRIGHT 14 (창 버튼 위 2px)", { p.window[0] + p.window[2] - 2, p.window[1] + 1 }, 14 },
+        };
+        for (auto& c : checks)
+        {
+            const int got = ht (c.at);
+            expect (got == c.want, juce::String (juce::CharPointer_UTF8 (c.name)) + " (" + juce::String (got) + ")");
+        }
+        // 맨 위 줄 픽셀 (윈도우 10 의 1px 색 선 확인): 내용 맨 위 3줄 · 창 바로 위 1줄
+        for (int x : { p.client[0] + 120, midX, p.client[0] + p.client[2] - 200 })
+            std::cerr << "UITEST INFO winchrome top pixels x=" << x << " above: " << meon::winframe::devScreenPixels (x, p.client[1] - 1, 1, 1)
+                      << "| rows 0-2: " << meon::winframe::devScreenPixels (x, p.client[1], 1, 3) << std::endl;
+        // 창 테두리 #EBEBEB 1px: 윈도우 11 은 운영체제가 (위는 내용 맨 위 줄 위에, 나머지는 내용 바깥), 윈도우 10 은 앱이 내용 네 변 끝 줄에
+        const auto row0 = meon::winframe::devScreenPixels (midX, p.client[1], 1, 1).substr (0, 6);
+        expect (row0 == "EBEBEB", TXT ("위 테두리 #EBEBEB 1px (") + juce::String (row0) + ")");
+        const int cy = p.client[1] + p.client[3] / 2;
+        const auto edge = [&] (int x, int y) { return juce::String (meon::winframe::devScreenPixels (x, y, 1, 1).substr (0, 6)); };
+        // 모니터 밖(창이 모니터 끝에 붙어 테두리가 화면 밖)인 변은 읽을 수 없어 세지 않는다
+        const auto onMonitor = [&] (int x, int y) { return x >= p.monitor[0] && y >= p.monitor[1] && x < p.monitor[0] + p.monitor[2] && y < p.monitor[1] + p.monitor[3]; };
+        const auto edgeOr = [&] (int x, int y) { return onMonitor (x, y) ? edge (x, y) : juce::String ("off"); };
+        const auto l = p.win11 ? edgeOr (p.client[0] - 1, cy) : edgeOr (p.client[0], cy);
+        const auto r = p.win11 ? edgeOr (p.client[0] + p.client[2], cy) : edgeOr (p.client[0] + p.client[2] - 1, cy);
+        const auto b = p.win11 ? edgeOr (midX, p.client[1] + p.client[3]) : edgeOr (midX, p.client[1] + p.client[3] - 1);
+        const auto okEdge = [] (const juce::String& c) { return c == "EBEBEB" || c == "off"; };
+        if (l == "off" || r == "off" || b == "off")
+            std::cerr << "UITEST INFO winchrome border: 모니터 밖 변은 세지 않음 (" << l << " " << r << " " << b << ")" << std::endl;
+        expect (okEdge (l) && okEdge (r) && okEdge (b) && ! (l == "off" && r == "off" && b == "off"),
+                TXT ("왼쪽·오른쪽·아래 테두리 #EBEBEB 1px (") + l + " " + r + " " + b + ")");
+        if (! p.win11)
+        {
+            // 윈도우 10: 운영체제 테두리(#707070)는 내용이 덮어 보이지 않는다 → 테두리 바로 안쪽은 앱 화면 (선이 두 줄이 아니다)
+            const auto in1 = edge (p.client[0] + 1, cy);
+            std::cerr << "UITEST INFO winchrome win10 edge: left " << l << " next " << in1 << " outside " << edge (p.client[0] - 1, cy) << std::endl;
+        }
+    }, 300);
+    // 마우스 올림 색: 최대화(운영체제 영역에서 알려 줌) #F5F5F5, 닫기 #C42B1C
+    add ([sh, caption, phys] { if (sh->real) { auto* cb = caption(); const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre()); meon::winframe::devMouse (c.x, c.y, false, false); } }, 600);
+    add ([this, sh, caption, phys]
+    {
+        if (! sh->real) return;
+        auto* cb = caption();
+        const auto corner = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getTopLeft() + juce::Point<int> (3, 3));
+        const auto px = meon::winframe::devScreenPixels (corner.x, corner.y, 1, 1).substr (0, 6);
+        expect (cb->devFill (WinCaptionButtons::maximise) == juce::Colour (0xFFF5F5F5u), TXT ("최대화 버튼에 올리면 #F5F5F5 (그리는 색)"));
+        std::cerr << "UITEST INFO winchrome max hover pixel " << px << std::endl;
+        const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::closeButton).getCentre());
+        meon::winframe::devMouse (c.x, c.y, false, false);
+    }, 600);
+    add ([this, sh, caption, phys, emptyTitle]
+    {
+        if (! sh->real) return;
+        auto* cb = caption();
+        const auto corner = phys (*cb, cb->buttonBounds (WinCaptionButtons::closeButton).getTopLeft() + juce::Point<int> (3, 3));
+        const auto px = meon::winframe::devScreenPixels (corner.x, corner.y, 1, 1).substr (0, 6);
+        expect (cb->devFill (WinCaptionButtons::maximise).isTransparent(), TXT ("최대화 버튼에서 나가면 보통"));
+        expect (cb->devFill (WinCaptionButtons::closeButton) == juce::Colour (0xFFC42B1Cu) && px == "C42B1C", TXT ("닫기 버튼에 올리면 #C42B1C (화면 ") + juce::String (px) + ")");
+        const auto e = phys (root, { emptyTitle().x, 300 });
+        meon::winframe::devMouse (e.x, e.y, false, false);
+    }, 400);
+    // 최대화 버튼 → 화면(작업 영역) 안에 딱, 닫기 버튼이 오른쪽 위 모서리
+    add ([sh, caption, phys] { if (sh->real) { auto* cb = caption(); const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre()); meon::winframe::devMouse (c.x, c.y, true, true); } }, 0);
+    waitUntilOr (TXT ("최대화"), [sh, handle] { return ! sh->real || meon::winframe::isMaximised (handle()); }, 5000, [this] { expect (false, TXT ("최대화 버튼을 눌러도 최대화되지 않음")); });
+    add ([this, sh, caption, handle, phys, ht, rectStr]
+    {
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        std::cerr << "UITEST INFO winchrome maximised: window " << rectStr (p.window) << " client " << rectStr (p.client) << " work " << rectStr (p.work) << std::endl;
+        // 최대화: 내용 = 작업 영역 (위·왼쪽·오른쪽·아래 여백·잘림 0)
+        expect (std::equal (p.client, p.client + 4, p.work), TXT ("최대화: 내용 = 작업 영역 (") + rectStr (p.client) + " / " + rectStr (p.work) + ")");
+        auto* cb = caption();
+        expect (cb->isMaximised(), TXT ("최대화 버튼이 '이전 크기로' 아이콘 (상태 알림 ") + juce::String (p.notifies) + ")");
+        const auto tr = phys (*cb, { cb->getWidth() - 1, 0 });
+        expect (tr.x == p.work[0] + p.work[2] - 1 && tr.y == p.work[1], TXT ("닫기 버튼이 화면 오른쪽 위 모서리에 딱 (") + tr.toString() + ")");
+        const int corner = ht ({ p.work[0] + p.work[2] - 1, p.work[1] });
+        expect (corner == 1, TXT ("최대화: 오른쪽 위 모서리 픽셀 = 닫기 버튼 (HTCLIENT, ") + juce::String (corner) + ")");
+        const int topEdge = ht ({ p.work[0] + p.work[2] / 2, p.work[1] });
+        expect (topEdge != 12, TXT ("최대화: 위 가장자리 크기 조절 없음 (") + juce::String (topEdge) + ")");
+        const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre());
+        meon::winframe::devMouse (c.x, c.y, true, true);   // 이전 크기로
+    }, 0);
+    waitUntilOr (TXT ("이전 크기로"), [sh, handle] { return ! sh->real || ! meon::winframe::isMaximised (handle()); }, 5000, [this] { expect (false, TXT ("이전 크기로 버튼을 눌러도 돌아오지 않음")); });
+    add ([this, sh, handle, caption]
+    {
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        expect (std::equal (p.client, p.client + 4, sh->before.client), TXT ("이전 크기로: 내용 자리·크기가 처음과 같다"));
+        expect (! caption()->isMaximised(), TXT ("이전 크기로: 최대화 아이콘으로 돌아옴"));
+    }, 400);
+    // 다른 창이 앞에 오면 아이콘 #AAAAAA (비활성), 돌아오면 #1A1A1A
+    struct Other { std::unique_ptr<juce::DocumentWindow> w; };
+    auto other = std::make_shared<Other>();
+    add ([sh, other]
+    {
+        if (! sh->real) return;
+        other->w = std::make_unique<juce::DocumentWindow> ("other", juce::Colours::grey, juce::DocumentWindow::closeButton);
+        other->w->setUsingNativeTitleBar (true);
+        other->w->setBounds (200, 200, 300, 200);
+        other->w->setVisible (true);
+        other->w->toFront (true);
+    }, 0);
+    waitUntilOr (TXT ("비활성"), [sh, caption] { return ! sh->real || ! caption()->isActiveLook(); }, 3000,
+                 [this] { expect (false, TXT ("다른 창이 앞에 와도 창 버튼이 비활성 모양으로 바뀌지 않음")); });
+    add ([this, sh, other, caption, handle]
+    {
+        if (! sh->real) return;
+        if (! caption()->isActiveLook()) expect (true, TXT ("다른 창이 앞에 오면 창 버튼 아이콘 #AAAAAA (비활성)"));
+        other->w.reset();
+        if (auto* p = peer()) p->toFront (true);
+    }, 0);
+    waitUntilOr (TXT ("다시 활성"), [sh, caption] { return ! sh->real || caption()->isActiveLook(); }, 3000,
+                 [this] { expect (false, TXT ("창이 다시 앞에 와도 창 버튼이 활성 모양으로 돌아오지 않음")); });
+    add ([this, sh] { if (sh->real) expect (true, TXT ("다시 앞에 오면 아이콘 #1A1A1A (활성)")); }, 0);
+    // 제목 줄 빈 곳 더블클릭 → 최대화, 다시 → 이전 크기로 (운영체제 HTCAPTION 처리)
+    auto doubleClick = [sh, phys, this, emptyTitle]
+    {
+        if (! sh->real) return;
+        const auto e = phys (root, emptyTitle());
+        meon::winframe::devMouse (e.x, e.y, true, true);
+        meon::winframe::devMouse (e.x, e.y, true, true);
+    };
+    add (doubleClick, 0);
+    waitUntilOr (TXT ("더블클릭 최대화"), [sh, handle] { return ! sh->real || meon::winframe::isMaximised (handle()); }, 5000, [this] { expect (false, TXT ("제목 줄 더블클릭으로 최대화되지 않음")); });
+    add ([this, sh] { if (sh->real) expect (true, TXT ("제목 줄 더블클릭 → 최대화")); }, 600);
+    add (doubleClick, 0);
+    waitUntilOr (TXT ("더블클릭 복원"), [sh, handle] { return ! sh->real || ! meon::winframe::isMaximised (handle()); }, 5000, [this] { expect (false, TXT ("제목 줄 더블클릭으로 돌아오지 않음")); });
+    add ([this, sh] { if (sh->real) expect (true, TXT ("제목 줄 더블클릭 → 이전 크기로")); }, 600);
+    // Alt+Space → 창 메뉴 (JUCE 가 막던 것을 운영체제에 넘긴다)
+    add ([sh, handle] { if (sh->real) { sh->sysMenus = meon::winframe::probe (handle()).sysMenuOpened; meon::winframe::devAltSpace(); } }, 800);
+    add ([this, sh, handle]
+    {
+        if (! sh->real) return;
+        const int n = meon::winframe::probe (handle()).sysMenuOpened;
+        expect (n > sh->sysMenus, TXT ("Alt+Space → 창 메뉴 (") + juce::String (n - sh->sysMenus) + ")");
+        meon::winframe::devEscape();
+    }, 500);
+    // 제목 줄을 잡고 끌기 (운영체제 창 옮기기)
+    add ([this, sh, handle, phys, emptyTitle]
+    {
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        sh->windowBefore = { p.window[0], p.window[1], p.window[2], p.window[3] };
+        const auto e = phys (root, emptyTitle());
+        meon::winframe::devMouse (e.x, e.y, true, false);
+    }, 300);
+    add ([this, sh, phys, emptyTitle] { if (sh->real) { const auto e = phys (root, emptyTitle()); meon::winframe::devMouse (e.x + 30, e.y + 20, false, false); } }, 200);
+    add ([this, sh, phys, emptyTitle] { if (sh->real) { const auto e = phys (root, emptyTitle()); meon::winframe::devMouse (e.x + 60, e.y + 40, false, false); } }, 200);
+    add ([this, sh, handle]
+    {
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        meon::winframe::devMouse (p.window[0] + 400, p.window[1] + 26, false, true);   // 뗌 (지금 커서 자리)
+    }, 600);
+    add ([this, sh, handle]
+    {
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        const int dx = p.window[0] - sh->windowBefore.getX(), dy = p.window[1] - sh->windowBefore.getY();
+        std::cerr << "UITEST INFO winchrome drag moved " << dx << "," << dy << std::endl;
+        expect (dx != 0 || dy != 0, TXT ("제목 줄을 잡고 끌면 창이 옮겨진다 (") + juce::String (dx) + "," + juce::String (dy) + ")");
+    }, 300);
+    // 최소화 버튼 → 최소화, 다시 띄운다
+    add ([sh, caption, phys] { if (sh->real) { auto* cb = caption(); const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::minimise).getCentre()); meon::winframe::devMouse (c.x, c.y, true, true); } }, 0);
+    waitUntilOr (TXT ("최소화"), [this, sh] { return ! sh->real || (peer() != nullptr && peer()->isMinimised()); }, 5000, [this] { expect (false, TXT ("최소화 버튼을 눌러도 최소화되지 않음")); });
+    add ([this, sh] { if (sh->real) { expect (true, TXT ("최소화 버튼 → 최소화")); peer()->setMinimised (false); } }, 1000);
+    add ([this, sh, handle, rectStr]
+    {
+        if (! sh->real) return;
+        const auto p = meon::winframe::probe (handle());
+        std::cerr << "UITEST INFO winchrome end: window " << rectStr (p.window) << " client " << rectStr (p.client) << " active " << (p.active ? 1 : 0) << std::endl;
+    }, 0);
+}
+
+//==============================================================================
+// 팝오버·모달·토스트를 열고 닫아도 보던 화면(공개 방·방 화면)은 그대로. 예전에는 홈이 띄우는 창(알림·친구 추가·코드로 입장)이 홈 안에 떠서
+// 방 화면이면 먼저 방을 최소화했다 (= 홈 메뉴를 끈 뒤로 공개 방으로 바뀌었다). 이제 모달·팝오버는 모달 층(AppRoot: 창 전체,
+// 사이드바까지 어둡게 덮고 창 가운데)에 뜬다. 방에 있으면 사이드바 "코드로 입장" 은 없다 (방 만들기와 같은 규칙)
+void UiSelfTest::addOverlayTests()
+{
+    struct Shared
+    {
+        juce::String room, chatText;
+        int phase = 0;
+        bool sendMuted = false, monMuted = false, selfMon = false, homeVisible = false;
+        float master = 0.0f;
+        bool side = true;   // 방 화면에서 사이드바가 보인다 (좁은 플러그인 창은 숨는다: 방 화면 윗줄의 알림·설정·로비 버튼)
+    };
+    auto sh = std::make_shared<Shared>();
+    auto roomView = [this]
+    {
+        return inRoom() && ! root.isMinimized() && jam() != nullptr && jam()->isShowing() && ! home().isVisible()
+            && root.sidebar->getPage() == Sidebar::Page::room;
+    };
+    auto snap = [this, sh]
+    {
+        auto* s = core.jam();
+        if (s == nullptr) return;
+        sh->room = roomId();
+        sh->phase = (int) s->getPhase();
+        sh->sendMuted = s->isSendMuted();
+        sh->monMuted = s->isMonitorMuted();
+        sh->selfMon = s->isSelfMonitorAudible();
+        sh->master = s->getMasterDb();
+        sh->homeVisible = core.home().isHomeVisible();
+        if (auto* j = jam()) sh->chatText = j->chatInput.getText();
+    };
+    auto same = [this, sh, roomView] (const juce::String& what)
+    {
+        auto* s = core.jam();
+        expect (roomView(), what + TXT (": 방 화면 그대로 (공개 방으로 가지 않음)"));
+        expect (s != nullptr && roomId() == sh->room && (int) s->getPhase() == sh->phase, what + TXT (": 같은 방, 연결 단계 그대로"));
+        if (s != nullptr)
+            expect (s->isSendMuted() == sh->sendMuted && s->isMonitorMuted() == sh->monMuted && s->isSelfMonitorAudible() == sh->selfMon
+                        && s->getMasterDb() == sh->master && core.home().isHomeVisible() == sh->homeVisible,
+                    what + TXT (": 송출·모니터·셀프 모니터·마스터 볼륨 그대로, 공개 방 구독 없음"));
+        if (auto* j = jam()) expect (j->chatInput.getText() == sh->chatText, what + TXT (": 채팅 입력 중인 글 그대로"));
+    };
+    auto fullModal = [this] (juce::Component* m, const juce::String& what)
+    {
+        expect (m != nullptr && m->isShowing(), what + TXT (": 떴다"));
+        if (m == nullptr) return;
+        expect (m->getParentComponent() == &root && m->getBounds() == root.getLocalBounds(), what + TXT (": 모달 층 (창 전체 ") + m->getBounds().toString() + ")");
+        const int idx = root.getIndexOfChildComponent (m);
+        bool above = idx > root.getIndexOfChildComponent (root.sidebar.get()) && idx > root.getIndexOfChildComponent (root.home.get())
+                  && idx > root.getIndexOfChildComponent (root.toggle.get());
+        if (root.jam != nullptr) above = above && idx > root.getIndexOfChildComponent (root.jam.get());
+        expect (above, what + TXT (": 사이드바·본문·방 화면·접기 버튼 위"));
+        if (root.sidebar->isVisible())
+        {
+            auto* hit = root.getComponentAt (juce::Point<int> (root.sidebar->getWidth() / 2, root.getHeight() / 2));
+            expect (hit == m || m->isParentOf (hit), what + TXT (": 사이드바 자리도 덮는다 (누르면 모달 바깥)"));
+        }
+        if (auto* md = dynamic_cast<Modal*> (m))
+        {
+            const auto box = md->boxBounds();
+            expect (std::abs (box.getCentreX() - root.getWidth() / 2) <= 1 && std::abs (box.getCentreY() - root.getHeight() / 2) <= 1,
+                    what + TXT (": 창 가운데 (") + box.toString() + ")");
+        }
+    };
+    auto outside = [this] { click (root, { juce::jmax (8, root.sidebar->getWidth() / 2), root.getHeight() / 2 }); };   // 사이드바 위 덮개 (모달 바깥)
+    auto profileMenuItem = [this] (int i)
+    {
+        if (root.profileMenu == nullptr) return;
+        const auto b = root.profileMenu->box;
+        click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + i * 34 + 16 });
+    };
+    auto settingsOpen = [this]
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (dynamic_cast<SettingsModal*> (c) != nullptr) return true;
+        return false;
+    };
+    auto friendPlus = [this]
+    {
+        const auto h = root.sidebar->devSectionHeader (TXT ("친구"));
+        expect (! h.isEmpty(), TXT ("사이드바 친구 머리말"));
+        if (! h.isEmpty()) click (*root.sidebar, { h.getRight() - 6 - 11, h.getCentreY() });   // 머리말 오른쪽 + (22×22, 오른쪽 6)
+    };
+
+    begin (TXT ("겹침: 방 화면에서 열고 닫아도 방 화면 그대로"));
+    closeToasts();
+    enterNewRoom();
+    add ([this, sh, snap]
+    {
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+        sh->side = root.sidebar->isVisible();
+        if (! sh->side) std::cerr << "UITEST INFO overlay: 방 화면에서 사이드바가 숨음 (좁은 창). 사이드바 항목은 건너뛰고 방 화면 윗줄 알림으로" << std::endl;
+        jam()->devSetChatInput (TXT ("입력 중인 글"));
+        jam()->grabKeyboardFocus();
+        snap();
+        expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 있으면 사이드바 코드로 입장 없음 (펼침)"));
+        expect (! root.sidebar->devRow (TXT ("공개 방")).isEmpty(), TXT ("공개 방 메뉴는 그대로"));
+    }, 600);
+    // 프로필 › 알림: 방 화면 위에 팝오버 (사이드바가 숨는 좁은 창은 방 화면 윗줄 알림 버튼: 방 화면 안 팝오버)
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); else click (jam()->bell); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (0); }, 400);
+    waitUntil (TXT ("알림 팝오버 열림"), [this, sh]
+    {
+        return sh->side ? (home().popover != nullptr && home().popover->isShowing()) : (jam()->notifications != nullptr && jam()->notifications->isShowing());
+    });
+    add ([this, sh, same]
+    {
+        same (TXT ("알림 열기"));
+        if (! sh->side) { jam()->devOpenPopover ("notif"); return; }   // 다시 누르면 닫힌다
+        auto* p = home().popover.get();
+        if (p == nullptr) return;
+        expect (p->getParentComponent() == &root && root.getIndexOfChildComponent (p) > root.getIndexOfChildComponent (root.jam.get()),
+                TXT ("알림 팝오버: 모달 층 (방 화면 위)"));
+        expect (p->getPanelBounds().getX() == 9 && p->getPanelBounds().getBottom() == root.getHeight() - 55,
+                TXT ("알림 팝오버: 프로필 줄 위 (왼쪽 9, 아래 55) ") + p->getPanelBounds().toString());
+        if (auto* x = firstButton (*p)) click (*x);   // 머리말 닫기
+    }, 300);
+    add ([this, same]
+    {
+        expect (home().popover == nullptr && (jam()->notifications == nullptr), TXT ("알림 닫기 → 닫힘"));
+        same (TXT ("알림 닫기"));
+    }, 0);
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); else click (jam()->bell); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (0); }, 400);
+    waitUntil (TXT ("알림 팝오버 다시 열림"), [this] { return home().popover != nullptr || jam()->notifications != nullptr; });
+    add ([this] { jam()->grabKeyboardFocus(); key (juce::KeyPress (juce::KeyPress::escapeKey)); }, 300);
+    add ([this, same]
+    {
+        expect (home().popover == nullptr && jam()->notifications == nullptr, TXT ("Esc → 알림 닫힘"));
+        same (TXT ("알림 Esc"));
+        jam()->devOpenPopover ("requests");   // 방 화면의 입장 요청 팝오버
+    }, 300);
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (0); }, 400);
+    add ([this, sh, same]
+    {
+        if (sh->side)
+            expect (home().popover != nullptr && jam()->popover == nullptr, TXT ("팝오버는 하나만: 알림을 열면 방 화면의 입장 요청 팝오버는 닫힘"));
+        same (TXT ("입장 요청 → 알림"));
+        home().closeOverlays();
+        jam()->closeOverlays();
+    }, 300);
+    // 프로필 › 설정 (설정 창은 에디터의 모달 층). 좁은 창은 방 화면 윗줄 설정 버튼
+    add ([this, sh] { if (sh->side) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); else click (jam()->settings); }, 300);
+    add ([sh, profileMenuItem] { if (sh->side) profileMenuItem (1); }, 700);
+    waitUntil (TXT ("설정 열림"), settingsOpen);
+    add ([same] { same (TXT ("프로필 › 설정 열기")); }, 0);
+    add ([this] { if (auto* e = root.getParentComponent()) e->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)); }, 0);
+    waitUntil (TXT ("설정 닫힘"), [settingsOpen] { return ! settingsOpen(); });
+    add ([same] { same (TXT ("설정 닫기")); }, 300);
+    // 사이드바 친구 + → 친구 추가 (좁은 창은 사이드바가 없어 홈의 창을 직접: 같은 모달 층인지만)
+    add ([sh, friendPlus, this] { if (sh->side) friendPlus(); else home().openAddFriend(); }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("친구 추가 (방 화면)"));
+        same (TXT ("친구 추가 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this, same]
+    {
+        expect (home().modal == nullptr, TXT ("덮개를 누르면 친구 추가 닫힘"));
+        same (TXT ("친구 추가 닫기"));
+        expect (jam()->hasKeyboardFocus (true), TXT ("닫으면 방 화면이 글자 입력을 받는다 (단축키 M·N)"));
+    }, 0);
+    // 방 화면의 모달 (방 설정: 방장)
+    add ([this] { expect (jam()->gear.isShowing(), TXT ("방장: 방 설정 버튼")); click (jam()->gear); }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (jam()->modal.get(), TXT ("방 설정 (방 화면)"));
+        same (TXT ("방 설정 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this, same]
+    {
+        expect (jam()->modal == nullptr, TXT ("사이드바 위 덮개를 누르면 방 설정 닫힘"));
+        same (TXT ("방 설정 닫기"));
+    }, 0);
+    // 사이드바 친구 줄 → 방 화면의 프로필 (좁은 창은 방 화면 멤버·친구 목록이 같은 창을 연다)
+    add ([this, sh]
+    {
+        if (! sh->side)
+        {
+            for (auto& f : core.store().state().friends) { jam()->openProfile (f.user); return; }
+            expect (false, TXT ("친구"));
+            return;
+        }
+        for (auto& f : core.store().state().friends)
+            if (f.status == "online" || f.status == "in_room")
+            {
+                const auto r = root.sidebar->devRow (f.user.nickname.value_or (f.user.username));
+                if (! r.isEmpty()) { click (*root.sidebar, { r.getX() + 48, r.getCentreY() }); return; }
+            }
+        expect (false, TXT ("사이드바 친구 줄"));
+    }, 0);
+    waitUntil (TXT ("친구 프로필 열림"), [this] { return jam()->modal != nullptr; });
+    add ([this, same, fullModal]
+    {
+        fullModal (jam()->modal.get(), TXT ("친구 프로필 (방 화면)"));
+        expect (dynamic_cast<ProfileModal*> (jam()->modal.get()) != nullptr, TXT ("방 화면의 프로필 창"));
+        same (TXT ("친구 프로필 열기"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 400);
+    add ([this, same]
+    {
+        expect (jam()->modal == nullptr, TXT ("Esc → 프로필 닫힘"));
+        same (TXT ("친구 프로필 닫기"));
+    }, 0);
+    // 토스트 닫기
+    add ([this] { root.addInfoToast (TXT ("겹침 확인 토스트"), {}); }, 400);
+    add ([this]
+    {
+        for (auto* t : root.toasts)
+            if (t->getTitle() == TXT ("겹침 확인 토스트"))
+                if (auto* b = firstButton (*t)) click (*b);
+    }, 400);
+    add ([this, same]
+    {
+        bool gone = true;
+        for (auto* t : root.toasts) gone = gone && t->getTitle() != TXT ("겹침 확인 토스트");
+        expect (gone, TXT ("토스트 닫기 → 닫힘"));
+        same (TXT ("토스트 닫기"));
+    }, 0);
+    // 접힌 사이드바 (좁은 창은 사이드바가 없어 같은 확인을 한 번 더)
+    add ([this, sh] { if (sh->side) root.sidebar->setCollapsed (true); }, 600);
+    add ([this, sh]
+    {
+        if (! sh->side) { home().openAddFriend(); return; }
+        expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 있으면 사이드바 코드로 입장 없음 (접힘)"));
+        const auto r = root.sidebar->devRow (TXT ("친구 추가"));
+        expect (! r.isEmpty(), TXT ("접힌 사이드바: 친구 추가 아이콘"));
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+    }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("친구 추가 (접힌 사이드바)"));
+        same (TXT ("접힌 사이드바: 친구 추가 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this] { expect (home().modal == nullptr, TXT ("접힌 사이드바: 덮개 → 친구 추가 닫힘")); click (jam()->gear); }, 400);
+    add ([this, same, fullModal]
+    {
+        fullModal (jam()->modal.get(), TXT ("방 설정 (접힌 사이드바)"));
+        same (TXT ("접힌 사이드바: 방 설정 열기"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this, same]
+    {
+        expect (jam()->modal == nullptr, TXT ("접힌 사이드바: 덮개 → 방 설정 닫힘"));
+        same (TXT ("접힌 사이드바: 닫기"));
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+    }, 600);
+
+    begin (TXT ("겹침: 공개 방에서 열고 닫아도 공개 방 그대로"));
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("방에서 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); }, 6000);
+    closeToasts();
+    add ([this]
+    {
+        expect (root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("공개 방"));
+        expect (! root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방 밖: 사이드바 코드로 입장 있음"));
+    }, 0);
+    add ([friendPlus] { friendPlus(); }, 400);
+    add ([this, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("친구 추가 (공개 방)"));
+        expect (! inRoom() && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("친구 추가 열기: 공개 방 그대로"));
+    }, 0);
+    add ([outside] { outside(); }, 400);
+    add ([this] { expect (home().modal == nullptr && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("친구 추가 닫기: 공개 방 그대로")); }, 0);
+    add ([this] { click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); }, 300);
+    add ([profileMenuItem] { profileMenuItem (0); }, 400);
+    add ([this]
+    {
+        expect (home().popover != nullptr && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("알림 열기: 공개 방 그대로"));
+        if (home().popover != nullptr) if (auto* x = firstButton (*home().popover)) click (*x);
+    }, 300);
+    add ([this] { expect (home().popover == nullptr && root.page == Sidebar::Page::rooms && home().roomViewport.isShowing(), TXT ("알림 닫기: 공개 방 그대로")); }, 0);
+    // 코드로 입장 창이 열린 채로 초대를 수락해 방에 들어가면 그 창은 닫힌다
+    clickSidebar (TXT ("코드로 입장"));
+    add ([this, fullModal]
+    {
+        fullModal (home().modal.get(), TXT ("코드로 입장 (공개 방)"));
+        expect (dynamic_cast<JoinCodeModal*> (home().modal.get()) != nullptr, TXT ("코드로 입장 창"));
+        if (auto* f = core.fakeServer()) f->devInviteMe();
+    }, 0);
+    auto inviteToast = [this]() -> Toast*
+    {
+        for (auto* t : root.toasts) if (t->key.isNotEmpty() && ! t->key.startsWith ("jr:")) return t;
+        return nullptr;
+    };
+    waitUntil (TXT ("초대 토스트 (코드로 입장 창 위)"), [inviteToast] { return inviteToast() != nullptr; });
+    add ([this, inviteToast]
+    {
+        auto* t = inviteToast();
+        expect (t != nullptr && root.getIndexOfChildComponent (t) > root.getIndexOfChildComponent (home().modal.get()), TXT ("토스트는 모달 층 위"));
+        if (t != nullptr) if (auto* b = findButton (*t, TXT ("수락"))) click (*b);
+    }, 0);
+    waitUntil (TXT ("초대 수락 → 그 방 화면"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing() && ! root.isMinimized(); }, 6000);
+    add ([this]
+    {
+        expect (home().modal == nullptr && ! root.hasWindowModal(), TXT ("방에 들어가면 코드로 입장 창은 닫힘"));
+        expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 들어가면 사이드바 코드로 입장 없음"));
+    }, 300);
+}
+
+//==============================================================================
+// 내 오디오·모니터 카드 묶음 (AudioDock): 방 화면·공개 방이 같이 쓰는 하나. 공개 방에서는 목록 위에 떠 있고(그림자),
+// 틈·바깥은 뒤의 방 카드가 받는다. 목록 아래 여백 = 카드 높이 + 36. 미터만 다시 그린다. 오갈 때 폭·그림자가 이어진다 (320ms)
+void UiSelfTest::addDockTests()
+{
+    struct Shared
+    {
+        juce::Rectangle<int> roomCards, roomsCards, mid;
+        float midShadow = -1.0f;
+        juce::Rectangle<int> foldOld;   // 접기 전 내 오디오 카드 (화면 좌표)
+        int toasts = 0;
+        bool retry = false;
+        juce::uint32 countFrom = 0;
+        bool gapCard = false;
+        bool sendMuted = false;
+        int phase = 0;
+    };
+    auto sh = std::make_shared<Shared>();
+    auto dockRoomSlot = [this]() -> juce::Rectangle<int>
+    {
+        auto* j = jam();
+        return j != nullptr ? j->dockSlot() + j->getPosition() : juce::Rectangle<int>();
+    };
+    auto dockRoomsSlot = [this]() -> juce::Rectangle<int> { return home().dockSlot() + home().getPosition(); };
+    auto roomsView = [this] { return inRoom() && root.isMinimized() && home().isShowing(); };
+    auto listBottomPad = [this]() -> int
+    {
+        int maxBottom = 0;
+        for (auto* c : home().devRoomCardComps()) maxBottom = juce::jmax (maxBottom, c->getBottom());
+        return home().devRoomList()->getHeight() - maxBottom;
+    };
+    auto scrollable = [this] { return home().devRoomList()->getHeight() > home().roomViewport.getHeight(); };
+    auto checkRoomsLayout = [this, dockRoomsSlot, listBottomPad, scrollable] (const juce::String& where)
+    {
+        auto* d = root.dock.get();
+        expect (d != nullptr && d->isVisible(), where + TXT (": 카드 묶음 보임"));
+        if (d == nullptr) return;
+        const auto list = home().roomViewport.getBounds() + home().getPosition();
+        const auto cards = d->getCardsBounds();
+        expect (cards == dockRoomsSlot(), where + TXT (": 카드 자리 = 공개 방 자리 ") + cards.toString());
+        expect (cards.getX() == list.getX() + 18 && cards.getRight() == list.getRight() - 18 && cards.getBottom() == list.getBottom() - 18,
+                where + TXT (": 목록 영역 기준 왼쪽·오른쪽·아래 18 (") + cards.toString() + " / " + list.toString() + ")");
+        expect (cards.getHeight() == d->getCardsHeight(), where + TXT (": 높이 = 카드 높이"));
+        const auto s = d->sendCard.getBounds(), m = d->monCard.getBounds();
+        if (d->isSendOpen() && d->isMonOpen())
+            expect (std::abs (s.getWidth() - m.getWidth()) <= 1, where + TXT (": 두 카드 같은 폭 (") + juce::String (s.getWidth()) + " / " + juce::String (m.getWidth()) + ")");
+        expect (m.getX() - s.getRight() == 9, where + TXT (": 카드 사이 9"));
+        expect (d->getShadow() == 1.0f, where + TXT (": 팝오버 그림자"));
+        if (scrollable())
+            expect (listBottomPad() == d->getCardsHeight() + 36, where + TXT (": 목록 아래 여백 = 카드 높이 + 위아래 18 (") + juce::String (listBottomPad()) + ")");
+    };
+    auto checkRoomLayout = [this, dockRoomSlot] (const juce::String& where)
+    {
+        auto* d = root.dock.get();
+        auto* j = jam();
+        expect (d != nullptr && d->isVisible() && j != nullptr, where + TXT (": 방 화면 카드 묶음"));
+        if (d == nullptr || j == nullptr) return;
+        const auto cards = d->getCardsBounds();
+        expect (cards == dockRoomSlot(), where + TXT (": 카드 자리 = 방 화면 자리 ") + cards.toString());
+        expect (cards.getX() == j->getX() + 18 && cards.getBottom() == root.getHeight() - 18, where + TXT (": 왼쪽 18 · 아래 18"));
+        expect (cards.getRight() + 18 == j->getX() + j->chatCard.getX(), where + TXT (": 오른쪽 = 채팅 영역 왼쪽 - 18"));
+        expect (d->getShadow() == 0.0f, where + TXT (": 그림자 없음"));
+        expect (dockOverlaps().isEmpty(), where + TXT (": 카드 안 겹침 없음 ") + dockOverlaps());
+    };
+    auto clickRooms = [this]
+    {
+        if (root.sidebar->isVisible() && ! root.sidebar->devRow (TXT ("공개 방")).isEmpty()) click (*root.sidebar, root.sidebar->devRow (TXT ("공개 방")).getCentre());
+        else if (auto* j = jam()) click (j->lobby);   // 좁은 플러그인 창: 방 화면 윗줄 로비 보기
+    };
+    auto clickRoom = [this]
+    {
+        const auto& s = core.store().state();
+        const auto r = s.currentRoom ? root.sidebar->devRow (s.currentRoom->title) : juce::Rectangle<int>();
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+        else root.setMinimized (false);
+    };
+
+    begin (TXT ("내 오디오·모니터: 방 밖에는 없다"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("방 밖 공개 방"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); }, 6000);
+    closeToasts();
+    add ([this, listBottomPad, scrollable]
+    {
+        expect (root.dock == nullptr, TXT ("방 밖: 카드 묶음 없음"));
+        expect (home().dockSlot().isEmpty() && home().dockH == 0, TXT ("방 밖: 카드 자리 없음"));
+        if (scrollable()) expect (listBottomPad() == metric::pagePad, TXT ("방 밖: 목록 아래 여백 18 그대로 (") + juce::String (listBottomPad()) + ")");
+        else std::cerr << "UITEST INFO dock: 목록이 짧아 스크롤 없음 (아래 여백 확인 생략)" << std::endl;
+    }, 0);
+
+    begin (TXT ("내 오디오·모니터: 방 화면"));
+    enterNewRoom();
+    closeToasts();
+    add ([this, sh, checkRoomLayout]
+    {
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+        checkRoomLayout (TXT ("방 화면"));
+        auto* d = root.dock.get();
+        if (d == nullptr) return;
+        for (auto* m : std::initializer_list<juce::Component*> { &d->inputMeter, &d->outputMeter })
+            expect (m->getParentComponent() == &root && m->isOpaque() && root.getIndexOfChildComponent (m) > root.getIndexOfChildComponent (d),
+                    TXT ("미터 상자: 카드 묶음 바로 위 형제, 불투명"));
+        expect (root.getIndexOfChildComponent (d) > root.getIndexOfChildComponent (root.jam.get())
+                 && root.getIndexOfChildComponent (d) > root.getIndexOfChildComponent (root.home.get()), TXT ("카드 묶음: 방 화면·홈 위"));
+        sh->roomCards = d->getCardsBounds();
+        sh->phase = (int) core.jam()->getPhase();
+    }, 300);
+    // 단축키 M (방 화면) → 카드 묶음에 바로
+    add ([this, sh]
+    {
+        sh->sendMuted = core.jam()->isSendMuted();
+        jam()->grabKeyboardFocus();
+        key (juce::KeyPress ('m', juce::ModifierKeys(), 'm'));
+    }, 200);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        expect (core.jam()->isSendMuted() != sh->sendMuted && d->sendMute.isOn() == core.jam()->isSendMuted()
+                 && d->sendMute.getButtonText() == (core.jam()->isSendMuted() ? TXT ("송출 재개") : TXT ("송출 정지")),
+                TXT ("단축키 M → 카드의 송출 정지 그대로 반영"));
+        core.jam()->setSendGainDb (-3.0f);   // 바깥에서 바꾼 값 (설정·DAW 등)
+    }, 900);
+    add ([this]
+    {
+        expect (std::abs (root.dock->sendGain.getValue() - (-3.0f)) < 0.01f, TXT ("바깥에서 바꾼 송출 레벨 → 카드에 0.4초 안에 반영"));
+    }, 0);
+
+    // 방 화면 → 공개 방: 같은 카드가 폭만 늘고 그림자가 생긴다
+    begin (TXT ("내 오디오·모니터: 방 화면 ↔ 공개 방"));
+    add ([clickRooms] { clickRooms(); }, 110);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        sh->mid = d->getCardsBounds();
+        sh->midShadow = d->getShadow();
+    }, 500);
+    waitUntil (TXT ("공개 방"), roomsView);
+    add ([this, sh, checkRoomsLayout]
+    {
+        checkRoomsLayout (TXT ("공개 방"));
+        auto* d = root.dock.get();
+        sh->roomsCards = d->getCardsBounds();
+        const auto a = sh->roomCards, b = sh->roomsCards, m = sh->mid;
+        std::cerr << "UITEST INFO dock flip to rooms: room " << a.toString() << " mid " << m.toString() << " shadow " << sh->midShadow << " rooms " << b.toString() << std::endl;
+        expect (m.getBottom() == a.getBottom() && b.getBottom() == a.getBottom(), TXT ("전환 중: 바닥 그대로"));
+        if (a.getX() == b.getX())
+        {
+            expect (m.getX() == a.getX(), TXT ("전환 중: 왼쪽 끝 그대로"));
+            expect (m.getWidth() > juce::jmin (a.getWidth(), b.getWidth()) && m.getWidth() < juce::jmax (a.getWidth(), b.getWidth()),
+                    TXT ("전환 중: 폭만 두 화면 사이 (") + juce::String (m.getWidth()) + ")");
+        }
+        else   // 방 화면에서 사이드바가 숨거나(좁은 플러그인 창) 잠시 접히면(좁은 창) 왼쪽 끝이 두 화면에서 다르다
+            std::cerr << "UITEST INFO dock: 두 화면의 왼쪽 끝이 다름 (방 화면 " << a.getX() << ", 공개 방 " << b.getX() << "): 왼쪽 끝도 같이 옮긴다" << std::endl;
+        expect (sh->midShadow > 0.0f && sh->midShadow < 1.0f, TXT ("전환 중: 그림자가 서서히 생긴다 (") + juce::String (sh->midShadow, 2) + ")");
+    }, 0);
+    // 공개 방: 틈·바깥은 뒤의 방 목록이 받는다
+    add ([this]
+    {
+        auto* d = root.dock.get();
+        const auto s = d->sendCard.getBounds() + d->getPosition(), m = d->monCard.getBounds() + d->getPosition();
+        const juce::Point<int> gap ((s.getRight() + m.getX()) / 2, s.getCentreY());
+        const juce::Point<int> outsideLeft (s.getX() - 8, s.getCentreY()), outsideTop (s.getCentreX(), s.getY() - 8);
+        for (auto p : { gap, outsideLeft, outsideTop })
+        {
+            auto* hit = root.getComponentAt (p);
+            expect (hit != nullptr && hit != d && ! d->isParentOf (hit) && (hit == root.home.get() || root.home->isParentOf (hit)),
+                    TXT ("카드 틈·바깥 ") + p.toString() + TXT (" → 뒤의 방 목록이 받는다"));
+        }
+        auto* hitCard = root.getComponentAt (s.getCentre());
+        expect (hitCard == &d->sendCard || d->sendCard.isParentOf (hitCard) || hitCard == &d->inputMeter || d->inputMeter.isParentOf (hitCard),
+                TXT ("카드 위는 카드가 받는다"));
+    }, 0);
+    // 목록을 내려 카드 틈(9) 뒤에 방 카드가 오게 한 뒤: 틈을 누르면 그 방 카드가 받는다.
+    // 2열이면 카드 틈이 방 목록의 열 사이(9)와 겹쳐 방 카드가 오지 않으므로 사이드바를 접어 3열로
+    add ([this] { if (root.sidebar->isVisible()) root.sidebar->setCollapsed (true); }, 500);
+    add ([this, sh]
+    {
+        sh->gapCard = false;
+        auto* d = root.dock.get();
+        const auto s = d->sendCard.getBounds() + d->getPosition(), m = d->monCard.getBounds() + d->getPosition();
+        const juce::Point<int> gap ((s.getRight() + m.getX()) / 2, s.getCentreY());
+        juce::Component* under = nullptr;
+        for (int y = 0; y < 4000 && under == nullptr; y += 12)
+        {
+            home().roomViewport.setViewPosition (0, y);
+            for (auto* c : home().devRoomCardComps())
+                if (root.getLocalArea (c, c->getLocalBounds()).contains (gap)) under = c;
+            if (home().roomViewport.getViewPositionY() < y) break;   // 끝
+        }
+        if (under == nullptr) { std::cerr << "UITEST INFO dock: 카드 틈 뒤에 오는 방 카드가 없음 (목록이 짧거나 열 사이와 겹침)" << std::endl; return; }
+        sh->gapCard = true;
+        auto* hit = root.getComponentAt (gap);
+        expect (hit == under || under->isParentOf (hit), TXT ("카드 틈 뒤의 방 카드가 보이고 누름을 받는다"));
+        moveTo (root, gap);
+    }, 200);
+    add ([this, sh]
+    {
+        if (! sh->gapCard) return;
+        auto* d = root.dock.get();
+        const auto s = d->sendCard.getBounds() + d->getPosition(), m = d->monCard.getBounds() + d->getPosition();
+        const juce::Point<int> gap ((s.getRight() + m.getX()) / 2, s.getCentreY());
+        if (auto* hit = root.getComponentAt (gap); hit != nullptr && hit != d)
+            expect (hit->isMouseOver (true) || hit->getParentComponent()->isMouseOver (true), TXT ("카드 틈에 마우스를 올리면 뒤의 방 카드 위"));
+        home().roomViewport.setViewPosition (0, 0);
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+    }, 500);
+    // 끝까지 내리면 마지막 방이 카드 위로 다 올라온다
+    add ([this] { home().roomViewport.setViewPosition (0, 1 << 20); }, 300);
+    add ([this, scrollable]
+    {
+        if (! scrollable()) { std::cerr << "UITEST INFO dock: 목록이 짧아 스크롤 없음" << std::endl; return; }
+        auto* d = root.dock.get();
+        int lowest = 0;
+        for (auto* c : home().devRoomCardComps()) lowest = juce::jmax (lowest, root.getLocalArea (c, c->getLocalBounds()).getBottom());
+        expect (lowest <= d->getCardsBounds().getY() - 18, TXT ("끝까지 내리면 마지막 방 아래 = 카드 위 18 (") + juce::String (lowest) + " / " + juce::String (d->getCardsBounds().getY()) + ")");
+        home().roomViewport.setViewPosition (0, 0);
+    }, 200);
+    // 다시 그리기: 미터만 (카드·뒤의 방 카드·화면은 그리지 않는다)
+    closeToasts();
+    add ([this, sh]
+    {
+        root.dock->devDriveMeters (true);
+        moveTo (*root.sidebar, { 120, 400 });
+    }, 400);
+    auto resetCounts = [this, sh]
+    {
+        auto* d = root.dock.get();
+        MeterBox::devPaints = 0; AudioDock::devPaintCount = 0; HomeScreen::devRoomCardPaints = 0; HomeScreen::devPaints = 0; JamScreen::devPaints = 0;
+        d->sendCard.devPaintCount = 0; d->monCard.devPaintCount = 0;
+        devprobe::watch.clear();
+        devprobe::watch.add (d->inputMeter.getScreenBounds());
+        devprobe::watch.add (d->outputMeter.getScreenBounds());
+        devprobe::hits = 0;
+        devprobe::hitNames.clear();
+        sh->toasts = root.toasts.size();
+    };
+    auto countsLine = [this] (const juce::String& where)
+    {
+        auto* d = root.dock.get();
+        std::cerr << "UITEST INFO repaint " << where << ": meter " << MeterBox::devPaints << " dock " << AudioDock::devPaintCount
+                  << " cards " << d->sendCard.devPaintCount << "+" << d->monCard.devPaintCount << " roomcards " << HomeScreen::devRoomCardPaints
+                  << " home " << HomeScreen::devPaints << " jam " << JamScreen::devPaints
+                  << " | 미터 칸 안에서만 같이 그려진 것 " << devprobe::hits << " " << devprobe::hitNames.joinIntoString (",") << std::endl;
+    };
+    add ([resetCounts] { resetCounts(); }, 1000);
+    add ([this, sh, resetCounts]
+    {
+        // 그동안 토스트가 생기거나 사라졌으면(뒤가 다시 그려진다) 한 번 더 센다
+        sh->retry = root.toasts.size() != sh->toasts;
+        if (sh->retry) { std::cerr << "UITEST INFO repaint: 토스트가 바뀌어 한 번 더 센다" << std::endl; resetCounts(); }
+        sh->countFrom = juce::Time::getMillisecondCounter();
+    }, 0);
+    waitUntil (TXT ("다시 셈"), [sh] { return ! sh->retry || juce::Time::getMillisecondCounter() - sh->countFrom >= 1000; }, 3000);
+    add ([this, sh, countsLine]
+    {
+        countsLine (TXT ("공개 방"));
+        auto* d = root.dock.get();
+        expect (MeterBox::devPaints >= 10, TXT ("공개 방: 미터는 다시 그린다 (") + juce::String (MeterBox::devPaints) + ")");
+        // 미터가 다시 그려질 때 같이 그려진 것이 없다 (카드·방 목록·방 카드·화면). 방 목록이 새로 오는 등 다른 이유의 넓은 그리기는 세지 않는다
+        expect (devprobe::hits == 0, TXT ("공개 방: 미터 칸만 다시 그린다 (같이 그려진 것 ") + devprobe::hitNames.joinIntoString (",") + ")");
+        devprobe::watch.clear();
+        expect (d->devShadow (0).getBuildCount() == 1 && d->devShadow (1).getBuildCount() == 1, TXT ("그림자: 한 번만 계산 (") + juce::String (d->devShadow (0).getBuildCount()) + ")");
+    }, 0);
+    // 공개 방에서 카드를 접는 동안: 카드 밖 그림자 자리(이전·새 자리를 합친 영역 + 그림자 폭)까지 다시 그린다.
+    // 카드 자리만 다시 그리면 이전 그림자 끝이 잔상으로 남는다 (2026-10-31 잔상 버그)
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        sh->foldOld = d->sendCard.getScreenBounds();
+        devprobe::unionName = "AudioDock";
+        devprobe::unionClip = {};
+        d->devToggleFold ("send");
+    }, 300);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        const int m = PopoverSurface::shadowMargin();
+        // 이전 카드 아래 그림자 (창 밖으로 나간 부분은 뺀다)
+        const auto below = juce::Rectangle<int> (sh->foldOld.getX(), sh->foldOld.getBottom(), sh->foldOld.getWidth(), m).getIntersection (root.getScreenBounds());
+        std::cerr << "UITEST INFO dock fold repaint: old card " << sh->foldOld.toString() << " shadow below " << below.toString()
+                  << " dock painted " << devprobe::unionClip.toString() << std::endl;
+        expect (devprobe::unionClip.contains (below), TXT ("공개 방 카드 접기: 이전 카드 아래 그림자 자리까지 다시 그린다 (") + devprobe::unionClip.toString() + ")");
+        devprobe::unionName = {};
+        d->devToggleFold ("send");   // 되돌림
+    }, 500);
+    add ([] {}, 400);
+    // 방 화면도
+    add ([clickRoom] { clickRoom(); }, 110);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        sh->mid = d->getCardsBounds();
+        sh->midShadow = d->getShadow();
+        expect (root.getIndexOfChildComponent (d) > root.getIndexOfChildComponent (root.jam.get()), TXT ("돌아가는 중: 카드는 방 화면 위"));
+        if (auto* j = jam()) expect (sh->mid.getRight() > j->getX() + j->chatCard.getX(), TXT ("돌아가는 중: 카드가 오른쪽 채팅 영역 위에 겹쳐 보인다"));
+    }, 500);
+    add ([this, sh, checkRoomLayout, countsLine]
+    {
+        checkRoomLayout (TXT ("방 화면으로 돌아옴"));
+        expect (sh->midShadow > 0.0f && sh->midShadow < 1.0f, TXT ("돌아가는 중: 그림자가 서서히 사라진다 (") + juce::String (sh->midShadow, 2) + ")");
+        moveTo (*root.sidebar, { 120, 400 });
+    }, 400);
+    add ([resetCounts] { resetCounts(); }, 1000);
+    add ([this, countsLine]
+    {
+        countsLine (TXT ("방 화면"));
+        auto* d = root.dock.get();
+        expect (MeterBox::devPaints >= 10, TXT ("방 화면: 미터는 다시 그린다"));
+        expect (devprobe::hits == 0 && AudioDock::devPaintCount == 0 && d->sendCard.devPaintCount == 0 && d->monCard.devPaintCount == 0,
+                TXT ("방 화면: 미터 칸만 다시 그린다 (같이 그려진 것 ") + devprobe::hitNames.joinIntoString (",") + ")");
+        devprobe::watch.clear();
+        root.dock->devDriveMeters (false);
+    }, 0);
+
+    // 여러 번 오가도 어긋나지 않는다 (사이드바 펼침·접힘)
+    for (int round = 0; round < 4; ++round)
+    {
+        const bool collapse = round >= 2;
+        add ([this, collapse] { if (root.sidebar->isVisible() && root.sidebar->isCollapsed() != collapse) root.sidebar->setCollapsed (collapse); }, 400);
+        add ([clickRooms] { clickRooms(); }, 450);
+        add ([checkRoomsLayout, round] { checkRoomsLayout (TXT ("공개 방 ") + juce::String (round + 1) + TXT ("번째")); }, 0);
+        add ([clickRoom] { clickRoom(); }, 450);
+        add ([checkRoomLayout, round] { checkRoomLayout (TXT ("방 화면 ") + juce::String (round + 1) + TXT ("번째")); }, 0);
+    }
+    add ([this] { if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false); }, 400);
+    // 전환 중에도 송출 조작은 그대로 (소리·방 상태)
+    add ([clickRooms] { clickRooms(); }, 90);
+    add ([this, sh]
+    {
+        sh->sendMuted = core.jam()->isSendMuted();
+        click (root.dock->sendMute);
+    }, 450);
+    add ([this, sh]
+    {
+        expect (core.jam()->isSendMuted() != sh->sendMuted && (int) core.jam()->getPhase() == sh->phase, TXT ("전환 중 송출 정지 누름 → 바로 반영, 연결 그대로"));
+        click (root.dock->sendMute);   // 되돌림
+    }, 300);
+    add ([this, sh] { expect (core.jam()->isSendMuted() == sh->sendMuted, TXT ("공개 방에서 누름 → 같은 상태 (화면 밖 공통 상태)")); }, 0);
+    // 창 크기를 바꿔도 자리를 따라간다
+    add ([this] { if (auto* p = peer()) { auto b = p->getBounds(); p->setBounds (b.withSize (juce::jmax (1000, b.getWidth() - 180), juce::jmax (600, b.getHeight() - 80)), false); } }, 600);
+    add ([checkRoomsLayout] { checkRoomsLayout (TXT ("작은 창 공개 방")); }, 0);
+    add ([clickRoom] { clickRoom(); }, 450);
+    add ([checkRoomLayout] { checkRoomLayout (TXT ("작은 창 방 화면")); }, 0);
+    add ([this] { if (auto* p = peer()) { auto b = p->getBounds(); p->setBounds (b.withSize (b.getWidth() + 180, b.getHeight() + 80), false); } }, 600);
+    add ([checkRoomLayout] { checkRoomLayout (TXT ("창 되돌림")); }, 0);
+
+    begin (TXT ("내 오디오·모니터: 방에서 나가면 없어진다"));
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("방에서 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); }, 6000);
+    add ([this, listBottomPad, scrollable]
+    {
+        expect (root.dock == nullptr && home().dockSlot().isEmpty(), TXT ("나가면 카드 묶음·자리 없음"));
+        if (scrollable()) expect (listBottomPad() == metric::pagePad, TXT ("나가면 목록 아래 여백 18"));
+        // 미터 상자도 함께 빠졌다
+        for (auto* c : root.getChildren()) expect (dynamic_cast<MeterBox*> (c) == nullptr, TXT ("미터 상자 남지 않음"));
+    }, 0);
+}
+
+//==============================================================================
+// 모달 애니메이션 (공통 래퍼 ModalBase): 열기 240ms 끝나면 정확히 100%, 닫기는 누름을 받지 않는 그림이 180ms 뒤 사라진다.
+// 다섯 모달(설정·방 만들기·친구 추가·코드로 입장·친구 프로필)을 Esc·닫기(또는 취소) 버튼·바깥 누름으로 닫는다
+void UiSelfTest::addModalAnimTests()
+{
+    enum class Kind { settings, create, friendAdd, joinCode, profile };
+    enum class How { esc, button, outside };
+    auto current = [this] (Kind k) -> ModalBase*
+    {
+        if (k == Kind::settings)
+        {
+            if (auto* e = root.getParentComponent())
+                for (auto* c : e->getChildren()) if (auto* s = dynamic_cast<SettingsModal*> (c)) return s;
+            return nullptr;
+        }
+        return home().modal.get();
+    };
+    auto ghost = [this] (Kind k) -> juce::Component*
+    {
+        auto* parent = k == Kind::settings ? root.getParentComponent() : static_cast<juce::Component*> (&root);
+        if (parent == nullptr) return nullptr;
+        for (auto* c : parent->getChildren()) if (c->getComponentID() == "modalCloseGhost") return c;
+        return nullptr;
+    };
+    auto open = [this] (Kind k)
+    {
+        switch (k)
+        {
+            case Kind::settings:  if (root.onOpenSettings) root.onOpenSettings (0); break;
+            case Kind::create:    home().openCreateRoom(); break;
+            case Kind::friendAdd: home().openAddFriend(); break;
+            case Kind::joinCode:  home().openJoinCode(); break;
+            case Kind::profile:
+                for (auto& f : core.store().state().friends) { home().openProfile (f.user); break; }
+                break;
+        }
+    };
+    const char* names[] = { "설정", "방 만들기", "친구 추가", "코드로 입장", "친구 프로필" };
+    const char* hows[] = { "Esc", "닫기 버튼", "바깥 누름" };
+
+    begin (TXT ("모달 애니메이션"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    closeToasts();
+    for (int ki = 0; ki < 5; ++ki)
+        for (int hi = 0; hi < 3; ++hi)
+        {
+            const auto k = (Kind) ki;
+            const auto how = (How) hi;
+            const juce::String label = juce::String (juce::CharPointer_UTF8 (names[ki])) + " · " + juce::String (juce::CharPointer_UTF8 (hows[hi]));
+            add ([open, k] { open (k); }, 40);
+            waitUntil (label + TXT (": 열림"), [current, k] { return current (k) != nullptr; }, 2000);
+            add ([this, current, k, label]
+            {
+                auto* m = current (k);
+                if (m == nullptr) return;
+                const auto st = m->getAnimState();
+                expect (m->isOpening() && st.box < 1.0f && st.dim < 1.0f, label + TXT (": 여는 중 (덮개 ") + juce::String (st.dim, 2) + TXT (", 상자 ") + juce::String (st.box, 2) + ")");
+            }, 350);
+            add ([this, current, k, label, how]
+            {
+                auto* m = current (k);
+                if (m == nullptr) return;
+                const auto st = m->getAnimState();
+                bool identity = true;
+                for (auto* c : m->getChildren()) identity = identity && ! c->isTransformed() && c->getAlpha() == 1.0f;
+                expect (! m->isOpening() && st.dim == 1.0f && st.box == 1.0f && st.dy == 0.0f && st.scale == 1.0f && identity,
+                        label + TXT (": 열기 끝 → 변환 없음 (정확히 100%), 불투명"));
+                switch (how)
+                {
+                    case How::esc: key (juce::KeyPress (juce::KeyPress::escapeKey)); break;
+                    case How::button:
+                    {
+                        juce::Button* b = nullptr;
+                        if (auto* s = dynamic_cast<SettingsModal*> (m)) b = &s->close;
+                        else if (auto* md = dynamic_cast<Modal*> (m); md != nullptr && md->closeButton.isShowing()) b = &md->closeButton;
+                        else b = findButton (*m, TXT ("취소"));   // 닫기 버튼이 없는 창 (방 만들기·코드로 입장): 취소
+                        expect (b != nullptr, label + TXT (": 닫기(취소) 버튼"));
+                        if (b != nullptr) click (*b);
+                        break;
+                    }
+                    case How::outside: click (*m, { 6, m->getHeight() / 2 }); break;
+                }
+            }, 60);
+            add ([this, current, ghost, k, label]
+            {
+                expect (current (k) == nullptr, label + TXT (": 닫힘 (모달은 바로 빠진다)"));
+                auto* g = ghost (k);
+                expect (g != nullptr, label + TXT (": 닫히는 그림이 남아 있다"));
+                if (g != nullptr)
+                {
+                    auto* parent = g->getParentComponent();
+                    auto* hit = parent->getComponentAt (g->getBounds().getCentre());
+                    bool self = true, kids = true;
+                    g->getInterceptsMouseClicks (self, kids);
+                    expect (hit != g && ! self, label + TXT (": 닫히는 동안 누름을 받지 않는다"));
+                }
+            }, 300);
+            add ([ghost, k, label, this] { expect (ghost (k) == nullptr, label + TXT (": 끝나면 화면에서 빠진다")); }, 100);
+        }
+}
+
+//==============================================================================
+// 동작 줄이기 (MEON_REDUCE_MOTION=1 로 켜서 돌린다): 모달·카드 전환·사이드바 접기 애니메이션 없이 바로
+void UiSelfTest::addReducedMotionTests()
+{
+    begin (TXT ("동작 줄이기"));
+    add ([this] { expect (systemPrefersReducedMotion(), TXT ("동작 줄이기 켜짐 (MEON_REDUCE_MOTION=1)")); if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    closeToasts();
+    add ([this] { home().openAddFriend(); }, 30);
+    add ([this]
+    {
+        auto* m = home().modal.get();
+        expect (m != nullptr && ! m->isOpening() && m->getAnimState().box == 1.0f, TXT ("모달: 열기 애니메이션 없이 바로"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 60);
+    add ([this]
+    {
+        bool g = false;
+        for (auto* c : root.getChildren()) g = g || c->getComponentID() == "modalCloseGhost";
+        expect (home().modal == nullptr && ! g, TXT ("모달: 닫기 애니메이션 없이 바로"));
+        root.sidebar->toggleCollapsed();
+    }, 30);
+    add ([this]
+    {
+        expect (root.sidebar->getWidth() == Sidebar::closedW, TXT ("사이드바 접기: 애니메이션 없이 바로 (") + juce::String (root.sidebar->getWidth()) + ")");
+        root.sidebar->toggleCollapsed();
+    }, 30);
+    add ([this] { expect (root.sidebar->getWidth() == Sidebar::openW, TXT ("사이드바 펼치기: 바로")); }, 0);
+    enterNewRoom();
+    add ([this]
+    {
+        const auto r = root.sidebar->devRow (TXT ("공개 방"));
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre()); else root.setMinimized (true);
+    }, 30);
+    add ([this]
+    {
+        auto* d = root.dock.get();
+        expect (d != nullptr && d->getCardsBounds() == home().dockSlot() + home().getPosition() && d->getShadow() == 1.0f,
+                TXT ("카드 전환: 애니메이션 없이 바로 공개 방 자리·그림자"));
+        root.setMinimized (false);
+    }, 30);
+    add ([this]
+    {
+        auto* d = root.dock.get();
+        auto* j = jam();
+        expect (d != nullptr && j != nullptr && d->getCardsBounds() == j->dockSlot() + j->getPosition() && d->getShadow() == 0.0f,
+                TXT ("카드 전환: 바로 방 화면 자리"));
+    }, 0);
+}
+
+//==============================================================================
+// 윈도우 창 가장자리 (왼쪽·오른쪽·아래 진한 선 조사·확인): 흰 바탕 창을 뒤에 깔고(투명한 크기 조절 틀 자리가 흰색으로 보이게)
+// 가장자리 픽셀 줄을 읽는다. --no-winframe 이면 운영체제 제목 줄 그대로인 창(비교 기준). windows.yml (윈도우 10·11 러너)
+void UiSelfTest::addWinEdgeTests()
+{
+    begin (TXT ("윈도우 창 가장자리"));
+    if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
+    {
+        add ([] { std::cerr << "UITEST INFO winedge: 윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Plain : juce::Component
+    {
+        explicit Plain (juce::Colour c) : colour (c) {}
+        void paint (juce::Graphics& g) override { g.fillAll (colour); }
+        juce::Colour colour;
+    };
+    struct Shared { std::unique_ptr<Plain> backdrop, other; };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto rect = [] (const int r[4]) { return juce::String (r[0]) + "," + juce::String (r[1]) + " " + juce::String (r[2]) + "x" + juce::String (r[3]); };
+    // 픽셀 문자열 "RRGGBB RRGGBB …" 에서 가장 어두운 밝기 (0~255)
+    auto darkest = [] (const std::string& px)
+    {
+        int best = 255;
+        juce::StringArray t;
+        t.addTokens (juce::String (px), " ", "");
+        t.removeEmptyStrings();
+        for (auto& s : t)
+        {
+            const auto v = (unsigned) s.getHexValue32();
+            const int r = (int) ((v >> 16) & 0xFF), g = (int) ((v >> 8) & 0xFF), b = (int) (v & 0xFF);
+            best = juce::jmin (best, (r * 299 + g * 587 + b * 114) / 1000);
+        }
+        return best;
+    };
+    auto sample = [this, handle, rect, darkest] (const juce::String& label)
+    {
+        const auto p = meon::winframe::probe (handle());
+        const auto f = meon::winframe::frameInfo (handle());
+        std::cerr << "UITEST INFO winedge " << label << ": os " << p.os << " build " << f.build << " installed " << (p.installed ? 1 : 0)
+                  << " max " << (p.maximised ? 1 : 0) << " active " << (p.active ? 1 : 0) << " dpi " << p.dpi
+                  << " window " << rect (p.window) << " client " << rect (p.client) << " visibleFrame " << rect (f.frameBounds)
+                  << " composition " << (f.composition ? 1 : 0) << " ncRendering " << (f.ncRendering ? 1 : 0)
+                  << " style " << juce::String::toHexString ((int) f.style) << " exStyle " << juce::String::toHexString ((int) f.exStyle)
+                  << " classStyle " << juce::String::toHexString ((int) f.classStyle)
+                  << " colorization " << juce::String::toHexString ((int) f.colorization) << " accentOnBorders " << f.colorPrevalence
+                  << " borderColour(DWMWA_BORDER_COLOR) " << f.borderColourResult << std::endl;
+        const int cx = p.client[0] + p.client[2] / 2, cy = p.client[1] + p.client[3] / 2;
+        const int cl = p.client[0], cr = p.client[0] + p.client[2], cb = p.client[1] + p.client[3];
+        const int wl = p.window[0], wr = p.window[0] + p.window[2], wb = p.window[1] + p.window[3];
+        auto line = [&] (const char* name, int x, int y, int w, int h)
+        {
+            const auto px = meon::winframe::devScreenPixels (x, y, w, h);
+            std::cerr << "UITEST INFO winedge " << label << " " << name << " @" << x << "," << y << " " << w << "x" << h << ": " << px << std::endl;
+            return px;
+        };
+        if (p.maximised)
+        {
+            // 최대화: 틀은 화면 밖. 작업 영역 가장자리(내용 끝)에 선이 없는지
+            const int ml = p.work[0], mr = p.work[0] + p.work[2], mb = p.work[1] + p.work[3];
+            const auto a = line ("workLeft", ml, cy, 4, 1), b = line ("workRight", mr - 4, cy, 4, 1), c = line ("workBottom", cx, mb - 4, 1, 4);
+            const int d = juce::jmin (darkest (a), darkest (b), darkest (c));
+            std::cerr << "UITEST INFO winedge " << label << " darkest at work-area edges " << d << std::endl;
+            expect (d >= 200, label + TXT (": 최대화한 내용 가장자리에 진한 선 없음 (가장 어두운 밝기 ") + juce::String (d) + ")");
+            return;
+        }
+        // 보통: 창 틀(내용 밖) 줄과 내용 안쪽 3px. 화면(모니터) 밖으로 나간 쪽은 건너뛴다
+        const int ml = p.monitor[0], mr = p.monitor[0] + p.monitor[2], mb = p.monitor[1] + p.monitor[3];
+        juce::String dark;
+        if (wl - 2 >= ml)
+        {
+            const auto left = line ("left", wl - 2, cy, (cl + 3) - (wl - 2), 1);
+            line ("bottomLeftCorner", cl - 9, cb - 2, 12, 1);
+            dark << " left " << darkest (left.substr (0, (size_t) (cl - (wl - 2)) * 7));
+        }
+        if (wr + 2 <= mr)
+        {
+            const auto right = line ("right", cr - 3, cy, (wr + 2) - (cr - 3), 1);
+            dark << " right " << darkest (right.substr ((size_t) 3 * 7));
+        }
+        if (wb + 2 <= mb)
+        {
+            const auto bottom = line ("bottom", cx, cb - 3, 1, (wb + 2) - (cb - 3));
+            dark << " bottom " << darkest (bottom.substr ((size_t) 3 * 7));
+        }
+        line ("topEdge", cx, p.client[1] - 2, 1, 5);
+        // 틀 자리(내용 밖)에서 가장 어두운 밝기: 흰 바탕 + 운영체제 그림자·1px 테두리만이면 밝다
+        std::cerr << "UITEST INFO winedge " << label << " darkest outside content:" << dark << std::endl;
+        if (! p.installed) return;   // 비교용 (운영체제 제목 줄 그대로)
+        // 테두리는 네 변 모두 #EBEBEB 1px 한 줄: 윈도우 11 은 운영체제 (위는 내용 맨 위 줄, 나머지는 내용 바로 바깥), 윈도우 10 은 앱 (내용 끝 줄)
+        const bool w11 = p.win11;
+        auto px = [] (int x, int y) { return juce::String (meon::winframe::devScreenPixels (x, y, 1, 1).substr (0, 6)); };
+        const auto top = px (cx, p.client[1]);
+        const auto lft = w11 ? px (cl - 1, cy) : px (cl, cy);
+        const auto rgt = w11 ? px (cr, cy) : px (cr - 1, cy);
+        const auto bot = w11 ? px (cx, cb) : px (cx, cb - 1);
+        expect (top == "EBEBEB" && (wl - 2 < ml || lft == "EBEBEB") && (wr + 2 > mr || rgt == "EBEBEB") && (wb + 2 > mb || bot == "EBEBEB"),
+                label + TXT (": 네 변 테두리 #EBEBEB (위 ") + top + TXT (" 왼쪽 ") + lft + TXT (" 오른쪽 ") + rgt + TXT (" 아래 ") + bot + ")");
+        // 테두리 바깥 한 줄에 진한 선 없음 (흰 바탕 위: 운영체제 테두리가 보이면 #707070·강조 색)
+        const int o = w11 ? 1 : 0;
+        int worst = 255;
+        if (wl - 2 >= ml) worst = juce::jmin (worst, darkest (meon::winframe::devScreenPixels (cl - 1 - o, cy, 1, 1)));
+        if (wr + 2 <= mr) worst = juce::jmin (worst, darkest (meon::winframe::devScreenPixels (cr + o, cy, 1, 1)));
+        if (wb + 2 <= mb) worst = juce::jmin (worst, darkest (meon::winframe::devScreenPixels (cx, cb + o, 1, 1)));
+        expect (worst >= 200, label + TXT (": 테두리 바깥에 진한 선 없음 (가장 어두운 밝기 ") + juce::String (worst) + ")");
+    };
+
+    add ([this, sh]
+    {
+        auto* top = root.getTopLevelComponent();
+        sh->backdrop = std::make_unique<Plain> (juce::Colours::white);
+        sh->backdrop->setBounds (juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->totalArea);
+        sh->backdrop->addToDesktop (juce::ComponentPeer::windowIgnoresKeyPresses);
+        sh->backdrop->setVisible (true);
+        sh->backdrop->toBehind (top);
+        top->toFront (true);
+    }, 1500);
+    add ([sample] { sample (TXT ("보통·활성")); }, 0);
+    // 화면이 좁아(러너 1024) 오른쪽 틀이 화면 밖이면 창을 왼쪽으로 옮겨 오른쪽을 본다
+    add ([this, handle]
+    {
+        const auto p = meon::winframe::probe (handle());
+        if (p.window[0] + p.window[2] + 2 <= p.monitor[0] + p.monitor[2]) return;
+        if (auto* pr = peer())
+        {
+            const float scale = (float) p.dpi / 96.0f;
+            const auto b = pr->getBounds();
+            const int targetRight = juce::roundToInt ((float) (p.monitor[0] + p.monitor[2] - 40) / scale);
+            pr->setBounds (b.withX (targetRight - b.getWidth()), false);
+        }
+    }, 900);
+    add ([sample] { sample (TXT ("보통·활성 (오른쪽 보기)")); }, 0);
+    add ([this]
+    {
+        if (auto* pr = peer()) pr->setBounds (pr->getBounds().withX (100), false);
+    }, 900);
+    add ([this, sh]
+    {
+        // 다른 창을 앞으로 (비활성)
+        sh->other = std::make_unique<Plain> (juce::Colours::lightgrey);
+        const auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+        sh->other->setBounds (area.getRight() - 40, area.getBottom() - 40, 30, 30);
+        sh->other->addToDesktop (juce::ComponentPeer::windowHasDropShadow);
+        sh->other->setVisible (true);
+        sh->other->toFront (true);
+    }, 1000);
+    add ([sample] { sample (TXT ("보통·비활성")); }, 0);
+    add ([this, sh] { sh->other.reset(); root.getTopLevelComponent()->toFront (true); }, 800);
+    add ([handle] { meon::winframe::toggleMaximise (handle()); }, 1200);
+    add ([sample] { sample (TXT ("최대화")); }, 0);
+    add ([handle] { meon::winframe::toggleMaximise (handle()); }, 1200);
+    add ([sample] { sample (TXT ("다시 보통")); }, 0);
+    add ([sh] { sh->backdrop.reset(); }, 0);
+}
+
+//==============================================================================
+// 전체 화면 단축키 (독립 앱): 맥 ⌃⌘F·fn+F·보기 메뉴 (macOS 기본 전체 화면), 윈도우 F11 (창 틀·작업 표시줄까지).
+// 방 안에서 채팅 입력 중에 켜고 끈다 (합주 소리·방 상태 그대로). 윈도우는 창 버튼이 숨고 맨 위에 대면 나타난다.
+// 끌 때(requestedQuit) 원래 창으로 되돌아오는지. 실제 창이 필요하다 (windows.yml·mac.yml)
+void UiSelfTest::addFullscreenTests()
+{
+    begin (TXT ("전체 화면 단축키"));
+    const auto os = juce::SystemStats::getOperatingSystemName();
+    const bool win = os.startsWithIgnoreCase ("Windows"), mac = os.startsWithIgnoreCase ("Mac");
+    if (! win && ! mac)
+    {
+        add ([] { std::cerr << "UITEST INFO fullscreen: 맥·윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Shared { juce::Rectangle<int> before; int phase = 0; bool sendMuted = false; juce::String room; };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto isFs = [win, handle] { return win ? meon::winframe::isFullscreen (handle()) : meon::chrome::isFullScreen (handle()); };
+    auto shortcut = [win, handle] (int macMods)
+    {
+        if (win) meon::winframe::devKey (0x7A);   // VK_F11
+        else meon::chrome::devPostKey (handle(), "f", macMods);
+    };
+    auto caption = [this]() -> WinCaptionButtons*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (auto* w = dynamic_cast<WinCaptionButtons*> (c)) return w;
+        return nullptr;
+    };
+    auto sameRoom = [this, sh] (const juce::String& what)
+    {
+        auto* s = core.jam();
+        expect (inRoom() && roomId() == sh->room && s != nullptr && (int) s->getPhase() == sh->phase && s->isSendMuted() == sh->sendMuted,
+                what + TXT (": 방·연결·송출 그대로"));
+    };
+    const int waitMs = mac ? 2200 : 900;   // 맥 전체 화면은 애니메이션
+
+    enterNewRoom();
+    closeToasts();
+    add ([this, sh, mac]
+    {
+        if (auto* p = peer()) sh->before = p->getBounds();
+        sh->room = roomId();
+        sh->phase = (int) core.jam()->getPhase();
+        sh->sendMuted = core.jam()->isSendMuted();
+        if (mac) meon::chrome::devSetActive (true);   // 창이 앞에 있어야 입력 칸이 포커스를 받는다
+    }, 600);
+    add ([this, mac]
+    {
+        jam()->chatInput.focus();   // 채팅 입력 중
+        type ("hi");
+        const bool focused = jam()->chatInput.editor().hasKeyboardFocus (true);
+        if (mac && ! focused)
+        {
+            // 맥 CI: 창이 앞 창이 아니라 입력 칸이 포커스를 받지 못한다 (키 입력이 칸에 가지 않음). 글만 넣고 그대로 남는지 본다
+            std::cerr << "UITEST INFO fullscreen: chat input has no keyboard focus on this runner; text set directly" << std::endl;
+            jam()->chatInput.setText ("hi");
+        }
+        else
+        {
+            expect (jam()->chatInput.getText() == "hi", TXT ("채팅 입력 칸에 글 넣음 (") + jam()->chatInput.getText()
+                    + TXT (", 포커스 ") + juce::String (focused ? 1 : 0) + ")");
+        }
+        if (mac) expect (meon::chrome::devHasFullScreenMenu(), TXT ("메뉴 막대: 보기 > 전체 화면으로 전환 (⌃⌘F)"));
+    }, 300);
+    add ([shortcut] { shortcut (1 | 2); }, waitMs);
+    add ([this, sh, win, isFs, caption, sameRoom, handle]
+    {
+        expect (isFs(), win ? TXT ("F11 (채팅 입력 중) → 전체 화면") : TXT ("⌃⌘F (채팅 입력 중) → 전체 화면"));
+        sameRoom (TXT ("켤 때"));
+        expect (jam()->chatInput.getText() == "hi", TXT ("채팅 입력 중인 글 그대로 (") + jam()->chatInput.getText() + ")");
+        expect (root.chromeMode() == Sidebar::Chrome::flat, TXT ("전체 화면 배치 (fullscreen=켜짐)"));
+        if (win)
+        {
+            const auto p = meon::winframe::probe (handle());
+            expect (std::equal (p.client, p.client + 4, p.monitor),
+                    TXT ("윈도우 전체 화면: 내용 = 모니터 전체 (작업 표시줄까지) ") + juce::String (p.client[2]) + "x" + juce::String (p.client[3]));
+            auto* cb = caption();
+            expect (cb == nullptr || ! cb->isVisible(), TXT ("전체 화면: 창 버튼 숨김"));
+            expect (root.getTitleRightInset() == metric::padX, TXT ("전체 화면: 제목 줄 오른쪽 여백 18 (창 버튼 없음)"));
+        }
+    }, 0);
+    if (win)
+    {
+        // 마우스를 화면 맨 위에 대면 창 버튼이 나타나고, "이전 크기로" 로 빠져나간다
+        add ([handle]
+        {
+            const auto p = meon::winframe::probe (handle());
+            meon::winframe::devMouse (p.monitor[0] + p.monitor[2] / 2, p.monitor[1], false, false);
+        }, 500);
+        add ([this, caption]
+        {
+            auto* cb = caption();
+            expect (cb != nullptr && cb->isVisible(), TXT ("맨 위에 마우스 → 창 버튼이 보인다"));
+        }, 0);
+        add ([caption]
+        {
+            if (auto* cb = caption())
+            {
+                const auto c = juce::Desktop::getInstance().getDisplays().logicalToPhysical (cb->localPointToGlobal (cb->buttonBounds (WinCaptionButtons::maximise).getCentre()));
+                meon::winframe::devMouse (c.x, c.y, false, false);
+            }
+        }, 300);
+        add ([caption]
+        {
+            if (auto* cb = caption())
+            {
+                const auto c = juce::Desktop::getInstance().getDisplays().logicalToPhysical (cb->localPointToGlobal (cb->buttonBounds (WinCaptionButtons::maximise).getCentre()));
+                meon::winframe::devMouse (c.x, c.y, true, true);
+            }
+        }, waitMs);
+        add ([this, sh, isFs, sameRoom]
+        {
+            expect (! isFs(), TXT ("창 버튼 '이전 크기로' → 전체 화면 끝"));
+            if (auto* p = peer()) expect (p->getBounds() == sh->before, TXT ("원래 창 자리·크기 ") + p->getBounds().toString());
+            sameRoom (TXT ("끌 때"));
+            jam()->chatInput.focus();
+        }, 300);
+    }
+    else
+    {
+        add ([shortcut] { shortcut (1 | 2); }, waitMs);
+        add ([this, sh, isFs, sameRoom]
+        {
+            expect (! isFs(), TXT ("⌃⌘F 다시 → 전체 화면 끝"));
+            sameRoom (TXT ("끌 때"));
+            jam()->chatInput.focus();
+        }, 300);
+        add ([shortcut] { shortcut (4); }, waitMs);   // fn+F (지구본+F)
+        add ([isFs] { if (! isFs()) std::cerr << "UITEST INFO fullscreen: fn+F 로 전체 화면이 되지 않음 (가짜 키 이벤트)" << std::endl; }, 0);
+        add ([this, isFs, handle]
+        {
+            expect (isFs(), TXT ("fn+F → 전체 화면"));
+            if (isFs()) meon::chrome::toggleFullScreen (handle());
+        }, waitMs);
+    }
+    // 단축키로 다시 켠 채 앱을 끄면 원래 창으로 (끄는 길: requestedQuit). 맥은 나온 뒤 끄므로 여기서는 윈도우만
+    if (win)
+    {
+        add ([shortcut] { shortcut (0); }, waitMs);
+        add ([this, sh, isFs]
+        {
+            expect (isFs(), TXT ("F11 다시 → 전체 화면"));
+            if (auto* hooks = dynamic_cast<meon::ShellHooks*> (root.getParentComponent()))
+                expect (hooks->requestedQuit(), TXT ("끄기 요청"));
+        }, 600);
+        add ([this, sh, isFs]
+        {
+            expect (! isFs(), TXT ("끌 때: 전체 화면을 풀고 끈다 (다음에 켜면 원래 창)"));
+            if (auto* p = peer()) expect (p->getBounds() == sh->before, TXT ("끌 때 저장될 창 크기 = 원래 창 ") + p->getBounds().toString());
+        }, 0);
+    }
+}
+
+//==============================================================================
+bool UiSelfTest::checkWindowFrame (juce::Component& editor, const juce::String& label, const juce::String& key, juce::String& detail)
+{
+    detail.clear();
+    auto* peer = editor.getPeer();
+    if (peer == nullptr) { detail = TXT ("창 없음"); return false; }
+    void* h = peer->getNativeHandle();
+    peer->performAnyPendingRepaintsNow();
+    meon::winframe::devRedrawNow (h);   // WM_PAINT 로 한 번 더 (사용자 화면과 같은 길)
+    const auto p = meon::winframe::probe (h);
+    auto rs = [] (const int r[4]) { return juce::String (r[0]) + "," + juce::String (r[1]) + " " + juce::String (r[2]) + "x" + juce::String (r[3]); };
+    juce::StringArray fails;
+    const juce::String mode = p.fullscreen ? "fullscreen" : p.maximised ? "maximised" : "normal";
+
+    // 1) 상태별 내용 자리
+    if (p.fullscreen && ! std::equal (p.client, p.client + 4, p.monitor))
+        fails.add (TXT ("내용 ≠ 모니터 (") + rs (p.client) + " / " + rs (p.monitor) + ")");
+    if (! p.fullscreen && p.maximised && ! std::equal (p.client, p.client + 4, p.work))
+        fails.add (TXT ("내용 ≠ 작업 영역 (") + rs (p.client) + " / " + rs (p.work) + ")");
+    if (! p.fullscreen && ! p.maximised)
+    {
+        const int l = p.client[0] - p.window[0], t = p.client[1] - p.window[1];
+        const int r = (p.window[0] + p.window[2]) - (p.client[0] + p.client[2]), b = (p.window[1] + p.window[3]) - (p.client[1] + p.client[3]);
+        if (t != 0 || l != p.normalInsets[0] || r != p.normalInsets[2] || b != p.normalInsets[3])
+            fails.add (TXT ("틀 두께 ") + juce::String (l) + "/" + juce::String (t) + "/" + juce::String (r) + "/" + juce::String (b));
+    }
+    // 2) JUCE 가 아는 내용 자리·크기 = 실제 (물리 1px 안)
+    const float s = (float) peer->getPlatformScaleFactor();
+    const int jw = juce::roundToInt ((float) editor.getWidth() * s), jh = juce::roundToInt ((float) editor.getHeight() * s);
+    const auto origin = juce::Desktop::getInstance().getDisplays().logicalToPhysical (editor.getScreenPosition());
+    if (std::abs (jw - p.client[2]) > 1 || std::abs (jh - p.client[3]) > 1 || std::abs (origin.x - p.client[0]) > 1 || std::abs (origin.y - p.client[1]) > 1)
+        fails.add (TXT ("JUCE 내용 ") + origin.toString() + " " + juce::String (jw) + "x" + juce::String (jh) + TXT (" / 창 내용 ") + rs (p.client));
+
+    // 3) 화면 vs 앱 그림 (네 가장자리 줄 · 창 버튼 자리)
+    const int cw = p.client[2], ch = p.client[3];
+    const auto screen = meon::winframe::devCaptureScreen (p.client[0], p.client[1], cw, ch);
+    int edgeTop = 0, edgeBottom = 0, edgeLeft = 0, edgeRight = 0, capDiff = 0, capArea = 0;
+    if (cw <= 0 || ch <= 0 || screen.size() != (size_t) cw * (size_t) ch)
+    {
+        fails.add (TXT ("화면 캡처 실패"));
+    }
+    else
+    {
+        const auto snap = editor.createComponentSnapshot (editor.getLocalBounds(), true, s);
+        juce::Image::BitmapData sd (snap, juce::Image::BitmapData::readOnly);
+        auto differs = [&] (int x, int y)
+        {
+            if (x >= snap.getWidth() || y >= snap.getHeight()) return true;   // 앱 그림이 닿지 않는 자리 = 여백
+            const juce::Colour a (screen[(size_t) y * (size_t) cw + (size_t) x]), b = sd.getPixelColour (x, y);
+            return std::abs ((int) a.getRed() - (int) b.getRed()) > 16 || std::abs ((int) a.getGreen() - (int) b.getGreen()) > 16
+                || std::abs ((int) a.getBlue() - (int) b.getBlue()) > 16;
+        };
+        // 윈도우 11 보통 창: 맨 위 줄은 운영체제 테두리(#EBEBEB)가 덮고, 네 모서리는 둥글다 (모서리 근처는 세지 않는다)
+        const bool w11Normal = p.win11 && ! p.fullscreen && ! p.maximised;
+        const int corner = w11Normal ? juce::roundToInt (10.0f * s) : 0;
+        // 화면에 보이는 자리만 (전체 화면 = 모니터, 그 밖 = 작업 영역: 작업 표시줄이 위에 있다). 큰 배율에서 보통 창이 화면보다 크면 아래가 잘린다
+        const auto* area = p.fullscreen ? p.monitor : p.work;
+        const int vx0 = juce::jmax (0, area[0] - p.client[0]), vy0 = juce::jmax (0, area[1] - p.client[1]);
+        const int vx1 = juce::jmin (cw, area[0] + area[2] - p.client[0]), vy1 = juce::jmin (ch, area[1] + area[3] - p.client[1]);
+        const bool showTop = vy0 == 0, showBottom = vy1 == ch, showLeft = vx0 == 0, showRight = vx1 == cw;
+        // 다른 창이 덮은 자리는 세지 않는다: 비활성 시험의 앞 창(frameCheckIgnore), 그리고 이 창보다 위에 있는 보이는 창
+        // (CI 의 콘솔 창, 앞 창이 아닌 전체 화면 위의 작업 표시줄 등. 운영체제가 그 창을 위에 그리므로 우리 픽셀이 아니다). 뺀 수는 로그에
+        std::vector<juce::Rectangle<int>> above;
+        {
+            const auto q = meon::winframe::devWindowsAbove (h);
+            for (size_t i = 0; i + 3 < q.size(); i += 4) above.push_back ({ q[i], q[i + 1], q[i + 2], q[i + 3] });
+        }
+        int coveredCount = 0;
+        const auto covered = [&] (int x, int y)
+        {
+            const int sx = p.client[0] + x, sy = p.client[1] + y;
+            if (frameCheckIgnore.contains (sx, sy)) return true;
+            for (auto& r : above) if (r.contains (sx, sy)) { ++coveredCount; return true; }
+            return false;
+        };
+        // 다른 픽셀 몇 개를 로그에 (아티팩트를 받지 못할 때 원인을 보려고): 자리, 화면, 앱 그림, 화면 바깥 1px
+        juce::StringArray samples;
+        const auto sample = [&] (const char* edgeName, int x, int y)
+        {
+            if (samples.size() >= 12) return;
+            const auto hex = [] (juce::uint32 c) { return juce::String::toHexString ((int) (c & 0xFFFFFFu)).paddedLeft ('0', 6); };
+            const auto sc = screen[(size_t) y * (size_t) cw + (size_t) x];
+            const auto ap = (x < snap.getWidth() && y < snap.getHeight()) ? sd.getPixelColour (x, y).getARGB() : 0u;
+            const int ox = x == 0 ? -1 : x == cw - 1 ? cw : x, oy = y == 0 ? -1 : y == ch - 1 ? ch : y;
+            const auto outside = meon::winframe::devScreenPixels (p.client[0] + ox, p.client[1] + oy, 1, 1).substr (0, 6);
+            samples.add (juce::String (edgeName) + "(" + juce::String (x) + "," + juce::String (y) + ") scr " + hex (sc) + " app " + hex (ap) + " out " + juce::String (outside));
+        };
+        for (int x = juce::jmax (corner, vx0); x < juce::jmin (cw - corner, vx1); ++x)
+        {
+            if (showTop && ! covered (x, 0) && (w11Normal ? (screen[(size_t) x] & 0xFFFFFFu) != 0xEBEBEBu : differs (x, 0))) { ++edgeTop; if (edgeTop % 97 == 1) sample ("T", x, 0); }
+            if (showBottom && ! covered (x, ch - 1) && differs (x, ch - 1)) { ++edgeBottom; if (edgeBottom % 97 == 1) sample ("B", x, ch - 1); }
+        }
+        for (int y = juce::jmax (corner, vy0); y < juce::jmin (ch - corner, vy1); ++y)
+        {
+            if (showLeft && ! covered (0, y) && differs (0, y)) { ++edgeLeft; if (edgeLeft % 97 == 1) sample ("L", 0, y); }
+            if (showRight && ! covered (cw - 1, y) && differs (cw - 1, y)) { ++edgeRight; if (edgeRight % 97 == 1) sample ("R", cw - 1, y); }
+        }
+        if (! (showTop && showBottom && showLeft && showRight))
+            std::cerr << "UITEST INFO winstates " << label << ": 화면 밖 가장자리는 세지 않음 (위 " << (showTop ? 1 : 0) << " 오른쪽 " << (showRight ? 1 : 0)
+                      << " 아래 " << (showBottom ? 1 : 0) << " 왼쪽 " << (showLeft ? 1 : 0) << ")" << std::endl;
+        // 창 버튼 자리 (보이면): 운영체제 창 버튼이 그려지면 다르다
+        for (auto* c : editor.getChildren())
+            if (auto* cb = dynamic_cast<WinCaptionButtons*> (c); cb != nullptr && cb->isVisible())
+            {
+                const auto r = (cb->getBounds().toFloat() * s).getSmallestIntegerContainer().getIntersection ({ 0, 1, cw, ch - 1 });
+                for (int y = r.getY(); y < r.getBottom(); ++y)
+                    for (int x = r.getX(); x < r.getRight(); ++x)
+                    {
+                        if (covered (x, y)) continue;
+                        ++capArea;
+                        if (differs (x, y)) { ++capDiff; if (capDiff % 499 == 1) sample ("C", x, y); }
+                    }
+            }
+        if (coveredCount > 0)
+        {
+            juce::StringArray rects;
+            for (auto& r : above) rects.add (r.toString());
+            std::cerr << "UITEST INFO winstates " << label << ": 위에 있는 다른 창이 덮은 픽셀 " << coveredCount << "개는 세지 않음 ("
+                      << (p.active ? "active" : "inactive") << ", " << rects.joinIntoString (" | ") << ")" << std::endl;
+        }
+        if (! samples.isEmpty())
+            std::cerr << "UITEST INFO winstates " << label << " samples: " << samples.joinIntoString (" | ") << std::endl;
+        const auto pct = [] (int n, int len) { return len > 0 ? (double) n * 100.0 / (double) len : 0.0; };
+        const int lenX = juce::jmax (1, cw - 2 * corner), lenY = juce::jmax (1, ch - 2 * corner);
+        if (pct (edgeTop, lenX) > 2.0 || pct (edgeBottom, lenX) > 2.0 || pct (edgeLeft, lenY) > 2.0 || pct (edgeRight, lenY) > 2.0)
+            fails.add (TXT ("가장자리 줄이 앱 그림과 다름 (위 ") + juce::String (edgeTop) + TXT (" 오른쪽 ") + juce::String (edgeRight)
+                       + TXT (" 아래 ") + juce::String (edgeBottom) + TXT (" 왼쪽 ") + juce::String (edgeLeft) + "px)");
+        if (capArea > 0 && pct (capDiff, capArea) > 2.0)
+            fails.add (TXT ("창 버튼 자리가 앱 그림과 다름 (") + juce::String (capDiff) + "/" + juce::String (capArea) + "px)");
+    }
+    // 4) 캡처 (MEON_WINCAPS 폴더): 창 + 둘레 12px
+    const auto dir = juce::SystemStats::getEnvironmentVariable ("MEON_WINCAPS", {});
+    if (dir.isNotEmpty())
+    {
+        const int m = 12;
+        const int x0 = juce::jmax (p.monitor[0], p.window[0] - m), y0 = juce::jmax (p.monitor[1], p.window[1] - m);
+        const int x1 = juce::jmin (p.monitor[0] + p.monitor[2], p.window[0] + p.window[2] + m);
+        const int y1 = juce::jmin (p.monitor[1] + p.monitor[3], p.window[1] + p.window[3] + m);
+        const auto px = meon::winframe::devCaptureScreen (x0, y0, x1 - x0, y1 - y0);
+        if (! px.empty())
+        {
+            juce::Image img (juce::Image::RGB, x1 - x0, y1 - y0, false);
+            {
+                juce::Image::BitmapData out (img, juce::Image::BitmapData::writeOnly);
+                for (int y = 0; y < y1 - y0; ++y)
+                    for (int x = 0; x < x1 - x0; ++x)
+                        out.setPixelColour (x, y, juce::Colour (px[(size_t) y * (size_t) (x1 - x0) + (size_t) x]));
+            }
+            juce::File folder (dir);
+            folder.createDirectory();
+            auto f = folder.getChildFile ("dpi" + juce::String (p.dpi) + "_" + key + ".png");
+            f.deleteFile();
+            juce::FileOutputStream os (f);
+            if (os.openedOk()) juce::PNGImageFormat().writeImageToStream (img, os);
+        }
+    }
+    detail = fails.joinIntoString ("; ");
+    std::cerr << "UITEST INFO winstates " << label << " [" << mode << " dpi " << p.dpi << (p.active ? " active" : " inactive")
+              << (p.appBorder ? " appBorder" : "") << "] window " << rs (p.window) << " client " << rs (p.client)
+              << " work " << rs (p.work) << " monitor " << rs (p.monitor) << " insets " << p.insets[0] << "/" << p.insets[1] << "/" << p.insets[2] << "/" << p.insets[3]
+              << " edgeDiff T" << edgeTop << " R" << edgeRight << " B" << edgeBottom << " L" << edgeLeft << " caption " << capDiff << "/" << capArea
+              << " blocked " << p.captionPaintsBlocked << " step " << p.pixelStep << " shadow " << p.shadowResult << " band " << p.bandPaints
+              << " maxFrame " << p.maxFrameMatchesWork << " modes " << p.modeChanges << " juceFrame " << juce::String (editor.getPeer()->getFrameSize().getLeft()) << "/" << juce::String (editor.getPeer()->getFrameSize().getTop())
+              << (fails.isEmpty() ? "" : " FAIL: ") << detail << std::endl;
+    return fails.isEmpty();
+}
+
+void UiSelfTest::addWinStatesTests()
+{
+    begin (TXT ("윈도우 창 상태별"));
+    if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
+    {
+        add ([] { std::cerr << "UITEST INFO winstates: 윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Plain : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::white); }
+    };
+    struct Shared
+    {
+        std::unique_ptr<Plain> backdrop;
+        std::unique_ptr<juce::DocumentWindow> other;
+        int n = 0, startSteps = INT_MIN;
+        juce::Rectangle<int> normalClient;
+    };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto caption = [this]() -> WinCaptionButtons*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (auto* w = dynamic_cast<WinCaptionButtons*> (c)) return w;
+        return nullptr;
+    };
+    auto phys = [] (juce::Component& c, juce::Point<int> local)
+    {
+        return juce::Desktop::getInstance().getDisplays().logicalToPhysical (c.localPointToGlobal (local));
+    };
+    // 상태 하나 확인 (화면이 다 그려진 뒤)
+    auto check = [this, sh] (const juce::String& label, const juce::String& key)
+    {
+        return std::function<void()> ([this, sh, label, key]
+        {
+            juce::String detail;
+            auto* editor = root.getParentComponent();
+            const bool ok = editor != nullptr && checkWindowFrame (*editor, label, juce::String (++sh->n).paddedLeft ('0', 2) + "_" + key, detail);
+            expect (ok, label + (ok ? juce::String() : ": " + detail));
+        });
+    };
+    auto sysCmd = [handle] (int which)   // 0 최소화, 1 최대화·이전 크기로, 2 복원
+    {
+        if (which == 0) meon::winframe::minimise (handle());
+        else if (which == 1) meon::winframe::toggleMaximise (handle());
+        else meon::winframe::restore (handle());
+    };
+    auto isMax = [handle] { return meon::winframe::isMaximised (handle()); };
+    auto isFs = [handle] { return meon::winframe::isFullscreen (handle()); };
+    auto escape = [this] { if (auto* e = root.getParentComponent()) e->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)); };
+    const int settle = 900;
+
+    // 켠 직후 (온보딩): 에디터가 창이 뜰 때 확인해 둔 결과
+    add ([this]
+    {
+        expect (launchFrameChecks > 0, TXT ("켠 직후(온보딩) 창 확인을 했다"));
+        expect (launchFrameFailures == 0, TXT ("켠 직후(온보딩) 가장자리·창 버튼") + (launchFrameDetail.isEmpty() ? juce::String() : ": " + launchFrameDetail));
+    }, 0);
+    // 흰 바탕 창을 뒤에 (캡처에서 창 둘레가 보이게)
+    add ([this, sh]
+    {
+        auto* top = root.getTopLevelComponent();
+        sh->backdrop = std::make_unique<Plain>();
+        sh->backdrop->setBounds (juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->totalArea);
+        sh->backdrop->addToDesktop (juce::ComponentPeer::windowIgnoresKeyPresses);
+        sh->backdrop->setVisible (true);
+        sh->backdrop->toBehind (top);
+        top->toFront (true);
+        closeToasts();
+    }, 1500);
+    add (check (TXT ("로그인 직후 (공개 방, 보통 창)"), "login"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (true); }, settle);
+    add (check (TXT ("사이드바 접힘"), "sidebar_collapsed"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (false); }, settle);
+    add (check (TXT ("사이드바 펼침"), "sidebar_open"), 0);
+    add ([this] { home().openAddFriend(); }, settle);
+    add (check (TXT ("모달 열림 (친구 추가)"), "modal"), 0);
+    add (escape, settle);
+    // 창 버튼에 마우스: 운영체제 창 버튼이 그려지면 화면이 앱 그림과 다르다
+    for (int b : { 0, 1, 2 })
+    {
+        add ([caption, phys, b]
+        {
+            if (auto* cb = caption())
+            {
+                const auto c = phys (*cb, cb->buttonBounds ((WinCaptionButtons::Which) b).getCentre());
+                meon::winframe::devMouse (c.x, c.y, false, false);
+            }
+        }, 350);
+        add (check (TXT ("창 버튼에 마우스 (") + (b == 0 ? TXT ("최소화") : b == 1 ? TXT ("최대화") : TXT ("닫기")) + ")", "hover" + juce::String (b)), 0);
+    }
+    add ([this, phys] { const auto c = phys (root, { root.getWidth() / 2, 300 }); meon::winframe::devMouse (c.x, c.y, false, false); }, 300);
+    // 비활성
+    add ([sh]
+    {
+        sh->other = std::make_unique<juce::DocumentWindow> ("other", juce::Colours::grey, juce::DocumentWindow::closeButton);
+        sh->other->setUsingNativeTitleBar (true);
+        sh->other->setBounds (40, 40, 200, 120);
+        sh->other->setVisible (true);
+        sh->other->toFront (true);
+    }, settle);
+    add ([sh, check]
+    {
+        // 앞 창이 덮은 자리는 가장자리 비교에서 뺀다 (그 창 + 둘레 그림자 자리 16)
+        if (auto* op = sh->other != nullptr ? sh->other->getPeer() : nullptr)
+        {
+            const auto r = juce::Desktop::getInstance().getDisplays().logicalToPhysical (op->getBounds());
+            frameCheckIgnore = r.expanded (16);
+        }
+        check (TXT ("비활성 (다른 창이 앞)"), "inactive")();
+        frameCheckIgnore = {};
+    }, 0);
+    add ([this, sh] { sh->other.reset(); root.getTopLevelComponent()->toFront (true); }, settle);
+    add (check (TXT ("다시 활성"), "active"), 0);
+
+    // 크기 조절: 오른쪽·아래·왼쪽 끝을 잡고 끈다 (윈도우 10 은 내용 끝 1px 도 크기 조절 자리)
+    struct Drag { const char* name; int edge; int dx, dy; };
+    for (auto d : { Drag { "오른쪽", 0, 40, 0 }, Drag { "아래", 1, 0, 30 }, Drag { "왼쪽", 2, -30, 0 }, Drag { "위", 3, 0, -30 } })
+    {
+        auto start = std::make_shared<juce::Point<int>>();
+        auto before = std::make_shared<meon::winframe::Probe>();
+        auto skip = std::make_shared<bool> (false);
+        add ([handle, d, start, before, skip]
+        {
+            const auto p = meon::winframe::probe (handle());
+            *before = p;
+            const int b = p.resizeBorder;
+            if (d.edge == 0) *start = { p.window[0] + p.window[2] - b / 2, p.window[1] + p.window[3] / 2 };
+            else if (d.edge == 1) *start = { p.window[0] + p.window[2] / 2, p.window[1] + p.window[3] - b / 2 };
+            else if (d.edge == 2) *start = { p.window[0] + b / 2, p.window[1] + p.window[3] / 2 };
+            else *start = { p.window[0] + p.window[2] / 2, p.window[1] + b / 2 };   // 위: 가운데 (창 버튼·사이드바 접기 버튼에서 먼 곳)
+            // 끌 자리와 끈 뒤 자리가 작업 영역 안이어야 한다 (큰 배율에서 창이 화면보다 크면 아래 끝이 화면 밖)
+            const juce::Rectangle<int> work (p.work[0], p.work[1], p.work[2], p.work[3]);
+            *skip = ! work.contains (*start) || ! work.contains (*start + juce::Point<int> (d.dx, d.dy));
+            if (*skip) { std::cerr << "UITEST INFO winstates resize " << d.edge << " skipped (edge outside work area)" << std::endl; return; }
+            meon::winframe::devMouse (start->x, start->y, true, false);
+        }, 200);
+        add ([d, start, skip] { if (! *skip) meon::winframe::devMouse (start->x + d.dx / 2, start->y + d.dy / 2, false, false); }, 150);
+        add ([d, start, skip] { if (! *skip) meon::winframe::devMouse (start->x + d.dx, start->y + d.dy, false, false); }, 250);
+        add ([d, start, skip] { if (! *skip) meon::winframe::devMouse (start->x + d.dx, start->y + d.dy, false, true); }, settle);
+        add ([this, handle, d, before, skip]
+        {
+            if (*skip) return;
+            const auto p = meon::winframe::probe (handle());
+            const int dw = p.client[2] - before->client[2], dh = p.client[3] - before->client[3];
+            const int wantW = d.edge == 2 ? -d.dx : d.dx, wantH = d.edge == 3 ? -d.dy : d.dy;
+            expect (std::abs (dw - wantW) <= 2 && std::abs (dh - wantH) <= 2,
+                    juce::String (juce::CharPointer_UTF8 (d.name)) + TXT (" 끝을 끌어 크기 조절 (") + juce::String (dw) + "x" + juce::String (dh) + ")");
+        }, 0);
+        add (check (juce::String (juce::CharPointer_UTF8 (d.name)) + TXT (" 크기 조절 뒤"), juce::String ("resize") + juce::String (d.edge)), 0);
+    }
+    add ([this, sh] { if (auto* p = peer()) sh->normalClient = p->getBounds(); }, 0);
+
+    // 최대화 · 최소화 후 복원 · 이전 크기로
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("최대화"), isMax, 4000, [this] { expect (false, TXT ("최대화되지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("최대화"), "maximised"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (true); }, settle);
+    add (check (TXT ("최대화 + 사이드바 접힘"), "max_sidebar_collapsed"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (false); home().openAddFriend(); }, settle);
+    add (check (TXT ("최대화 + 모달"), "max_modal"), 0);
+    add (escape, 400);
+    add ([caption, phys]
+    {
+        if (auto* cb = caption())
+        {
+            const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre());
+            meon::winframe::devMouse (c.x, c.y, false, false);
+        }
+    }, 350);
+    add (check (TXT ("최대화: '이전 크기로' 버튼에 마우스"), "max_hover"), 0);
+    add ([this, phys] { const auto c = phys (root, { root.getWidth() / 2, 300 }); meon::winframe::devMouse (c.x, c.y, false, false); }, 200);
+    add ([sysCmd] { sysCmd (0); }, 1200);
+    add ([sysCmd] { sysCmd (2); }, 0);
+    waitUntilOr (TXT ("최소화 뒤 복원 (최대화로)"), isMax, 4000, [this] { expect (false, TXT ("최소화 뒤 복원이 최대화로 돌아오지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("최소화 후 복원 (최대화)"), "max_restored"), 0);
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("이전 크기로"), [isMax] { return ! isMax(); }, 4000, [this] { expect (false, TXT ("이전 크기로 돌아오지 않음")); });
+    add ([] {}, settle);
+    add ([this, sh] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("이전 크기로: 최대화 전 자리·크기 ") + p->getBounds().toString()); }, 0);
+    add (check (TXT ("이전 크기로 (보통)"), "normal_again"), 0);
+    add ([sysCmd] { sysCmd (0); }, 1200);
+    add ([sysCmd] { sysCmd (2); }, settle);
+    add (check (TXT ("최소화 후 복원 (보통)"), "normal_restored"), 0);
+
+    // 전체 화면 (F11): 내용 = 모니터, 창 버튼은 맨 위에 마우스를 댔을 때만 (앱이 그린 것)
+    add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, 0);   // F11 (창에 직접: 최소화 뒤 앞 창이 아닐 수 있다)
+    waitUntilOr (TXT ("전체 화면"), isFs, 4000, [this] { expect (false, TXT ("F11 로 전체 화면이 되지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("전체 화면"), "fullscreen"), 0);
+    add ([handle] { const auto p = meon::winframe::probe (handle()); meon::winframe::devMouse (p.monitor[0] + p.monitor[2] / 2, p.monitor[1], false, false); }, 400);
+    add ([this, caption] { auto* cb = caption(); expect (cb != nullptr && cb->isVisible(), TXT ("전체 화면: 맨 위에 마우스 → 창 버튼 (앱이 그린 것)")); }, 0);
+    add ([caption, phys]
+    {
+        if (auto* cb = caption())
+        {
+            const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre());
+            meon::winframe::devMouse (c.x, c.y, false, false);
+        }
+    }, 400);
+    add ([this, caption] { auto* cb = caption(); expect (cb != nullptr && cb->isVisible(), TXT ("전체 화면: 창 버튼 위로 옮겨도 보인다")); }, 0);
+    add (check (TXT ("전체 화면 + 창 버튼 보임"), "fullscreen_caption"), 0);
+    add ([handle] { const auto p = meon::winframe::probe (handle()); meon::winframe::devMouse (p.monitor[0] + p.monitor[2] / 2, p.monitor[1] + p.monitor[3] / 2, false, false); }, 500);
+    add ([this, caption] { auto* cb = caption(); expect (cb == nullptr || ! cb->isVisible(), TXT ("전체 화면: 아래로 내려가면 창 버튼 숨김")); }, 0);
+    add ([this] { home().openAddFriend(); }, settle);
+    add (check (TXT ("전체 화면 + 모달"), "fullscreen_modal"), 0);
+    add (escape, 400);
+    add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, 0);
+    waitUntilOr (TXT ("전체 화면 끝"), [isFs] { return ! isFs(); }, 4000, [this] { expect (false, TXT ("F11 로 전체 화면이 끝나지 않음")); });
+    add ([] {}, settle);
+    add ([this, sh] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("전체 화면 끝: 원래 자리·크기 ") + p->getBounds().toString()); }, 0);
+    add (check (TXT ("전체 화면 끝 (보통)"), "fullscreen_off"), 0);
+
+    // 최대화에서 전체 화면 → 끄면 최대화 → 이전 크기로 = 처음 보통 자리 (JUCE 가 따로 기억한 자리로 가지 않는다)
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("최대화 (전체 화면 전)"), isMax, 4000, [this] { expect (false, TXT ("최대화되지 않음")); });
+    add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, settle);
+    waitUntilOr (TXT ("최대화 → 전체 화면"), isFs, 4000, [this] { expect (false, TXT ("최대화에서 전체 화면이 되지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("최대화 → 전체 화면"), "max_fullscreen"), 0);
+    add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, 0);
+    waitUntilOr (TXT ("전체 화면 → 최대화"), [isFs, isMax] { return ! isFs() && isMax(); }, 4000, [this] { expect (false, TXT ("전체 화면을 끄면 최대화로 돌아와야 함")); });
+    add ([] {}, settle);
+    add (check (TXT ("전체 화면 → 최대화로 돌아옴"), "fullscreen_to_max"), 0);
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("이전 크기로 (전체 화면 뒤)"), [isMax] { return ! isMax(); }, 4000, [this] { expect (false, TXT ("이전 크기로 돌아오지 않음")); });
+    add ([] {}, settle);
+    add ([this, sh] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("전체 화면을 거친 뒤 이전 크기로 = 처음 보통 자리 ") + p->getBounds().toString()); }, 0);
+    add (check (TXT ("전체 화면을 거친 뒤 보통"), "after_fs_normal"), 0);
+
+    // 여러 번 오가기
+    for (int round = 1; round <= 3; ++round)
+    {
+        const auto r = juce::String (round);
+        add ([sysCmd] { sysCmd (1); }, 0);
+        waitUntilOr (TXT ("오가기 최대화 ") + r, isMax, 4000, [this] { expect (false, TXT ("오가기: 최대화되지 않음")); });
+        add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, settle);
+        waitUntilOr (TXT ("오가기 전체 화면 ") + r, isFs, 4000, [this] { expect (false, TXT ("오가기: 전체 화면이 되지 않음")); });
+        add ([] {}, 500);
+        add (check (TXT ("오가기 ") + r + TXT (": 전체 화면"), "cycle" + r + "_fs"), 0);
+        add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, 0);
+        waitUntilOr (TXT ("오가기 최대화로 ") + r, [isFs, isMax] { return ! isFs() && isMax(); }, 4000, [this] { expect (false, TXT ("오가기: 최대화로 돌아오지 않음")); });
+        add ([] {}, 500);
+        add (check (TXT ("오가기 ") + r + TXT (": 최대화"), "cycle" + r + "_max"), 0);
+        add ([sysCmd] { sysCmd (1); }, 0);
+        waitUntilOr (TXT ("오가기 보통 ") + r, [isMax] { return ! isMax(); }, 4000, [this] { expect (false, TXT ("오가기: 보통으로 돌아오지 않음")); });
+        add ([] {}, 500);
+        add (check (TXT ("오가기 ") + r + TXT (": 보통"), "cycle" + r + "_normal"), 0);
+        add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, 500);
+        waitUntilOr (TXT ("오가기 보통→전체 화면 ") + r, isFs, 4000, [this] { expect (false, TXT ("오가기: 보통에서 전체 화면이 되지 않음")); });
+        add ([handle] { meon::winframe::devPostKey (handle(), 0x7A); }, 500);
+        waitUntilOr (TXT ("오가기 전체 화면→보통 ") + r, [isFs, isMax] { return ! isFs() && ! isMax(); }, 4000,
+                     [this] { expect (false, TXT ("오가기: 전체 화면에서 보통으로 돌아오지 않음")); });
+        add ([] {}, 500);
+        add ([this, sh, r] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("오가기 ") + r + TXT (": 처음 보통 자리 ") + p->getBounds().toString()); }, 0);
+    }
+    add (check (TXT ("오가기 뒤 보통"), "cycles_done"), 0);
+
+    // 배율 바꾸기 (다른 배율 모니터로 옮긴 것과 같은 길: WM_DPICHANGED). 운영체제가 허락하지 않으면 건너뜀
+    for (int steps : { 1, 2 })
+    {
+        auto changed = std::make_shared<bool> (false);
+        add ([sh, steps, handle]
+        {
+            if (sh->startSteps == INT_MIN) sh->startSteps = meon::winframe::devScaleSteps (0, true);
+            if (sh->startSteps != 0) { std::cerr << "UITEST INFO winstates in-run scale change skipped (started at steps " << sh->startSteps << ")" << std::endl; return; }
+            const int before = meon::winframe::probe (handle()).dpi;
+            const int now = meon::winframe::devScaleSteps (steps, false);
+            std::cerr << "UITEST INFO winstates scale steps " << steps << " -> " << now << " (start " << sh->startSteps << ", dpi before " << before << ")" << std::endl;
+        }, 2500);
+        add ([sh, handle, steps, changed]
+        {
+            if (sh->startSteps != 0) return;
+            const int dpi = meon::winframe::probe (handle()).dpi;
+            *changed = dpi != 96;
+            std::cerr << "UITEST INFO winstates dpi after scale steps " << steps << ": " << dpi
+                      << (*changed ? "" : " (scale did not change: CI display does not allow it)") << std::endl;
+        }, 0);
+        const auto tag = "scale" + juce::String (steps);
+        const auto name = TXT ("배율 바꾼 뒤 (") + juce::String (steps) + TXT ("단계) ");
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("보통"), tag + "_normal")(); }, 0);
+        add ([sysCmd, changed] { if (*changed) sysCmd (1); }, settle);
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("최대화"), tag + "_max")(); }, 0);
+        add ([sysCmd, changed] { if (*changed) sysCmd (1); }, settle);
+        add ([changed, handle] { if (*changed) meon::winframe::devPostKey (handle(), 0x7A); }, settle);
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("전체 화면"), tag + "_fs")(); }, 0);
+        add ([changed, handle] { if (*changed) meon::winframe::devPostKey (handle(), 0x7A); }, settle);
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("다시 보통"), tag + "_normal2")(); }, 0);
+    }
+    add ([sh] { if (sh->startSteps == 0) meon::winframe::devScaleSteps (0, false); }, 2500);
+    add (check (TXT ("배율 되돌린 뒤"), "scale_back"), 0);
+
+    add ([this]
+    {
+        auto* ed = dynamic_cast<meon::MeonEditor*> (root.getParentComponent());
+        const int fixes = ed != nullptr ? ed->devJuceFrameFixes() : -1;
+        // 최대화하면 틀 두께가 바뀌므로(화면 밖 크기 조절 두께) JUCE 가 다시 읽는 것은 정상. 내용 자리가 맞는지는 상태마다 확인했다 (JUCE 내용 = 창 내용)
+        std::cerr << "UITEST INFO winstates juce frame re-reads " << fixes << std::endl;
+        expect (fixes >= 0, TXT ("JUCE 창 틀 두께 다시 읽기 ") + juce::String (fixes) + TXT ("번 (상태마다 JUCE 내용 자리 확인)"));
+    }, 0);
+    add ([sh] { sh->backdrop.reset(); }, 0);
+}
+
+void UiSelfTest::addProfileFooterTests()
+{
+    begin (TXT ("프로필 아래 줄"));
+    // 지금 떠 있는 프로필 창 (홈·방 화면)
+    auto current = [this]() -> ProfileModal*
+    {
+        if (auto* m = dynamic_cast<ProfileModal*> (home().modal.get())) return m;
+        if (auto* j = jam()) return dynamic_cast<ProfileModal*> (j->modal.get());
+        return nullptr;
+    };
+    auto openFor = [this] (const core::UserPublic& u) { if (auto* j = jam(); j != nullptr && j->isShowing()) j->openProfile (u); else home().openProfile (u); };
+    auto closeModal = [this] { if (auto* e = root.getParentComponent()) e->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)); };
+    // 한 사람: 열고 → 프로필을 받은 뒤 (아래 줄 보임 ⇔ 보이는 버튼이 있음)
+    auto checkUser = [this, current, openFor, closeModal] (std::function<std::optional<core::UserPublic>()> pick, const juce::String& caseName)
+    {
+        auto user = std::make_shared<std::optional<core::UserPublic>>();
+        add ([pick, user, openFor] { *user = pick(); if (*user) openFor (**user); }, 0);
+        waitUntilOr (caseName + TXT (": 프로필"), [user, current] { auto* m = current(); return ! *user || (m != nullptr && m->profile.has_value()); }, 4000,
+                     [this, caseName] { expect (false, caseName + TXT (": 프로필을 받지 못함")); });
+        add ([this, user, current, caseName]
+        {
+            if (! *user) { std::cerr << "UITEST INFO profilefooter " << caseName << ": 이 경우가 없음 (가짜 서버)" << std::endl; return; }
+            auto* m = current();
+            if (m == nullptr) return;
+            juce::StringArray shown;
+            for (auto* b : { &m->request, &m->joinRoom, &m->decline, &m->accept, &m->invite })
+                if (b->isVisible()) shown.add (b->getButtonText());
+            const bool footer = m->footer.isVisible();
+            std::cerr << "UITEST INFO profilefooter " << caseName << ": relation " << m->profile->relation << " status " << m->profile->status.value_or ("-")
+                      << " buttons [" << shown.joinIntoString (", ") << "] footer " << (footer ? 1 : 0) << std::endl;
+            expect (footer == ! shown.isEmpty(), caseName + TXT (": 아래 줄 ") + (footer ? TXT ("있음") : TXT ("없음")) + TXT (" / 버튼 ") + juce::String (shown.size()) + TXT ("개"));
+        }, 300);
+        add (closeModal, 400);
+    };
+    auto friendWith = [this] (const char* status, bool inMyRoom) -> std::function<std::optional<core::UserPublic>()>
+    {
+        return [this, status, inMyRoom]() -> std::optional<core::UserPublic>
+        {
+            const auto& st = core.store().state();
+            for (auto& f : st.friends)
+            {
+                if (f.status != status) continue;
+                const bool same = st.currentRoom && f.room && f.room->id == st.currentRoom->id;
+                if (same == inMyRoom) return f.user;
+            }
+            return std::nullopt;
+        };
+    };
+    auto stranger = [this]() -> std::optional<core::UserPublic>
+    {
+        const auto& st = core.store().state();
+        for (auto& r : st.publicRooms)
+            for (auto& m : r.members)
+                if (m.user.id != (st.me ? st.me->id : juce::String()) && st.findFriend (m.user.id) == nullptr) return m.user;
+        return std::nullopt;
+    };
+    auto requester = [this]() -> std::optional<core::UserPublic>
+    {
+        const auto& st = core.store().state();
+        if (! st.friendRequests.empty()) return st.friendRequests.front().from;
+        return std::nullopt;
+    };
+
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    closeToasts();
+    checkUser (stranger, TXT ("친구 아님"));
+    checkUser (requester, TXT ("요청 받음"));
+    checkUser (friendWith ("online", false), TXT ("접속 중 (나는 방 없음)"));
+    checkUser (friendWith ("in_room", false), TXT ("합주 중 (다른 방, 나는 방 없음)"));
+    checkUser (friendWith ("offline", false), TXT ("오프라인"));
+    enterNewRoom();
+    closeToasts();
+    checkUser (friendWith ("online", false), TXT ("접속 중 (나는 방 있음)"));
+    checkUser (friendWith ("in_room", false), TXT ("합주 중 (다른 방)"));
+    checkUser (friendWith ("in_room", true), TXT ("합주 중 (같은 방)"));
+    checkUser (friendWith ("offline", false), TXT ("오프라인 (나는 방 있음)"));
+}
+
+//==============================================================================
+// 6칸 코드 입력 (방 코드: 코드로 입장 / 숫자: 온보딩·설정 이메일 인증).
+// 방 코드 글자는 서버와 같다 (server rooms.go codeAlphabet = A~Z 에서 O·I 를 뺀 것 + 2~9: 0·1·O·I 는 서버가 만들지 않는다).
+// 0·1 을 눌러도 아무 일 없이 무시한다 (안내 문구 없음: 사용자 결정 2026-10-31). 숫자 칸은 0~9 를 모두 받는다
+void UiSelfTest::addCodeInputTests()
+{
+    begin (TXT ("코드 입력 칸"));
+    struct Fixture
+    {
+        std::unique_ptr<OtpInput> room, digits;
+        juce::String clipBefore;
+    };
+    auto fx = std::make_shared<Fixture>();
+    add ([this, fx]
+    {
+        fx->room = std::make_unique<OtpInput> (OtpInput::Charset::roomCode, OtpInput::Size::medium);
+        fx->digits = std::make_unique<OtpInput> (OtpInput::Charset::digits, OtpInput::Size::large);
+        root.addAndMakeVisible (*fx->room);
+        root.addAndMakeVisible (*fx->digits);
+        fx->room->setBounds (20, 20, fx->room->getPreferredWidth(), fx->room->getPreferredHeight());
+        fx->digits->setBounds (20, 100, fx->digits->getPreferredWidth(), fx->digits->getPreferredHeight());
+        fx->clipBefore = juce::SystemClipboard::getTextFromClipboard();
+    }, 100);
+    // 글자 하나씩 누른 결과 (칸을 비우고 시작)
+    auto typeAll = [] (OtpInput& o, const std::vector<juce::KeyPress>& keys)
+    {
+        o.clear();
+        for (auto& k : keys) o.keyPressed (k);
+        return o.getCode();
+    };
+    auto row = [] (const juce::String& s)   // 위 숫자 줄·글자 키 (눌린 글자 = 키)
+    {
+        std::vector<juce::KeyPress> v;
+        for (auto c : s) v.push_back (juce::KeyPress ((int) c, {}, c));
+        return v;
+    };
+    auto pad = [] (const juce::String& s)   // 오른쪽 숫자 키패드 (키 코드는 numberPad0~9, 글자는 숫자)
+    {
+        std::vector<juce::KeyPress> v;
+        for (auto c : s) v.push_back (juce::KeyPress (juce::KeyPress::numberPad0 + (int) (c - '0'), {}, c));
+        return v;
+    };
+    auto paste = [] (OtpInput& o, const juce::String& clip, bool hangulV)
+    {
+        juce::SystemClipboard::copyTextToClipboard (clip);
+        o.clear();
+        // 붙여넣기: ⌘V(맥)·Ctrl+V(윈도우) = commandModifier. 한글 자판에서는 V 자리에서 'ㅍ' 가 온다
+        const juce::juce_wchar ch = hangulV ? (juce::juce_wchar) 0x314D : (juce::juce_wchar) 'v';
+        o.keyPressed (juce::KeyPress ((int) 'V', juce::ModifierKeys::commandModifier, ch));
+        return o.getCode();
+    };
+    add ([this, fx, typeAll, row, pad, paste]
+    {
+        auto& r = *fx->room;
+        auto& d = *fx->digits;
+        auto check = [this] (const juce::String& got, const juce::String& want, const juce::String& what)
+        {
+            std::cerr << "UITEST INFO codeinput " << what << ": " << got << std::endl;
+            expect (got == want, what + " (" + got + TXT (" / 기대 ") + want + ")");
+        };
+        // 방 코드
+        check (typeAll (r, row ("234567")), "234567", TXT ("방 코드: 위 숫자 줄 2~7"));
+        check (typeAll (r, row ("0189")), "89", TXT ("방 코드: 0·1 은 무시 (서버가 만들지 않는 글자)"));
+        check (typeAll (r, row ("abcxyz")), "ABCXYZ", TXT ("방 코드: 영문 소문자 → 대문자"));
+        check (typeAll (r, row ("oiab")), "AB", TXT ("방 코드: O·I 는 무시"));
+        check (typeAll (r, pad ("234589")), "234589", TXT ("방 코드: 숫자 키패드"));
+        check (typeAll (r, pad ("0123")), "23", TXT ("방 코드: 숫자 키패드 0·1 은 무시"));
+        {
+            // 한글 자판 상태: 자모는 같은 자리 영문 키로, 숫자는 그대로
+            std::vector<juce::KeyPress> v;
+            for (auto c : { (juce::juce_wchar) 0x3141, (juce::juce_wchar) 0x3160, (juce::juce_wchar) '2', (juce::juce_wchar) 0x314A, (juce::juce_wchar) '9', (juce::juce_wchar) 0x3147 })
+                v.push_back (juce::KeyPress ((int) c, {}, c));
+            check (typeAll (r, v), "AB2C9D", TXT ("방 코드: 한글 자판 (ㅁㅠ2ㅊ9ㅇ → AB2C9D)"));
+        }
+        check (paste (r, "ab2-cd3", false), "AB2CD3", TXT ("방 코드: 붙여넣기 6자리 한 번에 (소문자·- 섞임)"));
+        check (paste (r, " k7m 9pq \n", false), "K7M9PQ", TXT ("방 코드: 붙여넣기 (빈칸·줄바꿈 섞임)"));
+        check (paste (r, "AB2CD3", true), "AB2CD3", TXT ("방 코드: 한글 자판에서 붙여넣기 (ㅍ 로 들어온 V)"));
+        check (paste (r, "A0B1C2D3E4", false), "ABC2D3", TXT ("방 코드: 붙여넣은 글에 0·1 이 있으면 빼고 앞에서 6자리"));
+        // 숫자 칸 (온보딩·설정 이메일 인증)
+        check (typeAll (d, row ("012345")), "012345", TXT ("숫자 칸: 위 숫자 줄 0~5"));
+        check (typeAll (d, row ("678901")), "678901", TXT ("숫자 칸: 위 숫자 줄 6~9·0·1"));
+        check (typeAll (d, pad ("019283")), "019283", TXT ("숫자 칸: 숫자 키패드 (0·1 포함)"));
+        check (typeAll (d, row ("1a2b3c")), "123", TXT ("숫자 칸: 영문은 무시"));
+        {
+            std::vector<juce::KeyPress> v;
+            for (auto c : { (juce::juce_wchar) '1', (juce::juce_wchar) 0x3141, (juce::juce_wchar) '0', (juce::juce_wchar) '0' })
+                v.push_back (juce::KeyPress ((int) c, {}, c));
+            check (typeAll (d, v), "100", TXT ("숫자 칸: 한글 자판 상태의 숫자 (자모는 무시)"));
+        }
+        check (paste (d, "123 456", false), "123456", TXT ("숫자 칸: 붙여넣기 (빈칸 섞임)"));
+        check (paste (d, "000111", true), "000111", TXT ("숫자 칸: 한글 자판에서 붙여넣기 0·1"));
+    }, 0);
+    // 실제 창이 쓰는 종류: 코드로 입장 = 방 코드, 온보딩·설정 이메일 인증 = 숫자 (코드 위치: HomeOverlays.h, OnboardingScreen.cpp, SettingsModal.cpp)
+    add ([this, fx]
+    {
+        home().openJoinCode();
+    }, 300);
+    add ([this, fx, typeAll, row]
+    {
+        OtpInput* inModal = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (inModal != nullptr) return;
+            if (auto* o = dynamic_cast<OtpInput*> (&c)) { inModal = o; return; }
+            for (auto* ch : c.getChildren()) find (*ch);
+        };
+        if (auto* m = home().modal.get()) find (*m);
+        expect (inModal != nullptr, TXT ("코드로 입장 창의 6칸"));
+        if (inModal != nullptr)
+        {
+            const auto got = typeAll (*inModal, row ("a01b23"));
+            expect (got == "AB23", TXT ("코드로 입장 창: a01b23 → AB23 (") + got + ")");
+            inModal->clear();
+        }
+        home().closeOverlays();
+        juce::SystemClipboard::copyTextToClipboard (fx->clipBefore);
+        fx->room.reset();
+        fx->digits.reset();
+    }, 300);
+}
+
+//==============================================================================
+// 친구 추가 창 (합주 최종 v2): 340, 빈 칸 요청 → "아이디를 입력해 주세요" 빨강, 입력하면 문구가 사라진다,
+// Enter = 요청 (한글 조합 중 Enter 는 아님), 보냄 → 회색 "@아이디님에게 친구 요청을 보냈어요" + 입력 비움,
+// 없는 아이디 → 원래 앱 문구 빨강, 취소 → 닫힘, 받은 요청 줄 = 받은 친구 요청 수 (수락하면 줄어든다)
+void UiSelfTest::addFriendAddTests()
+{
+    begin (TXT ("친구 추가 창"));
+    auto modal = [this]() -> Modal* { return home().modal.get(); };
+    auto inputOf = [] (juce::Component& c) -> TextInput*
+    {
+        std::function<TextInput* (juce::Component&)> f = [&f] (juce::Component& x) -> TextInput*
+        {
+            if (auto* t = dynamic_cast<TextInput*> (&x)) return t;
+            for (auto* ch : x.getChildren()) if (auto* r = f (*ch)) return r;
+            return nullptr;
+        };
+        return f (c);
+    };
+    // 보이는 결과 문구 (설명 글은 빼고)
+    auto noteOf = [] (juce::Component& c) -> Text*
+    {
+        std::function<Text* (juce::Component&)> f = [&f] (juce::Component& x) -> Text*
+        {
+            if (auto* t = dynamic_cast<Text*> (&x); t != nullptr && t->isVisible() && t->getText().isNotEmpty()
+                && t->getText() != TXT ("친구의 아이디를 입력하면 친구 요청을 보내요")) return t;
+            for (auto* ch : x.getChildren()) if (auto* r = f (*ch)) return r;
+            return nullptr;
+        };
+        return f (c);
+    };
+    auto returnKey = [inputOf, modal]
+    {
+        if (auto* m = modal()) if (auto* in = inputOf (*m)) in->editor().keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    };
+    auto sentCount = std::make_shared<int> (0);
+    add ([this, sentCount]
+    {
+        if (inRoom()) core.home().leaveRoom();
+        if (auto* f = core.fakeServer())
+            f->onRequestForTest = [sentCount] (const core::HttpRequest& q) { if (q.method == "POST" && q.path == "/friends/requests") ++*sentCount; };
+    }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    add ([this] { home().openAddFriend(); }, 400);
+    add ([this, modal, inputOf]
+    {
+        auto* m = modal();
+        expect (m != nullptr && m->boxBounds().getWidth() == 340, TXT ("친구 추가 창 폭 340"));
+        if (m == nullptr) return;
+        auto* in = inputOf (*m);
+        expect (in != nullptr && in->getHeight() == 36, TXT ("아이디 칸 높이 36"));
+        expect (in != nullptr && in->hasKeyboardFocus (true), TXT ("열면 아이디 칸에 포커스"));
+        if (auto* b = findButton (*m, TXT ("요청"))) click (*b);   // 빈 칸에서 요청
+    }, 0);
+    add ([this, modal, noteOf, sentCount]
+    {
+        auto* n = modal() != nullptr ? noteOf (*modal()) : nullptr;
+        expect (n != nullptr && n->getText() == TXT ("아이디를 입력해 주세요") && n->getColour() == col::danger,
+                TXT ("빈 칸 요청 → 빨강 \"아이디를 입력해 주세요\""));
+        expect (*sentCount == 0, TXT ("빈 칸이면 서버에 보내지 않음"));
+    }, 100);
+    add ([modal, inputOf] { if (auto* m = modal()) if (auto* in = inputOf (*m)) in->setText ("harin", true); }, 50);
+    add ([this, modal, noteOf]
+    {
+        expect (modal() != nullptr && noteOf (*modal()) == nullptr, TXT ("입력하면 결과 문구가 사라진다"));
+    }, 0);
+    // 한글 조합 중 Enter: 보내지 않는다
+    add ([modal, inputOf, returnKey]
+    {
+        if (auto* m = modal()) if (auto* in = inputOf (*m)) in->editor().setTemporaryUnderlining ({ juce::Range<int> (0, 1) });
+        returnKey();
+    }, 200);
+    add ([this, sentCount, modal, inputOf]
+    {
+        expect (*sentCount == 0, TXT ("한글 조합 중 Enter 는 요청이 아니다"));
+        if (auto* m = modal()) if (auto* in = inputOf (*m)) in->editor().setTemporaryUnderlining ({});   // 조합 끝
+    }, 200);
+    add ([returnKey] { returnKey(); }, 400);   // 조합이 끝나고 0.2초 뒤 Enter = 요청
+    add ([this, sentCount, modal, noteOf, inputOf]
+    {
+        expect (*sentCount == 1, TXT ("Enter = 요청 (") + juce::String (*sentCount) + ")");
+        auto* n = modal() != nullptr ? noteOf (*modal()) : nullptr;
+        expect (n != nullptr && n->getColour() == col::inkSub && n->getText().contains (TXT ("친구 요청을 보냈어요")),
+                TXT ("보냄 → 회색 결과 (") + (n != nullptr ? n->getText() : juce::String ("-")) + ")");
+        auto* in = modal() != nullptr ? inputOf (*modal()) : nullptr;
+        expect (in != nullptr && in->getText().isEmpty(), TXT ("보내면 입력 비움"));
+        if (in != nullptr) in->setText ("nobody_here_x", true);
+        if (auto* m = modal()) if (auto* b = findButton (*m, TXT ("요청"))) click (*b);
+    }, 400);
+    add ([this, modal, noteOf]
+    {
+        auto* n = modal() != nullptr ? noteOf (*modal()) : nullptr;
+        expect (n != nullptr && n->getColour() == col::danger && n->getText() == TXT ("그런 아이디를 찾지 못했어요"),
+                TXT ("없는 아이디 → 원래 앱 문구 빨강 (") + (n != nullptr ? n->getText() : juce::String ("-")) + ")");
+        if (auto* m = modal()) if (auto* b = findButton (*m, TXT ("취소"))) click (*b);
+    }, 400);
+    waitUntil (TXT ("취소 → 닫힘"), [this] { return home().modal == nullptr; }, 2000);
+    // 받은 요청: 가짜 사용자가 요청을 하나 더 보낸 뒤 연다. 수락은 그 요청만 (뒤의 친구 요청 시험이 처음 두 요청을 쓴다)
+    auto before = std::make_shared<juce::StringArray>();
+    add ([this, before]
+    {
+        for (auto& r : core.store().state().friendRequests) before->add (r.id);
+        if (auto* f = core.fakeServer()) f->devFriendRequest();
+    }, 0);
+    waitUntil (TXT ("새 친구 요청"), [this, before] { return (int) core.store().state().friendRequests.size() > before->size(); }, 3000);
+    add ([this] { home().openAddFriend(); }, 400);
+    add ([this, modal, before]
+    {
+        auto* m = modal();
+        const int n = (int) core.store().state().friendRequests.size();
+        int rows = 0;
+        std::function<void (juce::Component&)> count = [&] (juce::Component& c)
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == TXT ("수락") && b->isVisible()) ++rows;
+            for (auto* ch : c.getChildren()) count (*ch);
+        };
+        if (m != nullptr) count (*m);
+        expect (rows == n && n > 0, TXT ("받은 요청 줄 = 받은 친구 요청 수 (") + juce::String (rows) + " / " + juce::String (n) + ")");
+        for (auto& r : core.store().state().friendRequests)
+            if (! before->contains (r.id)) { core.home().acceptFriendRequest (r.id); break; }
+    }, 0);
+    add ([this, modal]
+    {
+        const int n = (int) core.store().state().friendRequests.size();
+        int rows = 0;
+        std::function<void (juce::Component&)> count = [&] (juce::Component& c)
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == TXT ("수락") && b->isVisible()) ++rows;
+            for (auto* ch : c.getChildren()) count (*ch);
+        };
+        if (auto* m = modal()) count (*m);
+        expect (rows == n, TXT ("수락하면 줄이 줄어든다 (") + juce::String (rows) + " / " + juce::String (n) + ")");
+        if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
+        key (juce::KeyPress (juce::KeyPress::escapeKey));   // 포커스(아이디 칸)에서 Esc
+    }, 600);
+    waitUntil (TXT ("Esc → 닫힘"), [this] { return home().modal == nullptr; }, 2000);
+}
+
+//==============================================================================
+// 프로필 사진 (합주 최종 v2 설정 › 프로필): 이 컴퓨터에만. 처리·오류·설정 줄·저장·지우기
+void UiSelfTest::addPhotoTests()
+{
+    begin (TXT ("프로필 사진"));
+    struct Shared { juce::TemporaryFile dir { ".meonphoto" }; juce::File png, jpgRot, gif, big, bad; };
+    auto sh = std::make_shared<Shared>();
+    auto writeImage = [] (const juce::Image& img, const juce::File& f, bool jpeg)
+    {
+        f.deleteFile();
+        juce::FileOutputStream os (f);
+        if (jpeg) { juce::JPEGImageFormat j; j.setQuality (0.95f); j.writeImageToStream (img, os); }
+        else juce::PNGImageFormat().writeImageToStream (img, os);
+    };
+    auto settings = [this]() -> SettingsModal*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren()) if (auto* s = dynamic_cast<SettingsModal*> (c)) return s;
+        return nullptr;
+    };
+    auto near = [] (juce::Colour a, juce::Colour b, int tol)
+    {
+        return std::abs ((int) a.getRed() - (int) b.getRed()) <= tol && std::abs ((int) a.getGreen() - (int) b.getGreen()) <= tol
+            && std::abs ((int) a.getBlue() - (int) b.getBlue()) <= tol;
+    };
+    add ([this, sh, writeImage]
+    {
+        auto folder = sh->dir.getFile();
+        folder.createDirectory();
+        // PNG 300×200: 왼쪽 절반 투명, 오른쪽 절반 빨강 → 가운데 200×200 → 256 (왼쪽 흰색, 오른쪽 빨강)
+        juce::Image a (juce::Image::ARGB, 300, 200, true);
+        { juce::Graphics g (a); g.setColour (juce::Colours::red); g.fillRect (150, 0, 150, 200); }
+        sh->png = folder.getChildFile ("a.png");
+        writeImage (a, sh->png, false);
+        // JPEG 200×100: 왼쪽 파랑·오른쪽 초록 + EXIF 회전 6 (시계 90°) + GPS 표시 글자 → 세우면 위 파랑·아래 초록
+        juce::Image b (juce::Image::RGB, 200, 100, true);
+        { juce::Graphics g (b); g.setColour (juce::Colours::blue); g.fillRect (0, 0, 100, 100); g.setColour (juce::Colours::lime); g.fillRect (100, 0, 100, 100); }
+        juce::MemoryOutputStream jm;
+        { juce::JPEGImageFormat j; j.setQuality (0.95f); j.writeImageToStream (b, jm); }
+        const auto* d = static_cast<const juce::uint8*> (jm.getData());
+        // APP1 Exif (리틀 엔디언 TIFF, IFD0 에 Orientation 하나) 를 SOI 뒤에 끼운다. 끝에 "GPSLatitude" 글자를 붙여 지워지는지 본다
+        const juce::uint8 tiff[] = { 'I','I', 0x2A,0, 8,0,0,0,  1,0,  0x12,0x01, 3,0, 1,0,0,0, 6,0,0,0,  0,0,0,0 };
+        const char gps[] = "GPSLatitude37.5";
+        juce::MemoryOutputStream app;
+        app.writeByte ((char) 0xFF); app.writeByte ((char) 0xE1);
+        const int len = 2 + 6 + (int) sizeof (tiff) + (int) sizeof (gps);
+        app.writeByte ((char) ((len >> 8) & 0xFF)); app.writeByte ((char) (len & 0xFF));
+        app.write ("Exif\0\0", 6);
+        app.write (tiff, sizeof (tiff));
+        app.write (gps, sizeof (gps));
+        juce::MemoryOutputStream all;
+        all.write (d, 2);
+        all.write (app.getData(), app.getDataSize());
+        all.write (d + 2, jm.getDataSize() - 2);
+        sh->jpgRot = folder.getChildFile ("rot.jpg");
+        sh->jpgRot.replaceWithData (all.getData(), all.getDataSize());
+        // 형식 아님 (GIF), 5MB 넘음 (PNG 머리 + 채움), 읽을 수 없음 (PNG 머리 + 쓰레기)
+        sh->gif = folder.getChildFile ("x.gif");
+        sh->gif.replaceWithText ("GIF89a not supported");
+        juce::MemoryBlock bigData ((size_t) profilephoto::maxBytes + 1, true);
+        std::memcpy (bigData.getData(), "\x89PNG\r\n\x1a\n", 8);
+        sh->big = folder.getChildFile ("big.png");
+        sh->big.replaceWithData (bigData.getData(), bigData.getSize());
+        sh->bad = folder.getChildFile ("bad.png");
+        sh->bad.replaceWithData ("\x89PNG\r\n\x1a\nGARBAGEGARBAGE", 22);
+    }, 0);
+    add ([this, sh, near]
+    {
+        const auto r = profilephoto::process (sh->png);
+        expect (r.error == profilephoto::Error::none && r.image.getWidth() == 256 && r.image.getHeight() == 256, TXT ("PNG → 256×256"));
+        if (r.image.isValid())
+        {
+            const auto l = r.image.getPixelAt (20, 128), rr = r.image.getPixelAt (236, 128);
+            expect (near (l, juce::Colours::white, 8), TXT ("투명한 곳은 흰색 (") + l.toDisplayString (false) + ")");
+            expect (near (rr, juce::Colours::red, 24), TXT ("가운데 정사각형 (오른쪽 빨강 ") + rr.toDisplayString (false) + ")");
+        }
+        expect (profilephoto::sniff (r.jpeg.getData(), r.jpeg.getSize()) == "jpeg", TXT ("JPEG 로 저장"));
+        const auto j = profilephoto::process (sh->jpgRot);
+        expect (j.error == profilephoto::Error::none, TXT ("회전 정보가 있는 JPEG 읽기"));
+        if (j.image.isValid())
+        {
+            const auto top = j.image.getPixelAt (128, 30), bottom = j.image.getPixelAt (128, 226);
+            expect (near (top, juce::Colours::blue, 40) && near (bottom, juce::Colours::lime, 40),
+                    TXT ("EXIF 회전 적용 (위 ") + top.toDisplayString (false) + TXT (", 아래 ") + bottom.toDisplayString (false) + ")");
+        }
+        const juce::String bytes (static_cast<const char*> (j.jpeg.getData()), (size_t) j.jpeg.getSize());
+        const bool noMeta = j.jpeg.getSize() > 0
+            && juce::String::fromUTF8 (static_cast<const char*> (j.jpeg.getData()), (int) j.jpeg.getSize()).indexOf ("GPSLatitude") < 0
+            && std::search (static_cast<const char*> (j.jpeg.getData()), static_cast<const char*> (j.jpeg.getData()) + j.jpeg.getSize(), "Exif", "Exif" + 4)
+                   == static_cast<const char*> (j.jpeg.getData()) + j.jpeg.getSize();
+        expect (noMeta, TXT ("다시 저장한 JPEG 에 EXIF·GPS 없음"));
+        expect (profilephoto::process (sh->gif).error == profilephoto::Error::format
+                && profilephoto::message (profilephoto::Error::format) == TXT ("JPG, PNG, WEBP 이미지만 올릴 수 있어요"), TXT ("GIF → 형식 오류 문구"));
+        expect (profilephoto::process (sh->big).error == profilephoto::Error::tooLarge
+                && profilephoto::message (profilephoto::Error::tooLarge) == TXT ("5MB 이하 이미지만 올릴 수 있어요"), TXT ("5MB 넘음 → 크기 오류 문구"));
+        expect (profilephoto::process (sh->bad).error == profilephoto::Error::unreadable
+                && profilephoto::message (profilephoto::Error::unreadable) == TXT ("이미지를 읽을 수 없어요"), TXT ("깨진 파일 → 읽을 수 없음 문구"));
+    }, 0);
+    // 설정 › 프로필: 올리기 → 변경·기본 이미지로, 오류는 빨강, 기본 이미지로 → 올리기
+    add ([this] { if (root.onOpenSettings) root.onOpenSettings ((int) SettingsModal::Tab::profile); }, 700);
+    add ([this, settings]
+    {
+        auto* s = settings();
+        expect (s != nullptr, TXT ("설정 열림"));
+        if (s == nullptr) return;
+        s->showTab (SettingsModal::Tab::profile);
+        const auto row = s->devPhotoRow();
+        std::cerr << "UITEST INFO photo row before: " << row << std::endl;
+        expect (row == TXT ("합주실과 친구 목록에 보여요 · JPG, PNG 5MB 이하|올리기|0|grey"), TXT ("사진 없음: 올리기, 기본 이미지로 없음 (") + row + ")");
+    }, 300);
+    add ([this, sh, settings]
+    {
+        if (auto* s = settings()) s->devPickPhoto (sh->png);
+        const auto& me = core.store().state().me;
+        const juce::String id = me ? me->id : juce::String();
+        expect (avatars::hasMyPhoto() && avatars::myId() == id && avatars::photoFor (id).isValid(), TXT ("올린 사진이 내 아바타"));
+        expect (profilephoto::fileFor (id).existsAsFile(), TXT ("이 컴퓨터에 저장 (") + profilephoto::fileFor (id).getFileName() + ")");
+        expect (! avatars::photoFor ("u_someone_else").isValid(), TXT ("다른 사람 자리는 기본 이미지"));
+        const auto row = settings() != nullptr ? settings()->devPhotoRow() : juce::String();
+        expect (row.endsWith (TXT ("|변경|1|grey")), TXT ("사진 있음: 변경 + 기본 이미지로 (") + row + ")");
+    }, 300);
+    add ([this, sh, settings]
+    {
+        if (auto* s = settings()) s->devPickPhoto (sh->gif);
+        const auto row = settings() != nullptr ? settings()->devPhotoRow() : juce::String();
+        expect (row == TXT ("JPG, PNG, WEBP 이미지만 올릴 수 있어요|변경|1|red"), TXT ("형식 오류: 설명 자리에 빨강, 사진은 그대로 (") + row + ")");
+    }, 300);
+    add ([this, settings]
+    {
+        auto* s = settings();
+        if (s == nullptr) return;
+        if (auto* b = findButton (*s, TXT ("기본 이미지로"))) click (*b);
+    }, 300);
+    add ([this, settings]
+    {
+        const auto& me = core.store().state().me;
+        const juce::String id = me ? me->id : juce::String();
+        expect (! avatars::hasMyPhoto() && ! profilephoto::fileFor (id).existsAsFile(), TXT ("기본 이미지로: 사진·파일 지움"));
+        const auto row = settings() != nullptr ? settings()->devPhotoRow() : juce::String();
+        expect (row.endsWith (TXT ("|올리기|0|grey")), TXT ("기본 이미지로 뒤: 올리기 (") + row + ")");
+        if (auto* s = settings()) s->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));   // 설정 창의 Esc (뒤 시험이 홈을 쓴다)
+    }, 0);
+    waitUntil (TXT ("설정 창 닫힘"), [settings] { return settings() == nullptr; });
+}
+
+//==============================================================================
+// 모달·확인 창 구분선: 상자 안쪽 세로줄 하나(왼쪽 끝에서 6px, 설정은 오른쪽 끝에서 12px: 글자·칸이 없는 자리)를 위에서 아래로 훑어
+// 흰색이 아닌 줄의 연속 두께를 물리 픽셀로 잰다. 구분선(헤더 아래·본문 위·푸터 위)은 hairline 으로 물리 floor(배율) 줄
+// (100·125·150% 1줄, 레티나 2줄 = 1px). 두 선이 붙으면 두 배, 픽셀 경계에 안 맞아 번지면 그보다 두껍다.
+// 화면과 같은 배율로 창 전체를 그려서 잰다 (선은 창 안의 자리로 픽셀에 맞추므로 상자만 그리면 어긋난다). 배율은 --global-scale 로
+void UiSelfTest::addModalLineTests()
+{
+    begin (TXT ("모달 구분선 1px"));
+    // 맨 위에 보이는 모달·확인 창과 그 상자 (창 좌표)
+    auto topDialog = [this]() -> std::pair<juce::Component*, juce::Rectangle<int>>
+    {
+        auto* top = root.getTopLevelComponent();
+        juce::Component* found = nullptr;
+        juce::Rectangle<int> box;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* ch : c.getChildren())
+            {
+                if (! ch->isVisible()) continue;
+                if (auto* m = dynamic_cast<ModalBase*> (ch)) { found = m; box = top->getLocalArea (m, m->dialogBounds()); }
+                walk (*ch);
+            }
+        };
+        walk (*top);
+        if (root.fail != nullptr && root.fail->isVisible())
+        {
+            found = root.fail.get();
+            box = top->getLocalArea (root.fail.get(), root.fail->getLocalBounds());
+        }
+        return { found, box };
+    };
+    auto measure = [this, topDialog] (const juce::String& name, bool rightColumn, int wantLines)
+    {
+        auto [d, box] = topDialog();
+        if (d == nullptr) { expect (false, name + TXT (": 창이 열리지 않음")); return; }
+        auto* top = root.getTopLevelComponent();
+        const float s = juce::Desktop::getInstance().getGlobalScaleFactor() * (float) (top->getPeer() != nullptr ? top->getPeer()->getPlatformScaleFactor() : 1.0);
+        const auto img = top->createComponentSnapshot (top->getLocalBounds(), true, s);
+        juce::Image::BitmapData bd (img, juce::Image::BitmapData::readOnly);
+        const int want = juce::jmax (1, (int) std::floor (s + 0.001f));
+        const float colX = rightColumn ? (float) box.getRight() - 12.0f : (float) box.getX() + 6.0f;
+        const int px = juce::jlimit (0, img.getWidth() - 1, (int) std::floor (colX * s));
+        const int y0 = juce::jmax (0, (int) std::ceil (((float) box.getY() + 3.0f) * s));
+        const int y1 = juce::jmin (img.getHeight(), (int) std::floor (((float) box.getBottom() - 3.0f) * s));
+        auto isLine = [&] (int y) { const auto c = bd.getPixelColour (px, y); return c.getRed() < 250 || c.getGreen() < 250 || c.getBlue() < 250; };
+        juce::StringArray runs;
+        int count = 0;
+        bool ok = true;
+        for (int y = y0; y < y1;)
+        {
+            if (! isLine (y)) { ++y; continue; }
+            const int start = y;
+            while (y < y1 && isLine (y)) ++y;
+            ++count;
+            const auto c = bd.getPixelColour (px, start);
+            runs.add (juce::String ((float) start / s - (float) box.getY(), 1) + ":" + juce::String (y - start) + "px#" + c.toDisplayString (false));
+            ok = ok && (y - start) == want;
+        }
+        if (const auto dir = juce::SystemStats::getEnvironmentVariable ("MEON_MODALLINES_DIR", {}); dir.isNotEmpty())
+        {
+            // 상자 자리 그림 (확인용): <이름>-<배율>.png
+            const auto crop = img.getClippedImage ((box.toFloat() * s).getSmallestIntegerContainer().expanded (4).getIntersection (img.getBounds()));
+            juce::File f (juce::File (dir).getChildFile (name.retainCharacters ("abcdefghijklmnopqrstuvwxyz0123456789") + juce::String (std::abs (name.hashCode())) + "-" + juce::String (s, 2) + ".png"));
+            f.getParentDirectory().createDirectory();
+            juce::FileOutputStream out (f);
+            if (out.openedOk()) { out.setPosition (0); out.truncate(); juce::PNGImageFormat().writeImageToStream (crop, out); }
+        }
+        std::cerr << "UITEST INFO modallines " << name << " scale " << s << " box " << box.toString() << (rightColumn ? " right" : " left")
+                  << " lines (y:thickness) " << runs.joinIntoString (" ") << std::endl;
+        const bool countOk = wantLines < 0 ? count >= 1 : count == wantLines;   // -1: 창 내용에 따라 (1개 이상)
+        expect (ok && countOk, name + TXT (": 구분선 ") + (wantLines < 0 ? TXT ("1개 이상") : juce::String (wantLines) + TXT ("개")) + TXT (", 각 물리 ") + juce::String (want)
+                                          + TXT ("px (") + runs.joinIntoString (" ") + ")");
+    };
+    auto closeTop = [this, topDialog]
+    {
+        if (root.fail != nullptr) { root.fail.reset(); return; }
+        if (auto [d, box] = topDialog(); d != nullptr) d->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    };
+    auto check = [this, measure, closeTop] (const juce::String& name, std::function<void()> open, bool right, int lines)
+    {
+        add ([open] { open(); }, 700);   // 여는 애니메이션(240ms)이 끝난 뒤 잰다 (add 의 시간 = 이 단계 뒤 기다림)
+        add ([measure, name, right, lines] { measure (name, right, lines); }, 0);
+        add ([closeTop] { closeTop(); }, 600);
+    };
+    auto friendUser = [this]() -> std::optional<core::UserPublic>
+    {
+        const auto& fr = core.store().state().friends;
+        if (fr.empty()) return std::nullopt;
+        return fr.front().user;
+    };
+
+    closeToasts();
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    // 선 수: 머리말 아래 + 푸터 위 (+ 받은 요청이 있으면 본문 위). 푸터가 없는 창은 머리말 아래만
+    check (TXT ("친구 추가"), [this] { home().openAddFriend(); }, false, -1);
+    check (TXT ("새 합주실"), [this] { home().openCreateRoom(); }, false, 2);
+    check (TXT ("코드로 입장"), [this] { home().openJoinCode(); }, false, -1);
+    check (TXT ("방 필터"), [this] { home().openFilter(); }, false, 2);
+    check (TXT ("친구 프로필"), [this, friendUser] { if (auto u = friendUser()) home().openProfile (*u); }, false, -1);
+    if (root.onOpenSettings)
+    {
+        check (TXT ("설정 · 프로필"), [this] { root.onOpenSettings ((int) SettingsModal::Tab::profile); }, true, 1);
+        check (TXT ("설정 · 오디오"), [this] { root.onOpenSettings ((int) SettingsModal::Tab::audio); }, true, 1);
+    }
+    check (TXT ("입장 실패"), [this] { root.showJoinFailure (core::HomeController::JoinFailure::full); }, false, 1);
+    enterNewRoom();
+    // 배율(--global-scale)을 바꾸면 마우스 클릭 자리가 어긋나므로 버튼을 직접 누른다
+    check (TXT ("방 설정"), [this] { if (auto* j = jam(); j != nullptr && j->gear.onClick) j->gear.onClick(); }, false, -1);
+    check (TXT ("친구 프로필 (방 안)"), [this, friendUser] { if (auto u = friendUser(); u && jam() != nullptr) jam()->openProfile (*u); }, false, -1);
+    add ([this] { root.showPage (Sidebar::Page::rooms); }, 0);   // 방은 그대로 두고 공개 방으로 (최소화)
+    waitUntil (TXT ("최소화"), [this] { return inRoom() && root.isMinimized() && home().isShowing(); });
+    check (TXT ("나가고 만들기 확인"), [this] { home().openCreateRoom(); }, false, 2);
+    check (TXT ("나가고 들어가기 확인"), [this] { home().confirmLeaveThen (false, "r_modallines_other", [] {}); }, false, 2);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("방에서 나옴"), [this] { return ! inRoom(); });
 }
 
 } // namespace meon::ui

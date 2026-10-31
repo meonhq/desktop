@@ -1,4 +1,5 @@
 #include "JamOverlays.h"
+#include "../theme/Hairline.h"
 #include "FormText.h"
 #include "../Messages.h"
 #include "../theme/Icons.h"
@@ -56,7 +57,7 @@ RoomSettingsModal::RoomSettingsModal (core::MeonCore& c) : Modal (TXT ("방 설�
 
 juce::String RoomSettingsModal::visNote() const
 {
-    if (isPublic()) return TXT ("홈의 공개 방 목록에 보이고 누구나 찾아 들어올 수 있어요");
+    if (isPublic()) return TXT ("공개 방 목록에 보이고 누구나 찾아 들어올 수 있어요");
     if (room.inviteCode) return TXT ("목록에서 사라져요. 입장 코드 ") + *room.inviteCode + TXT ("로만 들어올 수 있어요");
     return TXT ("목록에서 사라져요. 저장하면 나오는 입장 코드로만 들어올 수 있어요");
 }
@@ -127,8 +128,8 @@ void RoomSettingsModal::Body::paint (juce::Graphics& g)
     }
     y += 18;
     // 방 닫기 줄
-    g.setColour (col::line);
-    g.fillRect (0, y, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, (float) y, (float) getWidth());
     g.setColour (col::ink);
     g.setFont (font (500, 14.0f));
     g.drawText (TXT ("방 닫기"), metric::padX, y + 12, w - 150, 17, juce::Justification::centredLeft, false);
@@ -196,7 +197,7 @@ void RoomSettingsModal::submit()
 ManageMemberModal::ManageMemberModal (core::MeonCore& c, const core::JamSession::Member& m)
     : Modal (TXT ("멤버 관리"), 340), core (c), member (m)
 {
-    avatar.setPart (m.part.isNotEmpty() ? m.part : juce::String ("other"));
+    avatar.setUser (m.userId);
     for (auto* comp : std::initializer_list<juce::Component*> { &avatar, &hand, &kick })
         body.addAndMakeVisible (comp);
     hand.setConfirm (TXT ("한 번 더 누르면 넘겨요"), true);
@@ -237,7 +238,7 @@ struct JoinRequestList::Row : juce::Component
 {
     Row (JoinRequestList& o, const core::JoinRequest& r) : owner (o), req (r)
     {
-        avatar.setPart (r.user.part.value_or ("other"));
+        avatar.setUser (r.user.id);
         avatar.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (avatar);
         addAndMakeVisible (decline);
@@ -323,8 +324,8 @@ void JoinRequestList::paint (juce::Graphics& g)
         g.drawText (TXT ("새 입장 요청이 없어요"), metric::padX, 6, getWidth() - 36, 41, juce::Justification::centredLeft, true);
     }
     const int y = getHeight() - 38;
-    g.setColour (col::line);
-    g.fillRect (0, y, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, (float) y, (float) getWidth());
     g.setColour (col::inkSub);
     g.setFont (font (400, 12.0f));
     g.drawText (isFull() ? TXT ("방이 가득 찼어요. 자리가 나야 수락할 수 있어요") : TXT ("거절해도 상대에게는 알리지 않아요"),
@@ -341,7 +342,7 @@ void JoinRequestList::resized()
 ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool jam)
     : Modal (TXT ("프로필"), 340), core (c), user (u), inJam (jam)
 {
-    avatar.setPart (u.part.value_or ("other"));
+    avatar.setUser (u.id);
     avatar.setLargeStatusDot (true);
     for (auto* comp : std::initializer_list<juce::Component*> { &avatar, &friendTag, &remove, &block, &unblock, &footer })
         body.addChildComponent (comp);
@@ -378,6 +379,20 @@ ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool j
         joinFriendRoomNow();
     };
     accept.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().acceptFriendRequest (rid, reloader()); };
+    invite.onPress = [this]
+    {
+        auto& home = core.home();
+        const auto id = user.id;
+        using P = core::HomeController::InviteState::Phase;
+        const auto st = home.inviteState (id).phase;
+        if (st == P::pending) home.cancelInvite (id);
+        else if (st == P::none)
+        {
+            std::weak_ptr<bool> weak = alive;
+            home.invite (id, [this, weak] (core::Result<core::InviteSent>) { if (! weak.expired()) refresh(); });   // 실패 토스트는 AppRoot (onInviteFailed)
+        }
+        refresh();
+    };
     decline.onPress = [this] { const auto rid = incomingRequestId(); if (rid.isNotEmpty()) core.home().declineFriendRequest (rid, reloader()); };
 
     core.store().addListener (this);
@@ -418,6 +433,7 @@ core::HomeController::FriendJoin ProfileModal::joinState() const
 
 void ProfileModal::timerCallback()
 {
+    if (invite.isVisible() || canInvite() != invite.isVisible()) { refresh(); return; }   // "N초 뒤 초대가 가요" → "초대됨"
     if (! joinRoom.isVisible()) return;
     using J = core::HomeController::FriendJoin;
     const auto st = joinState();
@@ -493,7 +509,15 @@ juce::String ProfileModal::lastSeenText() const
 
 bool ProfileModal::hasFooter() const
 {
-    return request.isVisible() || joinRoom.isVisible() || accept.isVisible();
+    return request.isVisible() || joinRoom.isVisible() || accept.isVisible() || invite.isVisible();
+}
+
+bool ProfileModal::canInvite() const
+{
+    // 디자인: 친구 · 온라인 · 내가 방에 있음. 서버의 can_invite (친구 목록 항목이 최신, 없으면 프로필)
+    if (! profile || profile->relation != "friend" || ! core.store().state().currentRoom) return false;
+    if (const auto* f = core.store().state().findFriend (user.id)) return f->canInvite;
+    return profile->canInvite;
 }
 
 void ProfileModal::refresh()
@@ -508,7 +532,7 @@ void ProfileModal::refresh()
     using S = Avatar::Status;
     const auto st = profile && isFriend ? profile->status.value_or ("offline") : juce::String();
     avatar.setStatus (st == "in_room" ? S::inRoom : (st == "online" ? S::online : (st == "offline" ? S::offline : S::none)));
-    avatar.setPart (user.part.value_or ("other"));
+    avatar.setUser (user.id);
 
     // 아래 버튼 (Q28): 요청 보냄 = 비활성, 요청 받음 = 거절·수락, 친구가 다른 공개 방에 있으면 참여·요청 (버그 27)
     const bool canRequest = profile && (rel == "none" || rel == "request_sent");
@@ -522,14 +546,32 @@ void ProfileModal::refresh()
     // "요청 보냄" 은 눌러도 아무 일이 없으므로 화살표 커서 (모양은 그대로)
     joinRoom.setMouseCursor (js == J::requested ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
     const bool incoming = rel == "request_received" && incomingRequestId().isNotEmpty();
+    const bool inviteOk = canInvite() && ! incoming && ! canJoin;
+    juce::String footNote = note;
+    if (inviteOk)
+    {
+        using P = core::HomeController::InviteState::Phase;
+        const auto st = core.home().inviteState (user.id);
+        invite.setPending (st.phase == P::pending);
+        invite.setDimmed (st.phase == P::sent);
+        invite.setButtonText (st.phase == P::pending ? TXT ("취소") : (st.phase == P::sent ? TXT ("초대됨") : TXT ("방 초대")));
+        invite.setMouseCursor (st.phase == P::sent ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
+        if (st.phase == P::pending)
+        {
+            const auto left = std::max<juce::int64> (1, (st.deliverAtMs - core.scheduler().nowMs() + 999) / 1000);
+            footNote = juce::String (left) + TXT ("초 뒤 초대가 가요");
+        }
+    }
 
     if (incoming)       footer.setButtons ({ &decline, &accept });
     else if (canJoin)   footer.setButtons ({ &joinRoom });
+    else if (inviteOk)  footer.setButtons ({ &invite });
     else if (canRequest) footer.setButtons ({ &request });
     else                footer.setButtons ({});
-    for (auto* b : { &request, &joinRoom, &decline, &accept })
-        b->setVisible ((b == &request && canRequest && ! incoming && ! canJoin) || (b == &joinRoom && canJoin && ! incoming) || ((b == &decline || b == &accept) && incoming));
-    footer.setNote (note, col::inkSub);
+    for (auto* b : { &request, &joinRoom, &decline, &accept, &invite })
+        b->setVisible ((b == &request && canRequest && ! incoming && ! canJoin && ! inviteOk) || (b == &joinRoom && canJoin && ! incoming)
+                       || ((b == &decline || b == &accept) && incoming) || (b == &invite && inviteOk));
+    footer.setNote (footNote, col::inkSub);
     footer.setVisible (hasFooter() || note.isNotEmpty());
 
     const int rows = lastSeenText().isNotEmpty() ? 3 : 2;

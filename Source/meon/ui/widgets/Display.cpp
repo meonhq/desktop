@@ -1,4 +1,7 @@
 #include "Display.h"
+#include "../theme/Avatars.h"
+#include "../dev/RepaintProbe.h"
+#include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 
 namespace meon::ui
@@ -25,7 +28,8 @@ void PingBadge::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-Avatar::Avatar (float s, float i) : size (s), iconPx (i) {}
+Avatar::Avatar (float s, float i) : size (s), iconPx (i) { avatars::changes().addChangeListener (this); }
+Avatar::~Avatar() { avatars::changes().removeChangeListener (this); }
 
 juce::Colour Avatar::statusColour (Status s)
 {
@@ -43,8 +47,7 @@ juce::Colour Avatar::statusColour (Status s)
 void Avatar::paint (juce::Graphics& g)
 {
     auto r = juce::Rectangle<float> (size, size).withCentre (getLocalBounds().toFloat().getCentre());
-    // 아이콘은 이름과 같은 색 (박힌 #1A1A1A 를 쓰지 않는다). 흐린 상태도 이름의 #AAAAAA 와 같게
-    paintCircle (g, r, part, iconPx, dimmed ? col::inkFaint : ink, false);
+    avatars::paint (g, r, user, dimmed ? 0.4f : 1.0f);
     if (status != Status::none)
     {
         // 기본: right:-1 bottom:-1, 9×9, 흰 테두리 2px. 프로필 창: right:0 bottom:0, 12×12 (setLargeStatusDot)
@@ -57,18 +60,9 @@ void Avatar::paint (juce::Graphics& g)
     }
 }
 
-void Avatar::paintCircle (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& partKey, float iconPx,
-                          juce::Colour inkColour, bool whiteFill)
+void Avatar::paintPhoto (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& userId, float opacity)
 {
-    if (whiteFill)
-    {
-        g.setColour (col::white);
-        g.fillEllipse (r);
-    }
-    g.setColour (col::line);
-    g.drawEllipse (r.reduced (0.5f), 1.0f);
-    if (partKey.isNotEmpty())
-        icons::drawPart (g, partKey, r, iconPx, inkColour);   // 얇은 아이콘 (PartWeight::thin)
+    avatars::paint (g, r, userId, opacity);
 }
 
 void Avatar::mouseUp (const juce::MouseEvent& e)
@@ -163,6 +157,8 @@ void Card::resized()
 
 void Card::paint (juce::Graphics& g)
 {
+    ++devPaintCount;
+    devprobe::note (*this, g, "Card");
     auto r = getLocalBounds().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (r, metric::radius);
@@ -175,16 +171,16 @@ void Card::paint (juce::Graphics& g)
         // 옆으로 접는 카드(내 오디오·모니터)는 접혀도 아래에 미터가 남으므로 늘 긋는다
         if (fold > 0.0f || ! collapsible || sidewaysFold)
         {
-            g.setColour (col::line);
-            g.fillRect (1, headerHeight(), getWidth() - 2, 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, 1.0f, (float) headerHeight(), (float) getWidth() - 2.0f);
         }
     }
 }
 
 void Card::paintOverChildren (juce::Graphics& g)
 {
-    g.setColour (col::line);
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), metric::radius, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::roundedBorder (g, *this, getLocalBounds().toFloat(), metric::radius);
 }
 
 //==============================================================================
@@ -239,10 +235,8 @@ void Modal::resized()
         content->setBounds (box.withTrimmedTop (showHeader ? 49 : 0));
 }
 
-void Modal::paint (juce::Graphics& g)
+void Modal::paintDialog (juce::Graphics& g)
 {
-    g.setColour (col::overlay);
-    g.fillRect (insets.subtractedFrom (getLocalBounds()));
     const auto box = boxBounds().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (box, metric::radius);
@@ -251,8 +245,8 @@ void Modal::paint (juce::Graphics& g)
         g.setColour (col::ink);
         g.setFont (font (600, 15.0f));
         g.drawText (title, box.withHeight (48.0f).reduced ((float) metric::padX, 0.0f).toNearestInt(), juce::Justification::centredLeft, true);
-        g.setColour (col::line);
-        g.fillRect (box.getX(), box.getY() + 48.0f, box.getWidth(), 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, box.getX(), box.getY() + 48.0f, box.getWidth());
     }
 }
 
@@ -308,17 +302,34 @@ Tip::Tip() { setInterceptsMouseClicks (false, false); setAlwaysOnTop (true); }
 
 int Tip::widthFor (const juce::String& t) { return (int) std::ceil (textWidth (font (500, 12.0f), t)) + 14; }
 
-void Tip::show (juce::Component& host, juce::Component& t, const juce::String& s, Place place)
+void Tip::show (juce::Component& host, juce::Component& t, const juce::String& s, Place where)
 {
     text = s;
+    sub = {};
+    note = false;
+    place (host, t, widthFor (text), height, where);
+}
+
+void Tip::showNote (juce::Component& host, juce::Component& t, const juce::String& title, const juce::String& subText, Place where)
+{
+    // 디자인: padding 6px 8px, font 500 12px/1.4 (줄 17), gap 2, 첫 줄 600
+    text = title;
+    sub = subText;
+    note = true;
+    int w = (int) std::ceil (textWidth (font (600, 12.0f), title));
+    if (sub.isNotEmpty()) w = juce::jmax (w, (int) std::ceil (textWidth (font (500, 12.0f), sub)));
+    place (host, t, w + 16, 6 + 17 + (sub.isNotEmpty() ? 2 + 17 : 0) + 6, where);
+}
+
+void Tip::place (juce::Component& host, juce::Component& t, int w, int h, Place where)
+{
     target = &t;
     if (getParentComponent() != &host) host.addChildComponent (this);
     const auto b = host.getLocalArea (t.getParentComponent(), t.getBounds());
-    const int w = widthFor (text);
-    int x = place == Place::belowCentre ? b.getCentreX() - w / 2 : b.getRight() - w;
+    int x = where == Place::belowCentre ? b.getCentreX() - w / 2 : b.getRight() - w;
     x = juce::jlimit (0, juce::jmax (0, host.getWidth() - w), x);
-    const int y = place == Place::aboveRight ? b.getY() - 6 - height : b.getBottom() + 6;
-    setBounds (x, y, w, height);
+    const int y = where == Place::aboveRight ? b.getY() - 6 - h : b.getBottom() + 6;
+    setBounds (x, y, w, h);
     setVisible (true);
     toFront (false);
     repaint();
@@ -335,8 +346,18 @@ void Tip::paint (juce::Graphics& g)
     g.setColour (col::ink);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
     g.setColour (col::white);
+    if (! note)
+    {
+        g.setFont (font (500, 12.0f));
+        g.drawText (text, getLocalBounds(), juce::Justification::centred, false);
+        return;
+    }
+    g.setFont (font (600, 12.0f));
+    g.drawText (text, juce::Rectangle<int> (8, 6, getWidth() - 16, 17), juce::Justification::centredLeft, false);
+    if (sub.isEmpty()) return;
+    g.setColour (juce::Colour (0xFFD5D5D5u));
     g.setFont (font (500, 12.0f));
-    g.drawText (text, getLocalBounds(), juce::Justification::centred, false);
+    g.drawText (sub, juce::Rectangle<int> (8, 6 + 17 + 2, getWidth() - 16, 17), juce::Justification::centredLeft, false);
 }
 
 TipOnHover::TipOnHover (Tip& t, juce::Component& h, juce::Component& c, const juce::String& s, Tip::Place p)
@@ -370,30 +391,28 @@ void Popover::setContent (juce::Component* c, int h)
 
 void Popover::resized()
 {
-    closeButton.setBounds (getWidth() - metric::padX - 19, 12, 19, 19);
-    if (content != nullptr) content->setBounds (getLocalBounds().withTrimmedTop (44).reduced (1, 0).withTrimmedBottom (1));
+    const auto p = panel();
+    closeButton.setBounds (p.getRight() - metric::padX - 19, p.getY() + 12, 19, 19);
+    if (content != nullptr) content->setBounds (p.withTrimmedTop (44).reduced (1, 0).withTrimmedBottom (1));
 }
 
 void Popover::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    g.setColour (col::white);
-    g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    paintSurface (g);
+    const auto r = panel().toFloat();
     const auto tf = font (600, 15.0f);
     g.setColour (col::ink);
     g.setFont (tf);
     const float tw = textWidth (tf, title);
-    g.drawText (title, juce::Rectangle<float> ((float) metric::padX, 0.0f, tw + 2.0f, 43.0f), juce::Justification::centredLeft, false);
+    g.drawText (title, juce::Rectangle<float> (r.getX() + (float) metric::padX, r.getY(), tw + 2.0f, 43.0f), juce::Justification::centredLeft, false);
     if (count.isNotEmpty())
     {
         g.setColour (col::inkSub);
         g.setFont (font (500, 13.0f));
-        g.drawText (count, juce::Rectangle<float> ((float) metric::padX + tw + 6.0f, 0.0f, 60.0f, 43.0f), juce::Justification::centredLeft, false);
+        g.drawText (count, juce::Rectangle<float> (r.getX() + (float) metric::padX + tw + 6.0f, r.getY(), 60.0f, 43.0f), juce::Justification::centredLeft, false);
     }
-    g.setColour (col::line);
-    g.fillRect (1.0f, 43.0f, r.getWidth() - 2.0f, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, r.getX() + 1.0f, r.getY() + 43.0f, r.getWidth() - 2.0f);
 }
 
 //==============================================================================

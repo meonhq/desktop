@@ -114,7 +114,7 @@ void Choice::paint (juce::Graphics& g)
         if (style == Style::chip)
         {
             fill = on ? col::accentSoft : col::white;
-            border = on ? col::accent : col::field;
+            border = on ? col::accent : col::borderSubtle;   // 32px 선택 버튼 (방 만들기): 꺼짐·호버 #EBEBEB
             ink = on ? col::ink : col::inkSub;
             weight = on ? 600 : 500;
             px = 13.0f;
@@ -123,7 +123,7 @@ void Choice::paint (juce::Graphics& g)
         else
         {
             fill = on ? col::accentSoft : col::softBg;
-            border = on ? col::accent : col::line;
+            border = on ? col::accent : col::miniBorder;   // 19px 작은 선택 버튼 = 미니 버튼
             ink = on ? col::ink : (hover == i ? col::ink : col::inkSub);
             weight = on ? 500 : 400;
             px = 12.0f;

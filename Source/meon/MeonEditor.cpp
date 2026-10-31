@@ -9,6 +9,10 @@
 #include "ui/Messages.h"
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
+#include "MeonWindowChrome.h"
+#include "MeonWindowFrame.h"
+#include "core/log/AppLog.h"
+#include <optional>
 
 namespace meon
 {
@@ -88,7 +92,12 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     updater->onDownloaded = [this] { installUpdate(); };
 
    #if MEON_DEV_OPTIONS
+    devMockChrome = ! pluginMode && meon::devOptions()["chrome"] == "mac";
+    devMockWin = ! pluginMode && meon::devOptions()["chrome"] == "win";
     devJam = meon::devOptions().getAllKeys().contains ("dev-jam");
+    // --global-scale=1.25: 화면 배율이 정수가 아닐 때(윈도우 125%·150%)처럼 그린다. 리눅스에서 다시 그리기 확인용
+    if (const auto gs = meon::devOptions()["global-scale"]; gs.isNotEmpty())
+        juce::Desktop::getInstance().setGlobalScaleFactor (juce::jlimit (0.5f, 3.0f, gs.getFloatValue()));
     {
         const auto scr = meon::devOptions()["screen"];
         if (scr == "home" || scr.startsWith ("home:"))
@@ -99,6 +108,26 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
             devHomePreview = "uitest";   // 화면 자가 테스트 (가짜 계정으로 자동 가입한 홈에서 시작)
         if (meon::devOptions().containsKey ("showcase"))
             devHomePreview = "showcase";   // 소개 페이지 캡처 (ui/dev/Showcase: 가상 인물 승찬으로 자동 가입)
+    }
+    // --scaled-snapshot=경로@배율 (예: shot.png@1.25): 화면 배율(윈도우 125%·150%, 맥 레티나 200%)로 그린 화면을 PNG 로 남기고 끝낸다.
+    // 1px 선이 물리 픽셀에 맞는지 보는 용도 (소프트웨어 렌더러에 배율 변환을 건다: 윈도우 앱이 그리는 방식과 같다)
+    if (const auto spec = meon::devOptions()["scaled-snapshot"]; spec.isNotEmpty())
+    {
+        const auto path = spec.upToLastOccurrenceOf ("@", false, false);
+        const float scale = juce::jmax (0.5f, spec.fromLastOccurrenceOf ("@", false, false).getFloatValue());
+        const int delay = meon::devOptions().containsKey ("snapshot-delay") ? meon::devOptions()["snapshot-delay"].getIntValue() : 3500;
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (delay, [safe, path, scale]
+        {
+            if (safe == nullptr) return;
+            const auto img = safe->createComponentSnapshot (safe->getLocalBounds(), true, scale);
+            juce::File f (path);
+            f.deleteFile();
+            juce::FileOutputStream out (f);
+            if (out.openedOk()) juce::PNGImageFormat().writeImageToStream (img, out);
+            std::cerr << "MEON dev: scaled snapshot " << path << " " << img.getWidth() << "x" << img.getHeight() << std::endl;
+            juce::JUCEApplicationBase::quit();
+        });
     }
    #endif
     core.auth().addListener (this);
@@ -152,13 +181,15 @@ void MeonEditor::stateChanged (core::StateKey k)
 
 MeonEditor::~MeonEditor()
 {
+    getProperties().set (ui::ModalBase::noCloseAnimationProperty, true);   // 끄는 중: 닫히는 모달 그림을 남기지 않는다
     stopTimer();
+    if (chromeInstalled) chrome::detach();   // 창 모양은 그대로 (앱을 끄는 중). 창 크기는 창이 먼저 저장했다
+    if (winFrameInstalled) winframe::detach();   // 창 프로시저를 원래대로 (창은 곧 닫힌다)
     core.store().removeListener (this);
     core.auth().removeListener (this);
     appRoot.reset();
     onboarding.reset();
     settingsOverlay = nullptr;
-    settingsFadingOut = nullptr;
     updater = nullptr;
     settings = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -179,10 +210,9 @@ void MeonEditor::openSettings (int tab)
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closeSettings(); });
     };
     settingsOverlay = std::move (modal);
-    settingsOverlay->setBounds (getLocalBounds());
+    settingsOverlay->setBounds (contentBounds());
     addAndMakeVisible (*settingsOverlay);
-    settingsOverlay->toFront (false);
-    fader.fade (settingsOverlay.get(), 0.0f, 1.0f, metric::fadeMs);
+    settingsOverlay->toFront (false);   // 열기 애니메이션은 모달 래퍼가 (화면에 붙는 순간)
     grabKeyboardFocus();
 }
 
@@ -229,21 +259,67 @@ void MeonEditor::closeSettings()
 {
     if (settingsOverlay == nullptr)
         return;
-    if (settingsFadingOut != nullptr)
-    {
-        fader.cancel (settingsFadingOut.get());
-        settingsFadingOut = nullptr;
-    }
-    settingsFadingOut = std::move (settingsOverlay);
-    juce::Component::SafePointer<MeonEditor> safe (this);
-    fader.fade (settingsFadingOut.get(), 1.0f, 0.0f, metric::fadeMs, [safe] { if (safe != nullptr) safe->settingsFadingOut = nullptr; });
+    settingsOverlay = nullptr;   // 닫는 애니메이션은 모달 래퍼가 (지우기 직전 모습을 남긴다)
     saveAll();
     grabKeyboardFocus();
 }
 
 //==============================================================================
+bool MeonEditor::winFullscreen() const
+{
+    auto* peer = getPeer();
+    return winFrameInstalled && peer != nullptr && winframe::isFullscreen (peer->getNativeHandle());
+}
+
+void MeonEditor::toggleFullscreen()
+{
+    if (pluginMode) return;
+    auto* peer = getPeer();
+    if (peer == nullptr) return;
+    if (winFrameInstalled) { winframe::setFullscreen (peer->getNativeHandle(), ! winframe::isFullscreen (peer->getNativeHandle())); return; }
+   #if JUCE_MAC
+    chrome::toggleFullScreen (peer->getNativeHandle());
+   #endif
+}
+
+void MeonEditor::updateCaptionReveal()
+{
+    // 윈도우 전체 화면: 마우스를 화면 맨 위(2px)에 대면 창 버튼이 나타나고, 맨 윗줄(창 버튼 높이 + 16) 아래로 내려가면 숨는다
+    if (chromeView == nullptr || ! winFullscreen()) { revealTimer.stopTimer(); return; }
+    const auto pos = getMouseXYRelative();
+    const bool inside = getLocalBounds().contains (pos.withY (juce::jmax (0, pos.y)));
+    bool want = captionRevealed;
+    if (! captionRevealed) want = inside && pos.y <= 1;
+    else want = inside && pos.y < chromeView->getBottom() + 16;
+    if (want == captionRevealed) return;
+    captionRevealed = want;
+    chromeView->setVisible (want);
+    if (want) childrenChanged();   // 맨 위로
+}
+
 bool MeonEditor::requestedQuit()
 {
+    // 전체 화면에서 끄면 원래 창으로 되돌린 뒤 끈다 (다음에 켤 때 전체 화면 크기로 열리지 않게: 창 크기는 창이 사라질 때 저장된다)
+    if (auto* peer = getPeer(); peer != nullptr && ! pluginMode)
+    {
+        if (winFullscreen()) winframe::setFullscreen (peer->getNativeHandle(), false);   // 바로 되돌아온다
+        if (winFrameInstalled)
+        {
+            // 최대화였으면 보통 크기로 저장하고(창이 사라질 때 저장된다) 다음에 켤 때 다시 최대화한다
+            settings->setWindowMaximised (winframe::unmaximiseForSave (peer->getNativeHandle()));
+        }
+       #if JUCE_MAC
+        if (chrome::isFullScreen (peer->getNativeHandle()) && ! quittingFromFullscreen)
+        {
+            // macOS 전체 화면은 애니메이션 뒤에 나온다: 나온 다음에 다시 끄기 (2초 안에 안 나오면 그냥 끈다)
+            quittingFromFullscreen = true;
+            auto again = [] { if (auto* app = juce::JUCEApplicationBase::getInstance()) app->systemRequestedQuit(); };
+            chrome::exitFullScreenThen (peer->getNativeHandle(), again);
+            juce::Timer::callAfterDelay (2000, again);
+            return false;
+        }
+       #endif
+    }
     // 끄면 방에서 나간다: MeonCore 가 없어질 때 서버에 나가기를 보내고 응답을 기다린다 (플러그인 제거와 같은 길)
     saveAll();
     return true;
@@ -341,13 +417,14 @@ void MeonEditor::updateOnboarding()
     {
         appRoot.reset();   // 로그아웃 등
         settingsOverlay = nullptr;
-        settingsFadingOut = nullptr;
         if (onboarding == nullptr)
         {
             onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
             onboarding->setLookAndFeel (newLookAndFeel.get());
+            onboarding->setTitleBarInset (titleBarInset());
+            onboarding->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
             addAndMakeVisible (*onboarding);
-            onboarding->setBounds (getLocalBounds());
+            onboarding->setBounds (contentBounds());
         }
         onboarding->toFront (true);
         return;
@@ -361,7 +438,7 @@ void MeonEditor::updateOnboarding()
             devScreen = std::make_unique<ui::DevJamScreen> (core);
             devScreen->setLookAndFeel (newLookAndFeel.get());
             addAndMakeVisible (*devScreen);
-            devScreen->setBounds (getLocalBounds());
+            devScreen->setBounds (contentBounds());
         }
         return;
     }
@@ -409,8 +486,9 @@ void MeonEditor::showAppRoot()
     appRoot->setLookAndFeel (newLookAndFeel.get());
     appRoot->onOpenSettings = [this] (int tab) { openSettings (tab); };
     addAndMakeVisible (*appRoot);
-    appRoot->setBounds (getLocalBounds());
+    appRoot->setBounds (contentBounds());
     if (settingsOverlay != nullptr) settingsOverlay->toFront (false);
+    windowChromeChanged();   // 창 윗부분 (제목 줄 오른쪽 여백·창 버튼을 맨 위로)
     if (devHomePreview.isNotEmpty())
     {
         juce::Component::SafePointer<MeonEditor> safe (this);
@@ -443,8 +521,40 @@ void MeonEditor::applyHomePreview()
 {
     // 개발용 스냅숏: 홈의 겹침 요소를 열어 둔다
     if (appRoot == nullptr) return;
+    // --chrome=mac|flat|win: 창 윗부분 배치 미리 보기 (홈·사이드바 디자인 v2.1 chromeVals). mac = 맥 창 모드 (가짜 신호등을 그린다),
+    // flat = 신호등 없음 (맥 전체 화면·플러그인), win = 윈도우 독립 앱 (사이드바는 flat, 창 버튼 + 제목 줄 오른쪽 150). 없으면 실제 창을 따른다
+    if (const auto ch = meon::devOptions()["chrome"]; ch == "mac" || ch == "flat" || ch == "win")
+        appRoot->devForceChrome (ch == "mac" ? ui::Sidebar::Chrome::macWindow : ui::Sidebar::Chrome::flat);
+    // --sidebar=collapsed: 다른 미리 보기와 같이 사이드바를 접은 채로 (홈·사이드바 디자인 v2.1 접힌 상태 확인)
+    if (meon::devOptions()["sidebar"] == "collapsed")
+        appRoot->getSidebar()->setCollapsed (true);   // 실제로 접는다 (멈춘 미리 보기는 프레임마다 다시 그려 다시 그리기 확인을 흐린다)
     auto* home = appRoot->getHome();
     const auto p = devHomePreview;
+    // --anim-seq=sidebar,rooms,send,min,...: 화면이 준비된 뒤(2.5초) 1초 간격으로 하나씩 움직이고, 0.7초 뒤 창 전체를 다시 그린다.
+    // 녹화해서 다시 그리기 직전·직후 프레임이 다르면 그 자리가 잔상이다 (다시 그리기 확인용)
+    if (const auto seq = juce::StringArray::fromTokens (meon::devOptions()["anim-seq"], ",", ""); ! seq.isEmpty())
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        for (int k = 0; k < seq.size(); ++k)
+        {
+            const auto act = seq[k].trim();
+            juce::Timer::callAfterDelay (2500 + 1000 * k, [safe, act]
+            {
+                if (safe == nullptr || safe->appRoot == nullptr) return;
+                auto& root = *safe->appRoot;
+                auto* sb = root.getSidebar();
+                if (act == "sidebar") sb->toggleCollapsed();
+                else if (act == "rooms" || act == "friends" || act == "offline") sb->devToggleSection (act);
+                else if (act == "send" || act == "mon" || act == "chat") { if (auto* s = root.getJamScreen()) s->devToggleFold (act); }
+                else if (act == "min" || act == "unmin") root.setMinimized (act == "min");
+                else if (act == "modal") { if (sb->onAddFriend) sb->onAddFriend(); }
+                else if (act == "close") { if (auto* h = root.getHome()) h->closeOverlays(); if (auto* s = root.getJamScreen()) s->closeOverlays(); }
+                std::cerr << "MEON dev: anim " << act << std::endl;
+            });
+            juce::Timer::callAfterDelay (2500 + 1000 * k + 700, [safe] { if (safe != nullptr) safe->repaint(); });
+            juce::Timer::callAfterDelay (2500 + 1000 * k + 850, [safe] { if (safe != nullptr) safe->repaint(); });   // 두 번째: 그리기 자체의 흔들림과 구별
+        }
+    }
     if (p == "uitest")
     {
         // 화면 자가 테스트: 끝나면 앱을 닫고 실패 수를 종료 코드로 (linux.yml)
@@ -485,6 +595,24 @@ void MeonEditor::applyHomePreview()
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
     else if (p == "notif")  home->toggleNotifications();
+    else if (p == "profilemenu")   // 사이드바 맨 아래 프로필을 누른 메뉴 (알림·설정)
+    {
+        if (auto* sb = appRoot->getSidebar(); sb != nullptr && sb->onProfileMenu) sb->onProfileMenu();
+    }
+    else if (p == "rooms")  { if (home->onShowRooms) home->onShowRooms(); }   // 공개 방 쪽 (홈·사이드바 디자인)
+    else if (p.startsWith ("addfriend"))   // 친구 추가 창 상태 (addfriend=empty|typing|sent|error|requests, 디자인 비교)
+        home->devAddFriendState (p.fromFirstOccurrenceOf ("=", false, false).isEmpty() ? juce::String ("empty") : p.fromFirstOccurrenceOf ("=", false, false));
+    else if (p.startsWith ("sidebar="))   // 사이드바가 접히는 중 e 에 멈춘 화면 (sidebar=0.5, 펼치는 중은 sidebar=open:0.5)
+    {
+        const bool open = p.contains ("open:");
+        appRoot->getSidebar()->previewFold (open, p.fromLastOccurrenceOf (open ? ":" : "=", false, false).getFloatValue());
+    }
+    else if (p == "notifinv")   // 알림 목록에 친구 요청 + 초대 (초대는 가짜 서버가 조금 뒤에 보낸다)
+    {
+        if (auto* fake = core.fakeServer()) fake->devInviteMe();
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (2500, [safe] { if (safe != nullptr && safe->appRoot != nullptr) safe->appRoot->getHome()->toggleNotifications(); });
+    }
     else if (p == "homemon")   // 설정 › 오디오 "입장 전에도 내 소리 듣기" 를 켠 홈 ("내 소리 듣는 중")
     {
         if (auto* jam = core.jam()) jam->setHomeMonitor (true);
@@ -597,7 +725,9 @@ void MeonEditor::applyHomePreview()
         // jam:mini — 방 최소화 (홈 + 아래 막대, 배지 0). jam:minihost — 방장 + 긴 방 이름 + 입장 요청 1 + 새 채팅 3.
         // jam:miniarm — minihost 에서 막대의 나가기를 한 번 누른 상태 (방장 툴팁). jam:miniconfirm / jam:minicreate — 최소화 중
         // 공개 방 '바로 입장' / '방 만들기' 를 누른 확인 모달
-        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide";
+        // jam:pop=requests|notif|profile|none — 방장 방(입장 요청 1)에서 헤더의 입장 요청·알림 팝오버 또는 프로필 메뉴를 연 화면 (그림자·CPU 확인)
+        // jam:pop=addfriend|gear|notifmenu — 방 화면에서 사이드바 친구 추가 · 방 설정 · 프로필 › 알림 (모달 층: 창 전체)
+        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide" || p == "jam:minireqs" || p.startsWith ("jam:pop=");
         core::CreateRoom c;
         c.type = hostRoom ? "public" : "private";
         if (hostRoom) c.entryMode = juce::String ("approval");
@@ -611,7 +741,11 @@ void MeonEditor::applyHomePreview()
             if (safe != nullptr && p.startsWith ("jam:mini"))
             {
                 if (hostRoom)
-                    if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();
+                    if (auto* fake = safe->core.fakeServer())
+                    {
+                        fake->devJoinRequest();
+                        if (p == "jam:minireqs") fake->devJoinRequest();   // 홈·사이드바: 입장 요청 둘 (쌓인 토스트 + 참여 중 점)
+                    }
                 juce::Timer::callAfterDelay (800, [safe, p, hostRoom]
                 {
                     if (safe == nullptr || safe->appRoot == nullptr) return;
@@ -647,6 +781,29 @@ void MeonEditor::applyHomePreview()
                     screen->devSetChatInput (text);
                 });
             }
+            if (safe != nullptr && p.startsWith ("jam:pop="))
+            {
+                if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();
+                juce::Timer::callAfterDelay (1200, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    const auto what = p.fromFirstOccurrenceOf ("=", false, false);
+                    if (what == "profile")
+                    {
+                        if (auto* sb = safe->appRoot->getSidebar(); sb != nullptr && sb->onProfileMenu) sb->onProfileMenu();
+                    }
+                    else if (what == "addfriend")
+                    {
+                        if (auto* sb = safe->appRoot->getSidebar(); sb != nullptr && sb->onAddFriend) sb->onAddFriend();
+                    }
+                    else if (what == "notifmenu")
+                    {
+                        if (auto* home = safe->appRoot->getHome()) home->toggleNotifications();   // 프로필 메뉴 "알림" 과 같은 길
+                    }
+                    else if (auto* screen = safe->appRoot->getJamScreen())
+                        screen->devOpenPopover (what);
+                });
+            }
             if (safe != nullptr && p == "jam:headerarm" && safe->appRoot != nullptr)   // 확인 상태는 3초 뒤 풀리므로 스냅숏(5초) 직전에
                 juce::Timer::callAfterDelay (3500, [safe]
                 {
@@ -664,8 +821,8 @@ void MeonEditor::applyHomePreview()
             if (safe != nullptr && (p.startsWith ("jam:fold=") || p == "jam:chatfill"))
             {
                 // 접기 미리 보기 (jam:fold=chat:0.25 — 채팅 40줄을 채운 뒤 그 패널이 접히는 중 e 에 멈춤),
-                // jam:chatfill — 채팅 300줄을 채운 뒤 채팅·친구·내 오디오·모니터를 1초 간격으로 한 번씩 접었다 펼친다
-                //                (채팅이 많을 때 프레임 확인: 앱 로그의 "접기 애니메이션" 줄)
+                // jam:chatfill — 채팅 300줄을 채운 뒤 채팅·내 오디오·모니터를 1초 간격으로 한 번씩 접었다 펼친다
+                //                (채팅이 많을 때 프레임 확인: 앱 로그의 "접기 애니메이션" 줄. 방 화면 친구 패널은 v2.1 에서 뺐다)
                 juce::Timer::callAfterDelay (800, [safe, p]
                 {
                     if (safe == nullptr || safe->appRoot == nullptr) return;
@@ -677,8 +834,8 @@ void MeonEditor::applyHomePreview()
                         jam->chat().sendText (TXT ("미리 보기 메시지 ") + juce::String (i) + (i % 3 == 0 ? TXT (" · 조금 길게 써서 두 줄로 넘어가는지 보는 문장이에요") : juce::String()));
                     if (p == "jam:chatfill")
                     {
-                        const char* order[] = { "chat", "chat", "friends", "friends", "send", "send", "mon", "mon" };
-                        for (int k = 0; k < 8; ++k)
+                        const char* order[] = { "chat", "chat", "send", "send", "mon", "mon" };
+                        for (int k = 0; k < 6; ++k)
                         {
                             const juce::String panel (order[k]);
                             juce::Timer::callAfterDelay (1000 * (k + 1), [safe, panel]
@@ -695,6 +852,31 @@ void MeonEditor::applyHomePreview()
                     }
                 });
             }
+            if (safe != nullptr && (p == "jam:invite" || p == "jam:invite=pending") && safe->appRoot != nullptr)
+            {
+                // 방 안에서 친구 초대 (홈·사이드바 v2.1: 방 화면에 친구 패널이 없어 프로필 창의 "방 초대").
+                // jam:invite — 초대할 수 있는 친구의 프로필 창, jam:invite=pending — "방 초대" 를 누른 뒤 (3초 동안 "취소")
+                juce::Timer::callAfterDelay (800, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    auto* screen = safe->appRoot->getJamScreen();
+                    if (screen == nullptr) return;
+                    for (auto& f : safe->core.store().state().friends)
+                        if (f.canInvite)
+                        {
+                            screen->openProfile (f.user.id);
+                            if (p.endsWith ("pending"))
+                            {
+                                const auto id = f.user.id;
+                                juce::Timer::callAfterDelay (2500, [safe, id]   // 스냅숏(5초) 때 아직 "취소" (3초)
+                                {
+                                    if (safe != nullptr) safe->core.home().invite (id, [] (core::Result<core::InviteSent>) {});
+                                });
+                            }
+                            return;
+                        }
+                });
+            }
             if (safe != nullptr && (p == "jam:disc" || p == "jam:discback"))   // 연결 끊김 토스트 (끊긴 채 / 4초 뒤 다시 붙음)
                 if (auto* fake = safe->core.fakeServer()) fake->devDropLink (p == "jam:disc" ? 60 : 4);
             if (safe == nullptr || p != "jam:host") return;
@@ -708,6 +890,16 @@ void MeonEditor::applyHomePreview()
         const auto name = p.fromFirstOccurrenceOf (":", false, false);
         for (int i = 0; i < 8; ++i) if (name == tabNames[i]) tab = i;
         openSettings (tab);
+        // --pick-photo=<파일>: 설정 › 프로필에서 그 파일을 고른 것처럼 (사진 있음·오류 화면 캡처)
+        if (const auto pick = meon::devOptions()["pick-photo"]; pick.isNotEmpty())
+        {
+            juce::Component::SafePointer<MeonEditor> safe (this);
+            juce::Timer::callAfterDelay (800, [safe, pick]
+            {
+                if (safe != nullptr && safe->settingsOverlay != nullptr)
+                    safe->settingsOverlay->devPickPhoto (juce::File (pick));
+            });
+        }
     }
     else if (p.startsWith ("disc") || p.startsWith ("roomlost"))
     {
@@ -748,8 +940,10 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
             {
                 onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
                 onboarding->setLookAndFeel (newLookAndFeel.get());
+                onboarding->setTitleBarInset (titleBarInset());
+                onboarding->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
                 addAndMakeVisible (*onboarding);
-                onboarding->setBounds (getLocalBounds());
+                onboarding->setBounds (contentBounds());
             }
             devPreview = true;
             if (st.second == Step::outdated && ! pluginMode)
@@ -766,7 +960,7 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
     {
         devScreen = std::make_unique<ui::WidgetGallery>();
         addAndMakeVisible (*devScreen);
-        devScreen->setBounds (getLocalBounds());
+        devScreen->setBounds (contentBounds());
         return;
     }
     // 홈·합주 미리 보기(--screen=home…|jam)는 가입이 끝난 뒤 showAppRoot 가 연다
@@ -778,18 +972,293 @@ void MeonEditor::paint (juce::Graphics& g)
     g.fillAll (col::white);
 }
 
+void MeonEditor::paintOverChildren (juce::Graphics& g)
+{
+    // 윈도우 10 보통 창: 운영체제 1px 테두리(#707070, 색을 바꿀 수 없음) 대신 내용 네 변 끝 1px 에 #EBEBEB (윈도우 11 테두리와 같은 모양).
+    // 물리 픽셀 한 줄에 정확히 (배율이 정수가 아니어도 번지지 않게): 실제 내용 크기(물리 px)로 그린다
+    auto* peer = getPeer();
+    if (peer == nullptr || ! winFrameInstalled || ! winframe::appDrawsBorder (peer->getNativeHandle())) return;
+    int w = 0, h = 0;
+    if (! winframe::clientPixelSize (peer->getNativeHandle(), w, h) || w <= 2 || h <= 2) return;
+    const float s = (float) w / (float) juce::jmax (1, getWidth());
+    juce::Graphics::ScopedSaveState save (g);
+    g.addTransform (juce::AffineTransform::scale (1.0f / s));
+    g.setColour (juce::Colour (0xFF000000u | winframe::borderColourRGB));
+    g.fillRect (0, 0, w, 1);
+    g.fillRect (0, h - 1, w, 1);
+    g.fillRect (0, 0, 1, h);
+    g.fillRect (w - 1, 0, 1, h);
+}
+
+//==============================================================================
+// 맥 독립 앱 창 (MeonWindowChrome)
+void MeonEditor::parentHierarchyChanged()
+{
+    // 창에 들어온 때 (독립 앱은 창이 화면에 뜨기 전): 바로 붙여서 처음부터 제목 줄이 없게 한다. 창이 아직 없으면 다음 메시지에서
+    ensureWindowChrome();
+    if (! chromeTried && ! pluginMode)
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->ensureWindowChrome(); });
+    }
+}
+
+void MeonEditor::ensureWindowChrome()
+{
+    if (chromeTried || pluginMode) return;
+    auto* peer = getPeer();
+    if (peer == nullptr) return;
+    chromeTried = true;
+    juce::Component::SafePointer<MeonEditor> safe (this);
+    chrome::installFullScreenShortcuts();   // 맥: 보기 > 전체 화면으로 전환 (⌃⌘F), fn+F (독립 앱. macOS 11 미만도)
+    chromeInstalled = chrome::install (peer->getNativeHandle(), [safe] { if (safe != nullptr) safe->windowChromeChanged(); });
+   #if JUCE_WINDOWS
+    {
+        winframe::Hooks hooks;
+        hooks.hitTest = [safe] (int x, int y) { return safe != nullptr ? safe->windowRegionAt (x, y) : winframe::Region::client; };
+        hooks.onStateChange = [safe] { if (safe != nullptr) safe->windowChromeChanged(); };
+        hooks.onMaxButton = [safe] (int st)
+        {
+            if (safe != nullptr)
+                if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (safe->chromeView.get())) cb->setMaxButtonState (st);
+        };
+        const auto clientBefore = peer->getBounds();   // JUCE 가 아는 내용 자리 (창 틀을 바꾸기 전, 맞는 값)
+        bool frameOff = false;
+       #if MEON_DEV_OPTIONS
+        frameOff = meon::devOptions().containsKey ("no-winframe");   // 개발용 비교 (창 가장자리 조사): 운영체제 제목 줄 그대로
+       #endif
+        winFrameInstalled = ! frameOff && winframe::install (peer->getNativeHandle(), std::move (hooks));
+        if (winFrameInstalled && ! winframe::isMaximised (peer->getNativeHandle()))
+        {
+            // JUCE 는 창 틀 두께를 크기가 바뀔 때만 다시 읽는다 (HWNDComponentPeer::updateBorderSize). 옛 두께(제목 줄 포함)를 쓰면
+            // 내용 자리·마우스 좌표가 제목 줄 높이만큼 어긋나므로, 크기를 1px 바꿨다 되돌려 새 두께(위 0)를 읽게 하고 내용 자리를 그대로 둔다.
+            // 그 뒤로는 틀 두께가 상태와 상관없이 같다 (checkJuceFrame 이 확인)
+            peer->setBounds (clientBefore.withHeight (clientBefore.getHeight() + 1), false);
+            peer->setBounds (clientBefore, false);
+        }
+        if (winFrameInstalled && settings->isWindowMaximised())
+        {
+            settings->setWindowMaximised (false);
+            winframe::toggleMaximise (peer->getNativeHandle());   // 지난번에 최대화한 채 껐다
+        }
+       #if MEON_DEV_OPTIONS
+        // 창 상태별 자가 테스트(--uitest=winstates): 켠 직후 온보딩 화면에서 가장자리·창 버튼 확인 (테스트는 로그인 뒤에 시작한다)
+        if (winFrameInstalled && meon::devOptions()["uitest"] == "winstates")
+          for (int ms : { 150, 350, 600 })   // 가짜 계정 자동 가입이 끝나기 전 (온보딩이 떠 있을 때) 한 번
+            juce::Timer::callAfterDelay (ms, [safe]
+            {
+                if (safe == nullptr || safe->onboarding == nullptr || ! safe->onboarding->isShowing() || ui::UiSelfTest::launchFrameChecks > 0) return;
+                juce::String detail;
+                ++ui::UiSelfTest::launchFrameChecks;
+                if (! ui::UiSelfTest::checkWindowFrame (*safe, TXT ("켠 직후 (온보딩)"), "00_launch_onboarding", detail))
+                {
+                    ++ui::UiSelfTest::launchFrameFailures;
+                    ui::UiSelfTest::launchFrameDetail = detail;
+                }
+            });
+        // 화면 자가 테스트(--uitest): 켠 직후 (창이 뜨기 전에 붙었는지, 창·내용 사각형)
+        if (meon::devOptions().containsKey ("uitest"))
+        {
+            const auto p = winframe::probe (peer->getNativeHandle());
+            std::cerr << "UITEST INFO winchrome launch: installed " << (winFrameInstalled ? 1 : 0) << " showing " << (peer->getComponent().isShowing() ? 1 : 0)
+                      << " window " << p.window[0] << "," << p.window[1] << " " << p.window[2] << "x" << p.window[3]
+                      << " client " << p.client[0] << "," << p.client[1] << " " << p.client[2] << "x" << p.client[3] << " dpi " << p.dpi << std::endl;
+        }
+       #endif
+    }
+   #endif
+    windowChromeChanged();
+   #if MEON_DEV_OPTIONS
+    // 화면 자가 테스트(--uitest): 켠 직후 신호등 자리 (아무것도 움직이기 전, 온보딩 화면)
+    if (chromeInstalled && meon::devOptions().containsKey ("uitest"))
+        for (int ms : { 0, 1500 })
+            juce::Timer::callAfterDelay (ms, [safe, ms]
+            {
+                if (safe == nullptr || safe->getPeer() == nullptr) return;
+                const auto p = chrome::probe (safe->getPeer()->getNativeHandle(), 100, 26, 600, 26);
+                std::cerr << "UITEST INFO chrome launch+" << ms << "ms (" << (safe->onboarding != nullptr ? "onboarding" : "app") << ") "
+                          << ui::UiSelfTest::describe (p) << std::endl;
+            });
+   #endif
+}
+
+void MeonEditor::checkJuceFrame()
+{
+    // JUCE 는 창 틀 두께를 자기 크기 변경 때만 다시 읽어(HWNDComponentPeer::updateBorderSize) 논리 px 로 기억하고, 내용 자리를
+    // 그 값으로 셈한다. 최대화하면 틀 두께가 바뀐다 (화면 밖으로 나간 크기 조절 두께, MeonWindowFrame). 어긋나 있으면 창은 그대로 둔 채
+    // (holdPosition) JUCE 에게 크기 변경을 시켜 틀 두께를 다시 읽게 하고, 그 두께로 내용 자리를 다시 셈하게 한다
+    if (! winFrameInstalled) return;
+    auto* peer = getPeer();
+    if (peer == nullptr || peer->isMinimised()) return;
+    void* h = peer->getNativeHandle();
+    int in[4];
+    winframe::frameInsets (h, in);
+    const double s = juce::jmax (0.5, peer->getPlatformScaleFactor());
+    const auto have = peer->getFrameSize();
+    const juce::BorderSize<int> want (juce::roundToInt (in[1] / s), juce::roundToInt (in[0] / s), juce::roundToInt (in[3] / s), juce::roundToInt (in[2] / s));
+    if (have == want) return;
+    ++juceFrameFixes;
+    core::AppLog::write ("window", "JUCE 창 틀 두께 다시 읽기: " + juce::String (have.getTop()) + "," + juce::String (have.getLeft()) + ","
+                                   + juce::String (have.getBottom()) + "," + juce::String (have.getRight()) + " -> "
+                                   + juce::String (want.getTop()) + "," + juce::String (want.getLeft()) + ","
+                                   + juce::String (want.getBottom()) + "," + juce::String (want.getRight()));
+    const auto b = peer->getBounds();
+    winframe::holdPosition (h, true);
+    peer->setBounds (b.withHeight (b.getHeight() + 1), peer->isFullScreen());   // 창은 움직이지 않고 JUCE 만 틀 두께를 다시 읽는다
+    winframe::holdPosition (h, false);
+    peer->handleMovedOrResized();   // 새 틀 두께로 내용 자리
+}
+
+void MeonEditor::windowChromeChanged()
+{
+    checkJuceFrame();
+    syncChromeView();
+    if (onboarding != nullptr) onboarding->setTitleBarInset (titleBarInset());
+    if (appRoot != nullptr)
+    {
+        // 제목 줄 오른쪽 여백: 창 버튼이 있으면 그 폭 + 12 (윈도우 150), 윈도우 전체 화면은 창 버튼이 없으므로 18 (디자인 hdPR)
+        appRoot->setTitleRightInset (chromeView != nullptr && ! winFullscreen() ? juce::jmax (ui::metric::padX, chromeView->titleRightInset()) : ui::metric::padX);
+        appRoot->windowChromeChanged();
+    }
+    repaint();
+}
+
+void MeonEditor::syncChromeView()
+{
+    using Kind = ui::WindowChromeView::Kind;
+    std::optional<Kind> kind;
+    if (winFrameInstalled || devMockWin) kind = Kind::windows;
+    else if (chromeInstalled || devMockChrome) kind = Kind::mac;
+    if (! kind.has_value()) { chromeView.reset(); return; }
+    if (chromeView == nullptr || chromeView->kind() != *kind)
+    {
+        chromeView = ui::createWindowChromeView (*kind);
+        chromeView->setMock (devMockChrome);
+        if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (chromeView.get()))
+        {
+            // 운영체제 창 버튼과 같은 길 (WM_SYSCOMMAND). 미리 보기(--chrome=win, 윈도우 밖)는 JUCE 창 동작으로
+            juce::Component::SafePointer<MeonEditor> safe (this);
+            auto handle = [safe]() -> void* { return safe != nullptr && safe->getPeer() != nullptr ? safe->getPeer()->getNativeHandle() : nullptr; };
+            cb->onMinimise = [safe, handle]
+            {
+                if (safe == nullptr) return;
+                if (safe->winFrameInstalled) winframe::minimise (handle());
+                else if (auto* p = safe->getPeer()) p->setMinimised (true);
+            };
+            cb->onToggleMaximise = [safe, handle]
+            {
+                if (safe == nullptr) return;
+                if (safe->winFullscreen()) winframe::setFullscreen (handle(), false);   // 전체 화면: "이전 크기로" = 빠져나가기
+                else if (safe->winFrameInstalled) winframe::toggleMaximise (handle());
+                else if (auto* p = safe->getPeer()) p->setFullScreen (! p->isFullScreen());
+            };
+            cb->onClose = [safe, handle]
+            {
+                if (safe == nullptr) return;
+                if (safe->winFrameInstalled) winframe::close (handle());
+                else if (auto* app = juce::JUCEApplicationBase::getInstance()) app->systemRequestedQuit();
+            };
+        }
+        addAndMakeVisible (*chromeView);
+    }
+    chromeView->place (contentBounds());
+    if (chromeView->kind() == Kind::windows)
+    {
+        updateWindowState();
+        // F11 전체 화면에서는 숨긴다 (디자인 fullscreen=켜짐). 마우스를 화면 맨 위에 대면 보인다 (updateCaptionReveal)
+        const bool fs = winFullscreen();
+        if (! fs) captionRevealed = false;
+        chromeView->setVisible (! fs || captionRevealed);
+        if (fs) { revealTimer.tick = [this] { updateCaptionReveal(); }; revealTimer.startTimerHz (20); }
+        else revealTimer.stopTimer();
+    }
+    else
+    {
+        chromeView->setVisible (titleBarInset() > 0);   // 맥 전체 화면이면 신호등이 없다
+    }
+    childrenChanged();   // 맨 위로 (툴팁 창 아래)
+}
+
+void MeonEditor::updateWindowState()
+{
+    // 창 버튼 표시: 최대화(이전 크기로 아이콘)·활성(비활성이면 회색)
+    if (chromeView == nullptr || chromeView->kind() != ui::WindowChromeView::Kind::windows) return;
+    auto* peer = getPeer();
+    void* h = peer != nullptr ? peer->getNativeHandle() : nullptr;
+    bool maxed = winFrameInstalled && (winframe::isMaximised (h) || winframe::isFullscreen (h)), active = ! winFrameInstalled || winframe::isActive (h);   // 전체 화면: "이전 크기로" 아이콘
+   #if MEON_DEV_OPTIONS
+    if (devMockWin)   // 미리 보기: --winstate=max|inactive|max+inactive (디자인 winState·winActive)
+    {
+        const auto ws = meon::devOptions()["winstate"];
+        maxed = ws.contains ("max");
+        active = ! ws.contains ("inactive");
+    }
+   #endif
+    chromeView->setWindowState (maxed, active);
+}
+
+void MeonEditor::childrenChanged()
+{
+    // 창 윗부분은 늘 맨 위: 화면(온보딩·앱·설정 팝업)이 새로 붙거나 앞으로 와도 그 위. 툴팁 창(에디터의 자식)만 그보다 위
+    if (chromeView == nullptr) return;
+    const int n = getNumChildComponents();
+    const bool tipOnTop = tooltipWindow.getParentComponent() == this && getIndexOfChildComponent (&tooltipWindow) == n - 1;
+    const int want = tipOnTop ? n - 2 : n - 1;
+    if (getIndexOfChildComponent (chromeView.get()) == want) return;
+    if (tipOnTop) chromeView->toBehind (&tooltipWindow);
+    else chromeView->toFront (false);
+}
+
+winframe::Region MeonEditor::windowRegionAt (int sx, int sy)
+{
+    // 화면 물리 좌표 → 에디터 좌표 (모니터 배율 반영)
+    const auto logical = juce::Desktop::getInstance().getDisplays().physicalToLogical (juce::Point<int> (sx, sy));
+    const auto p = getLocalPoint (nullptr, logical);
+    const auto content = contentBounds();
+    if (! content.contains (p) || p.y >= content.getY() + chrome::barHeight) return winframe::Region::client;
+    if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (chromeView.get()); cb != nullptr && cb->isVisible())
+    {
+        const auto which = cb->buttonAt (cb->getLocalPoint (this, p));
+        if (which == ui::WinCaptionButtons::maximise) return winframe::Region::maxButton;   // 윈도우 11 스냅 레이아웃
+        if (which != ui::WinCaptionButtons::none) return winframe::Region::client;          // 최소화·닫기는 앱이 받는다
+    }
+    // 맨 위에 뜬 것(설정 팝업·개발 화면)이 있으면 그 자리는 앱 화면 (맥에서 팝업이 떠 있으면 끌리지 않는 것과 같다)
+    auto* hit = getComponentAt (p);
+    if (hit == nullptr) return winframe::Region::client;
+    if (hit == this) return winframe::Region::caption;
+    if (onboarding != nullptr && onboarding->isVisible() && (hit == onboarding.get() || onboarding->isParentOf (hit)))
+        return onboarding->titleBarDragAt (hit, onboarding->getLocalPoint (this, p)) ? winframe::Region::caption : winframe::Region::client;
+    if (appRoot != nullptr && appRoot->isVisible() && (hit == appRoot.get() || appRoot->isParentOf (hit)))
+        return appRoot->titleBarDragAt (appRoot->getLocalPoint (this, p)) ? winframe::Region::caption : winframe::Region::client;
+    return winframe::Region::client;
+}
+
+int MeonEditor::titleBarInset() const
+{
+    if (devMockChrome || devMockWin) return chrome::barHeight;
+    if (winFrameInstalled) return chrome::barHeight;   // 윈도우: 최대화해도 창 버튼 줄 그대로
+    auto* peer = getPeer();
+    return chromeInstalled && peer != nullptr && chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen() ? chrome::barHeight : 0;
+}
+
+void MeonEditor::titleBarMouseDown()
+{
+    if (titleBarInset() <= 0) return;
+    if (auto* peer = getPeer())
+        chrome::titleBarMouseDown (peer->getNativeHandle());
+}
+
 void MeonEditor::resized()
 {
     if (settingsOverlay != nullptr)
-        settingsOverlay->setBounds (getLocalBounds());
-    if (settingsFadingOut != nullptr)
-        settingsFadingOut->setBounds (getLocalBounds());
+        settingsOverlay->setBounds (contentBounds());
     if (devScreen != nullptr)
-        devScreen->setBounds (getLocalBounds());
+        devScreen->setBounds (contentBounds());
     if (appRoot != nullptr)
-        appRoot->setBounds (getLocalBounds());
+        appRoot->setBounds (contentBounds());
     if (onboarding != nullptr)
-        onboarding->setBounds (getLocalBounds());
+        onboarding->setBounds (contentBounds());
+    if (chromeView != nullptr) { chromeView->place (contentBounds()); updateWindowState(); }   // 최대화·복원은 크기가 바뀌므로 아이콘도 바로
     processor.setLastPluginBounds (getLocalBounds());
 }
 

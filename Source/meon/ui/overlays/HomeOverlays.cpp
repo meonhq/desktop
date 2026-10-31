@@ -1,4 +1,5 @@
 #include "HomeOverlays.h"
+#include "../theme/Hairline.h"
 #include "../Messages.h"
 #include "../theme/Icons.h"
 #include "FormText.h"
@@ -25,8 +26,8 @@ void ModalFooter::setNote (const juce::String& n, juce::Colour c)
 
 void ModalFooter::paint (juce::Graphics& g)
 {
-    g.setColour (col::line);
-    g.fillRect (0, 0, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
     if (note.isNotEmpty())
     {
         int right = getWidth() - metric::padX;
@@ -157,8 +158,7 @@ int LeaveConfirmModal::textHeight() const
 
 void LeaveConfirmModal::Body::paint (juce::Graphics& g)
 {
-    g.setColour (col::line);
-    g.fillRect (0, 0, getWidth(), 1);
+    // 머리말 아래 구분선은 공통 모달(Modal::paintDialog)이 긋는다. 여기서 또 그으면 본문 맨 윗줄(바로 아래 1px)에 한 줄이 더 붙어 2px 로 보였다
     juce::TextLayout t;
     t.createLayout (owner.text(), (float) (getWidth() - metric::padX * 2));
     t.draw (g, juce::Rectangle<float> ((float) metric::padX, 18.0f, (float) (getWidth() - metric::padX * 2), (float) owner.textHeight()));
@@ -328,7 +328,7 @@ CreateRoomModal::CreateRoomModal (core::MeonCore& c) : Modal (TXT ("새 합주�
 int CreateRoomModal::bodyHeight() const
 {
     const int w = 460 - 36;
-    const auto visNote = isPublic() ? TXT ("홈의 공개 방 목록에 보이고 누구나 들어올 수 있어요")
+    const auto visNote = isPublic() ? TXT ("공개 방 목록에 보이고 누구나 들어올 수 있어요")
                                     : TXT ("목록에 보이지 않아요. 방을 만들면 나오는 입장 코드로만 들어올 수 있어요");
     int h = 18 + (15 + 6 + 32) + 18 + (15 + 6 + 55) + 18 + (15 + 6 + 32 + 6 + hintHeight (visNote, w)) + 18;
     if (isPublic()) h += (15 + 6 + 32 + 6 + 18) + 18;
@@ -361,7 +361,7 @@ void CreateRoomModal::Body::paint (juce::Graphics& g)
     y += 15 + 6 + 55 + 18;
     drawLabel (g, TXT ("공개 설정"), { metric::padX, y, w, 15 });
     y += 15 + 6 + 32 + 6;
-    const auto visNote = o.isPublic() ? TXT ("홈의 공개 방 목록에 보이고 누구나 들어올 수 있어요")
+    const auto visNote = o.isPublic() ? TXT ("공개 방 목록에 보이고 누구나 들어올 수 있어요")
                                       : TXT ("목록에 보이지 않아요. 방을 만들면 나오는 입장 코드로만 들어올 수 있어요");
     const int vh = hintHeight (visNote, w);
     drawHint (g, visNote, { metric::padX, y, w, vh });
@@ -388,7 +388,7 @@ void CreateRoomModal::Body::resized()
     o.desc.setBounds (metric::padX, y, w, 55);
     y += 55 + 18 + 15 + 6;
     o.visibility.setBounds (metric::padX, y, w, 32);
-    const auto visNote = o.isPublic() ? TXT ("홈의 공개 방 목록에 보이고 누구나 들어올 수 있어요")
+    const auto visNote = o.isPublic() ? TXT ("공개 방 목록에 보이고 누구나 들어올 수 있어요")
                                       : TXT ("목록에 보이지 않아요. 방을 만들면 나오는 입장 코드로만 들어올 수 있어요");
     y += 32 + 6 + hintHeight (visNote, w) + 18;
     if (o.isPublic())
@@ -464,13 +464,13 @@ void JoinFailDialog::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::roundedBorder (g, *this, r, metric::radius);   // 물리 픽셀에 맞춘 1px (125·150% 에서 두 픽셀에 번지지 않게)
     g.setColour (col::ink);
     g.setFont (font (600, 15.0f));
     g.drawText (title, metric::padX, 0, getWidth() - 36 - 30, 48, juce::Justification::centredLeft, true);
-    g.setColour (col::line);
-    g.fillRect (1, 48, getWidth() - 2, 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 1.0f, 48.0f, (float) getWidth() - 2.0f);
     juce::AttributedString a;
     a.append (body, font (400, 13.0f), col::inkSub);
     a.setLineSpacing (13.0f * 0.6f);
@@ -489,9 +489,37 @@ void JoinFailDialog::resized()
 //==============================================================================
 struct NotificationList::Row : juce::Component
 {
+    /** 받은 초대 (디자인: "OO님이 초대했어요" · 방 이름, 거절·입장). 줄을 눌러도 아무 일 없다 */
+    Row (NotificationList& o, const core::Invite& inv) : owner (o), invite (true)
+    {
+        inviteId = inv.id;
+        title = inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요");
+        sub = inv.room.title;
+        avatar.setUser (inv.from.id);
+        avatar.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (avatar);
+        addAndMakeVisible (decline);
+        addAndMakeVisible (accept);
+        // 누른 줄이 목록에서 지워지므로 다음 메시지에서 (id 는 먼저 복사)
+        juce::Component::SafePointer<NotificationList> safe (&owner);
+        const auto id = inviteId;
+        decline.onPress = [safe, id] { juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.home().dismissInvite (id); }); };
+        accept.onPress = [safe, id]
+        {
+            juce::MessageManager::callAsync ([safe, id]
+            {
+                if (safe == nullptr) return;
+                if (safe->onAcceptInvite) safe->onAcceptInvite (id);
+                else safe->core.home().acceptInvite (id, [] (core::Result<core::JoinResult>) {});
+            });
+        };
+    }
+
     Row (NotificationList& o, const core::FriendRequest& r) : owner (o), request (r)
     {
-        avatar.setPart (r.from.part.value_or ("other"));
+        title = r.from.nickname.value_or (r.from.username);
+        sub = TXT ("친구 요청 · ") + icons::partLabel (r.from.part.value_or ("other"));
+        avatar.setUser (r.from.id);
         avatar.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (avatar);
         addAndMakeVisible (decline);
@@ -514,11 +542,10 @@ struct NotificationList::Row : juce::Component
         const int right = decline.getX() - 9;
         g.setColour (col::ink);
         g.setFont (font (600, 13.0f));
-        g.drawText (request.from.nickname.value_or (request.from.username), x, 6, right - x, 17, juce::Justification::centredLeft, true);
+        g.drawText (title, x, 6, right - x, 17, juce::Justification::centredLeft, true);
         g.setColour (col::inkSub);
         g.setFont (font (400, 12.0f));
-        g.drawText (TXT ("친구 요청 · ") + icons::partLabel (request.from.part.value_or ("other")), x, 6 + 17 + 3, right - x, 16,
-                    juce::Justification::centredLeft, true);
+        g.drawText (sub, x, 6 + 17 + 3, right - x, 16, juce::Justification::centredLeft, true);
     }
 
     void resized() override
@@ -533,12 +560,14 @@ struct NotificationList::Row : juce::Component
 
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { repaint(); }
-    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && owner.onOpenProfile) owner.onOpenProfile (request.from); }
+    void mouseUp (const juce::MouseEvent& e) override { if (! invite && e.mouseWasClicked() && owner.onOpenProfile) owner.onOpenProfile (request.from); }
 
     NotificationList& owner;
+    const bool invite = false;
     core::FriendRequest request;
+    juce::String inviteId, title, sub;
     Avatar avatar { 32.0f, 16.0f };
-    Button decline { Button::Kind::small, TXT ("거절") }, accept { Button::Kind::smallPrimary, TXT ("수락") };
+    Button decline { Button::Kind::small, TXT ("거절") }, accept { Button::Kind::smallPrimary, invite ? TXT ("입장") : TXT ("수락") };   // 디자인: 초대는 입장
 };
 
 NotificationList::NotificationList (core::MeonCore& c) : core (c)
@@ -554,14 +583,17 @@ NotificationList::~NotificationList()
 
 void NotificationList::stateChanged (core::StateKey k)
 {
-    if (k == core::StateKey::friendRequests) rebuild();
+    if (k == core::StateKey::friendRequests || k == core::StateKey::invites) rebuild();
 }
 
 void NotificationList::rebuild()
 {
     rows.clear();
+    // 디자인 순서: 받은 친구 요청, 그다음 받은 초대
     for (auto& r : core.store().state().friendRequests)
         addAndMakeVisible (rows.add (new Row (*this, r)));
+    for (auto& inv : core.store().state().invites)
+        addAndMakeVisible (rows.add (new Row (*this, inv)));
     resized();
     repaint();
     if (onSizeChanged) onSizeChanged();
@@ -603,7 +635,7 @@ Toast::Toast (const juce::String& t, const juce::String& s, const juce::String& 
     addAndMakeVisible (close);
     close.setTooltip (TXT ("닫기"));
     close.onClick = [this] { if (onClose) onClose(); };
-    setSize (width, height);
+    setPanelBounds (0, 0, width, height);
 }
 
 namespace
@@ -613,9 +645,20 @@ namespace
     juce::Font toastSubFont()   { return font (400, 12.0f); }
 }
 
+void Toast::setSecondary (const juce::String& label)
+{
+    secondary = std::make_unique<Button> (Button::Kind::small, label);
+    secondary->onPress = [this] { if (onSecondary) onSecondary(); };
+    addAndMakeVisible (*secondary);
+    resized();
+}
+
 int Toast::textRight (int w) const
 {
-    if (action != nullptr) return action->getX() - 9;
+    // 판 기준 x (버튼 자리는 구성 요소 기준이라 판 왼쪽만큼 뺀다)
+    const int px = panel().getX();
+    if (secondary != nullptr) return secondary->getX() - px - 9;
+    if (action != nullptr) return action->getX() - px - 9;
     return (close.isVisible() ? w - 12 - 19 : w - 12) - 9;
 }
 
@@ -635,17 +678,16 @@ int Toast::heightForWidth (int w) const
 
 void Toast::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    g.setColour (kind == Kind::warning ? col::accentSoft : col::white);
-    g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
-    const int right = textRight (getWidth());
+    // 면 색은 종류대로 (경고는 연한 핑크), 테두리·그림자는 팝오버와 같은 표면
+    paintSurface (g, kind == Kind::warning ? col::accentSoft : popoverStyle::background);
+    const auto p = panel();
+    g.setOrigin (p.getPosition());   // 아래는 판 기준 좌표
+    const int right = textRight (p.getWidth());
     g.setColour (col::ink);
     g.setFont (toastTitleFont());
     if (sub.isEmpty())   // 보조 줄이 없으면 한 줄로 가운데
     {
-        g.drawText (title, toastPadX, 0, right - toastPadX, getHeight(), juce::Justification::centredLeft, true);
+        g.drawText (title, toastPadX, 0, right - toastPadX, p.getHeight(), juce::Justification::centredLeft, true);
         return;
     }
     g.drawText (title, toastPadX, toastTitleY, right - toastPadX, toastTitleH, juce::Justification::centredLeft, true);
@@ -653,7 +695,7 @@ void Toast::paint (juce::Graphics& g)
     if (kind == Kind::warning)   // 설명은 자르지 않고 줄바꿈
     {
         drawParagraphWithEmoji (g, sub, toastSubFont(), col::inkSub,
-                                juce::Rectangle<float> ((float) toastPadX, (float) subY, (float) (right - toastPadX), subHeight (getWidth())),
+                                juce::Rectangle<float> ((float) toastPadX, (float) subY, (float) (right - toastPadX), subHeight (p.getWidth())),
                                 (float) toastSubLineH, juce::Justification::topLeft);
         return;
     }
@@ -664,17 +706,27 @@ void Toast::paint (juce::Graphics& g)
 
 void Toast::resized()
 {
-    auto r = getLocalBounds().reduced (12, 0);
+    const auto p = panel();
+    auto r = p.reduced (12, 0);
     // 경고는 설명이 여러 줄일 수 있어서 닫기 버튼을 제목 줄에 맞춘다
     auto closeArea = r.removeFromRight (19);
     close.setBounds (kind == Kind::warning && sub.isNotEmpty()
-                         ? juce::Rectangle<int> (closeArea.getX(), toastTitleY + (toastTitleH - 19) / 2, 19, 19)
+                         ? juce::Rectangle<int> (closeArea.getX(), p.getY() + toastTitleY + (toastTitleH - 19) / 2, 19, 19)
                          : closeArea.withSizeKeepingCentre (19, 19));
+    // 닫기 없이 두 버튼 (입장 요청, 디자인: 오른쪽 여백 12, 사이 9)
+    const bool twoButtons = ! close.isVisible() && secondary != nullptr;
+    if (twoButtons) r = p.withTrimmedLeft (toastPadX).withTrimmedRight (12);
     if (action != nullptr)
     {
-        r.removeFromRight (9);
+        if (! twoButtons) r.removeFromRight (9);
         const int w = action->getIdealWidth();
         action->setBounds (r.removeFromRight (w).withSizeKeepingCentre (w, metric::smallH));
+    }
+    if (secondary != nullptr)
+    {
+        r.removeFromRight (twoButtons ? 9 : 6);
+        const int w = secondary->getIdealWidth();
+        secondary->setBounds (r.removeFromRight (w).withSizeKeepingCentre (w, metric::smallH));
     }
 }
 

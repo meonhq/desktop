@@ -1,4 +1,7 @@
 #include "HomeScreen.h"
+#include "../dev/RepaintProbe.h"
+#include "../theme/Hairline.h"
+#include "HomePage.h"
 #include "../Messages.h"
 #include "../Links.h"
 #include "../theme/Icons.h"
@@ -10,7 +13,6 @@ namespace meon::ui
 
 namespace
 {
-    constexpr int headerLineY = metric::headerH;        // 헤더 아래 구분선
     constexpr int roomsHeaderH = 56;                     // 12 + 32 + 12
     constexpr int audioCardH = 48 + 1 + 43;
     constexpr int addRowH = 44;
@@ -32,7 +34,7 @@ namespace
 struct HomeScreen::Separator : juce::Component
 {
     Separator() { setInterceptsMouseClicks (false, false); }
-    void paint (juce::Graphics& g) override { g.fillAll (col::line); }
+    void paint (juce::Graphics& g) override { g.setColour (col::borderSubtle); hairline::line (g, *this, getLocalBounds().toFloat()); }
 };
 
 /** 필터 버튼 24×24 (아이콘 14px). 필터가 켜져 있으면 진한 색 + 포인트 색 점 */
@@ -101,11 +103,13 @@ struct HomeScreen::RoomCard : juce::Component
 
     void paint (juce::Graphics& g) override
     {
+        ++HomeScreen::devRoomCardPaints;   // 개발용: 다시 그리기 확인 (미터만 움직일 때 0 이어야 한다)
+        devprobe::note (*this, g, "RoomCard");
         auto r = getLocalBounds().toFloat();
         g.setColour (col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, *this, r, metric::radius);
 
         const int x = 18, w = getWidth() - 36;
         int y = 13;
@@ -125,10 +129,8 @@ struct HomeScreen::RoomCard : juce::Component
             const auto name = nameOf (m.user);
             const auto part = icons::partLabel (m.user.part.value_or ("other"));
             const auto tag = m.isHost ? TXT ("방장") : (m.isFriend ? TXT ("친구") : juce::String());
-            // 파트: 아이콘(얇은 버전 16px, 파트 글자와 같은 색) + 이름. 디자인은 글자만 있다 (REMAKE_PLAN 3.6)
-            // 14px 에서는 1px 선이 흐려 기타·베이스가 잘 구별되지 않아 16px
-            constexpr float iconPx = 16.0f, iconGap = 3.0f;
-            const float partW = iconPx + iconGap + textWidth (nameF, part) + 1.0f;
+            // 이름 · 파트 (글자만, 합주 최종 v2. 예전에 넣었던 파트 아이콘은 뺐다: 2026-10-31 사람 자리의 파트 아이콘 없애기)
+            const float partW = textWidth (nameF, part) + 1.0f;
             const auto tagF = font (500, 11.0f);
             const float tagW = tag.isEmpty() ? 0.0f : textWidth (tagF, tag) + 8.0f + 2.0f + 3.0f;
             const float nameMax = (float) w - 5.0f - 2.0f - 5.0f - partW - tagW - (tag.isEmpty() ? 0.0f : 5.0f);
@@ -141,10 +143,8 @@ struct HomeScreen::RoomCard : juce::Component
             g.setColour (col::inkFaint);
             g.fillEllipse (cx, (float) y + 7.5f, 2.0f, 2.0f);
             cx += 2.0f + 5.0f;
-            icons::drawPart (g, m.user.part.value_or ("other"), { cx, (float) y, iconPx, 17.0f }, iconPx, col::inkSub, icons::PartWeight::thin);
             g.setColour (col::inkSub);
-            g.drawText (part, juce::Rectangle<float> (cx + iconPx + iconGap, (float) y, partW - iconPx - iconGap, 17.0f),
-                        juce::Justification::centredLeft, false);
+            g.drawText (part, juce::Rectangle<float> (cx, (float) y, partW, 17.0f), juce::Justification::centredLeft, false);
             cx += partW + 5.0f;
             if (tag.isNotEmpty())
             {
@@ -186,6 +186,7 @@ struct HomeScreen::RoomList : juce::Component
 
     void paint (juce::Graphics& g) override
     {
+        devprobe::note (*this, g, "RoomList");
         g.fillAll (col::softBg);
         if (! cards.isEmpty()) return;
         const bool filtered = owner.filter.isActive() && ! owner.core.store().state().publicRooms.empty();
@@ -215,7 +216,7 @@ struct HomeScreen::FriendList : juce::Component
         {
             using S = Avatar::Status;
             const auto st = fr.status == "in_room" ? S::inRoom : (fr.status == "online" ? S::online : S::offline);
-            avatar.setPart (fr.user.part.value_or ("other"));
+            avatar.setUser (fr.user.id);
             avatar.setStatus (st);
             avatar.setDimmed (st == S::offline);
             avatar.setInterceptsMouseClicks (false, false);
@@ -389,8 +390,8 @@ struct HomeScreen::RoomBar : juce::Component,
     void paint (juce::Graphics& g) override
     {
         g.fillAll (isMouseOver (true) ? col::rowHover : col::white);
-        g.setColour (col::line);
-        g.fillRect (0, 0, getWidth(), 1);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
 
         const auto& s = owner.core.store().state();
         if (! s.currentRoom) return;
@@ -544,6 +545,7 @@ HomeScreen::HomeScreen (core::MeonCore& c, UpdateHooks u)
 
 HomeScreen::~HomeScreen()
 {
+    onOverlayChanged = nullptr;   // 아래에서 겹침을 지우는 동안 AppRoot 를 부르지 않는다
     *alive = false;
     core.store().removeListener (this);
     confirm.reset();
@@ -581,8 +583,11 @@ int HomeScreen::bannersHeight() const
 void HomeScreen::refreshHeader()
 {
     bell.setDot (core.store().state().hasUnreadNotifications || ! core.store().state().friendRequests.empty());
-    filterButton->active = filter.isActive();
-    filterButton->repaint();
+    if (filterButton->active != filter.isActive())   // 0.5초마다 불린다: 바뀔 때만 다시 그린다
+    {
+        filterButton->active = filter.isActive();
+        filterButton->repaint();
+    }
     const bool upd = showUpdate();
     const auto st = updateState();
     const auto& cfg = core.store().state().config;
@@ -674,8 +679,10 @@ void HomeScreen::layoutRooms()
 {
     const int viewW = roomViewport.getWidth();
     if (viewW <= 0) return;
-    const int n = Masonry::columnsForWidth (getWidth());
-    const int pad = 12, gap = Masonry::gap;
+    const int n = Masonry::columnsForWidth (shell ? getWidth() - shellInset : getWidth());
+    const int pad = shell ? metric::pagePad : 12, gap = Masonry::gap;   // 사이드바 안: 홈 쪽과 같은 바깥 여백
+    // 아래 여백: 방에 있으면 떠 있는 카드 높이 + 위아래 18 (디자인 hListPB, 카드를 재서)
+    const int padBottom = shell && dockH > 0 ? dockH + metric::padX * 2 : pad;
     // 스크롤 막대가 필요할 때만 그 폭을 뺀다
     int contentW = viewW, colW = 0;
     std::vector<std::vector<juce::String>> cols;
@@ -696,7 +703,7 @@ void HomeScreen::layoutRooms()
             for (auto& id : cl)
                 for (auto* c : roomList->cards)
                     if (c->room.id == id) h += c->preferredHeight() + gap;
-            tallest = juce::jmax (tallest, h - gap + pad);
+            tallest = juce::jmax (tallest, h - gap + padBottom);
         }
         if (tallest <= roomViewport.getHeight() || pass == 1) break;
         contentW = viewW - roomViewport.getScrollBarThickness();
@@ -712,7 +719,7 @@ void HomeScreen::layoutRooms()
                     c->setBounds (pad + (int) ci * (colW + gap), y, colW, c->preferredHeight());
                     y += c->preferredHeight() + gap;
                 }
-        bottom = juce::jmax (bottom, y - gap + pad);
+        bottom = juce::jmax (bottom, y - gap + padBottom);
     }
     roomList->setSize (contentW, juce::jmax (roomViewport.getHeight(), bottom));
 }
@@ -795,16 +802,363 @@ void HomeScreen::sendFriendRequest()
 }
 
 //==============================================================================
+int HomeScreen::headerLine() const { return shell ? 51 : metric::headerH; }
+
+void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePageShown, int titlePad, int titleRight)
+{
+    const bool changed = ! shell || leftInset != shellInset || title != pageTitle || homePageShown != shellHome || titlePad != titleInset || titleRight != titleRightInset;
+    if (! shell)
+    {
+        // 공개 방 쪽 (디자인): 카드 없이 쪽 머리말에 필터·방 만들기, 그 아래 방 목록. 코드로 입장은 사이드바 메뉴에 있다
+        addChildComponent (roomViewport);
+        addChildComponent (*filterButton);
+        addChildComponent (createIcon);
+        createIcon.setTooltip (TXT ("방 만들기"));
+        createIcon.onClick = [this] { openCreateRoom(); };
+        roomsCard.setVisible (false);
+        audioCard.setVisible (false);   // 내 오디오는 방 안에만 (사용자 결정 2026-10-29). 홈은 "내 준비 상태"
+        auto page = std::make_unique<HomePage> (core);
+        page->onOpenSettings = [this] (int tab) { if (onOpenSettingsTab) onOpenSettingsTab (tab); };
+        page->onGoRooms = [this] { if (onShowRooms) onShowRooms(); };
+        page->onJoinFriend = [this] (const core::Friend& f) { joinFriend (f); };
+        homePage = std::move (page);
+        addChildComponent (*homePage);
+    }
+    shell = true;
+    shellHome = homePageShown;
+    shellInset = leftInset;
+    titleInset = titlePad;
+    titleRightInset = titleRight;
+    pageTitle = title;
+    setOpaque (false);   // 왼쪽 사이드바 자리는 비워 둔다
+    if (changed && getWidth() > 0) { resized(); repaint(); }
+}
+
+void HomeScreen::mouseDown (const juce::MouseEvent& e)
+{
+    // 쪽 제목 줄의 빈 곳 (맥 창 모드: 끌면 창이 옮겨지고 더블클릭은 시스템 설정대로. AppRoot 가 모드를 본다)
+    if (titleBarDragAt (e.eventComponent, e.getPosition()) && onTitleBarMouseDown)
+        onTitleBarMouseDown();
+}
+
+bool HomeScreen::hitTest (int x, int y)
+{
+    // 사이드바 자리는 사이드바가 받는다. 모달·확인 창·알림이 떠 있으면 창 전체를 덮는다
+    if (shell && x < shellInset && ! hasOverlay()) return false;
+    return juce::Component::hitTest (x, y);
+}
+
+namespace
+{
+    /** 친구 추가 (사이드바 +, 합주 최종 v2 디자인): 340 · 머리말(제목·닫기) · 받은 요청(있을 때) · 본문(설명·아이디 입력·결과 한 줄) · 아래 취소·요청.
+        결과: 빈 칸 → "아이디를 입력해 주세요" (빨강), 보냄 → "@아이디님에게 친구 요청을 보냈어요" (회색, 입력 비움).
+        디자인에 없는 결과(이미 친구·없는 아이디·내 아이디·이미 보냄·연결 오류)는 원래 앱 문구 그대로 같은 자리·같은 모양
+        (실패는 빨강, 알림은 회색). Enter 는 요청 (한글 조합 중 Enter 는 제외), Esc·바깥 누름은 닫기 */
+    class AddFriendModal : public Modal,
+                           private core::AppStore::Listener
+    {
+    public:
+        static constexpr int boxW = 340;
+        explicit AddFriendModal (core::MeonCore& c) : Modal (TXT ("친구 추가"), boxW), core (c)
+        {
+            content.owner = this;
+            content.addAndMakeVisible (desc);
+            content.addAndMakeVisible (input);
+            content.addChildComponent (note);
+            content.addAndMakeVisible (footer);
+            footer.setButtons ({ &cancel, &send });
+            desc.setLineHeight (19.5f);   // 400 13/1.5
+            note.setLineHeight (14.0f);   // 400 12px, 줄 높이 normal (디자인 측정 14)
+            input.setFontPx (14.0f);
+            input.setMaxLength (16);
+            input.transform = [] (const juce::String& t) { return t.toLowerCase(); };
+            input.onReturn = [this] { if (! input.isComposing()) submit(); };
+            input.onChange = [this] { refreshSend(); if (note.isVisible()) show ({}, false); };
+            cancel.onPress = [this] { if (onClose) onClose(); };
+            send.setClickableWhenDimmed (true);   // 비어 있으면 흐리지만 누르면 "아이디를 입력해 주세요"
+            send.onPress = [this] { submit(); };
+            core.store().addListener (this);
+            rebuildRequests();
+            refreshSend();
+        }
+        ~AddFriendModal() override { core.store().removeListener (this); }
+        void focus() { input.grabKeyboardFocus(); }
+
+        // 개발용 (화면 자가 테스트·디자인 비교 스냅숏)
+        TextInput& devInput() { return input; }
+        Button& devSend() { return send; }
+        Button& devCancel() { return cancel; }
+        const Text& devNote() const { return note; }
+        int devRequestRows() const { return requests.size(); }
+
+    private:
+        /** 받은 요청 한 줄 (높이 47.5): 패딩 6·9, 아바타 32, 이름 600 13/1.3 · 파트 400 12/1.3 #767676 (사이 3, 글 기둥 35.5 가 줄 높이를 정한다),
+            거절·수락 미니 버튼 (사이 9) */
+        struct RequestRow : juce::Component
+        {
+            RequestRow (AddFriendModal& o, const core::FriendRequest& r) : owner (o), request (r)
+            {
+                name = r.from.nickname.value_or (r.from.username);
+                part = icons::partLabel (r.from.part.value_or ("other"));
+                avatar.setUser (r.from.id);
+                avatar.setInterceptsMouseClicks (false, false);
+                addAndMakeVisible (avatar);
+                addAndMakeVisible (decline);
+                addAndMakeVisible (accept);
+                // id 를 먼저 복사한다: 수락·거절하면 목록이 다시 만들어지며 이 줄이 지워진다
+                decline.onPress = [this] { const auto id = request.id; owner.core.home().declineFriendRequest (id); };
+                accept.onPress = [this] { const auto id = request.id; owner.core.home().acceptFriendRequest (id); };
+            }
+            void paint (juce::Graphics& g) override
+            {
+                const int x = 9 + 32 + 9, right = decline.getX() - 9;
+                const float lh = 13.0f * 1.3f, lh2 = 12.0f * 1.3f, top = ((float) getHeight() - (lh + 3.0f + lh2)) * 0.5f;
+                g.setColour (col::ink);
+                g.setFont (font (600, 13.0f));
+                g.drawText (name, juce::Rectangle<float> ((float) x, top, (float) (right - x), lh), juce::Justification::centredLeft, true);
+                g.setColour (col::inkSub);
+                g.setFont (font (400, 12.0f));
+                g.drawText (part, juce::Rectangle<float> ((float) x, top + lh + 3.0f, (float) (right - x), lh2), juce::Justification::centredLeft, true);
+            }
+            void resized() override
+            {
+                auto r = getLocalBounds().reduced (9, 0);
+                avatar.setBounds (r.removeFromLeft (32).withSizeKeepingCentre (32, 32));
+                const int aw = accept.getIdealWidth(), dw = decline.getIdealWidth();
+                accept.setBounds (r.removeFromRight (aw).withSizeKeepingCentre (aw, metric::smallH));
+                r.removeFromRight (9);
+                decline.setBounds (r.removeFromRight (dw).withSizeKeepingCentre (dw, metric::smallH));
+            }
+            AddFriendModal& owner;
+            core::FriendRequest request;
+            juce::String name, part;
+            Avatar avatar { 32.0f, 16.0f };
+            Button decline { Button::Kind::small, TXT ("거절") }, accept { Button::Kind::smallPrimary, TXT ("수락") };
+        };
+
+        static constexpr int reqPad = 9, reqLabelH = 28, reqGap = 2;
+        static constexpr float reqRowH = 6.0f + 13.0f * 1.3f + 3.0f + 12.0f * 1.3f + 6.0f;   // 47.5
+        static constexpr int bodyPad = 18, bodyGap = 9, inputH = 36;
+
+        struct Content : juce::Component
+        {
+            AddFriendModal* owner = nullptr;
+            void paint (juce::Graphics& g) override
+            {
+                if (owner == nullptr) return;
+                const int rh = owner->requestsHeight();
+                if (rh > 0)
+                {
+                    g.setColour (col::inkSub);
+                    g.setFont (font (500, 12.0f));
+                    g.drawText (TXT ("받은 요청 ") + juce::String (owner->requests.size()), reqPad + 9, reqPad, getWidth() - 2 * (reqPad + 9), reqLabelH,
+                                juce::Justification::centredLeft, true);
+                    g.setColour (col::borderSubtle);
+                    hairline::horizontal (g, *this, 0.0f, (float) rh, (float) getWidth());   // 본문 위 구분선
+                }
+            }
+            void resized() override { if (owner != nullptr) owner->layout(); }
+        } content;
+
+        core::MeonCore& core;
+        juce::OwnedArray<RequestRow> requests;
+        Text desc { TXT ("친구의 아이디를 입력하면 친구 요청을 보내요"), 400, 13.0f, col::inkSub };
+        TextInput input { TXT ("친구 아이디 입력") };
+        Text note { {}, 400, 12.0f, col::inkSub };
+        Button cancel { Button::Kind::cancel, TXT ("취소") }, send { Button::Kind::primary, TXT ("요청") };
+        ModalFooter footer;
+        std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
+
+        int innerW() const { return boxW - 2 * bodyPad; }
+        /** 줄 수 × 줄 높이 (디자인: 설명 13/1.5 = 19.5, 결과 12px 줄 높이 normal = 14) */
+        static int linesHeight (const juce::String& text, const juce::Font& f, int w, float lineH)
+        {
+            // 줄 수: 글자 높이 fh, 줄 사이 s 로 쌓인 높이 h = n·fh + (n-1)·s 에서 n 을 구한다
+            const float fh = f.getHeight(), sp = juce::jmax (0.0f, lineH - fh);
+            const float h = meon::paragraphHeightWithEmoji (text, f, (float) w, lineH);
+            const int lines = juce::jmax (1, juce::roundToInt ((h + sp) / (fh + sp)));
+            return juce::roundToInt ((float) lines * lineH);
+        }
+        int descH() const { return linesHeight (desc.getText(), font (400, 13.0f), innerW(), 19.5f); }
+        int noteH() const { return linesHeight (note.getText(), font (400, 12.0f), innerW(), 14.0f); }
+        int requestsHeight() const
+        {
+            if (requests.isEmpty()) return 0;
+            return juce::roundToInt ((float) (reqPad + reqLabelH + reqPad + 1) + (float) requests.size() * ((float) reqGap + reqRowH));   // + 구분선 1
+        }
+        int bodyHeight() const
+        {
+            int h = bodyPad + descH() + bodyGap + inputH;
+            if (note.isVisible()) h += bodyGap + noteH();
+            return h + bodyPad;
+        }
+        void layout()
+        {
+            const int w = content.getWidth();
+            int y = 0;
+            if (! requests.isEmpty())
+            {
+                float fy = (float) (reqPad + reqLabelH);
+                for (auto* r : requests)
+                {
+                    fy += (float) reqGap;
+                    const int top = juce::roundToInt (fy), bottom = juce::roundToInt (fy + reqRowH);
+                    r->setBounds (reqPad, top, w - 2 * reqPad, bottom - top);
+                    fy += reqRowH;
+                }
+                y = requestsHeight();
+            }
+            y += bodyPad;
+            const int dh = descH();
+            desc.setBounds (bodyPad, y, innerW(), dh);
+            y += dh + bodyGap;
+            input.setBounds (bodyPad, y, innerW(), inputH);
+            y += inputH;
+            if (note.isVisible())
+            {
+                y += bodyGap;
+                note.setBounds (bodyPad, y, innerW(), noteH());
+            }
+            footer.setBounds (0, content.getHeight() - ModalFooter::height, w, ModalFooter::height);
+        }
+        void relayout()
+        {
+            setContent (&content, requestsHeight() + bodyHeight() + ModalFooter::height);
+            layout();
+            content.repaint();
+        }
+        void rebuildRequests()
+        {
+            requests.clear();
+            for (auto& r : core.store().state().friendRequests)
+                content.addAndMakeVisible (requests.add (new RequestRow (*this, r)));
+            relayout();
+        }
+        void stateChanged (core::StateKey k) override
+        {
+            if (k == core::StateKey::friendRequests) rebuildRequests();
+        }
+        void refreshSend()
+        {
+            const bool ok = input.getText().trim().trimCharactersAtStart ("@").isNotEmpty();
+            send.setDimmed (! ok);
+            footer.resized();
+        }
+        void show (const juce::String& t, bool error)
+        {
+            note.setText (t);
+            note.setColour (error ? col::danger : col::inkSub);
+            note.setVisible (t.isNotEmpty());
+            relayout();
+        }
+        void submit()
+        {
+            const auto id = input.getText().trim().trimCharactersAtStart ("@");
+            if (id.isEmpty()) { show (TXT ("아이디를 입력해 주세요"), true); return; }
+            std::weak_ptr<bool> weak = alive;
+            core.home().sendFriendRequest (id, [this, weak, id] (core::Result<juce::String> r)
+            {
+                if (weak.expired()) return;
+                if (r.ok())
+                {
+                    const auto& res = r.get();
+                    // 보냄·친구 됨·이미 친구·이미 보냄 = 알림 (회색), 없는 아이디·내 아이디 = 실패 (빨강)
+                    const bool fail = res == "not_found" || res == "self";
+                    if (res == "sent" || res == "accepted") input.setText ({});
+                    refreshSend();
+                    show (msg::friendRequestResult (res, id.toLowerCase()), fail);
+                }
+                else
+                    show (msg::friendRequestError (r.err()), true);
+            });
+        }
+    };
+}
+
+void HomeScreen::openAddFriend()
+{
+    auto m = std::make_unique<AddFriendModal> (core);
+    auto* raw = m.get();
+    showModal (std::move (m));
+    raw->focus();
+}
+
+void HomeScreen::devAddFriendState (const juce::String& state)
+{
+    // 개발용 (디자인 비교 스냅숏 --screen=home:addfriend=empty|typing|sent|error|requests): 친구 추가 창을 그 상태로.
+    // requests 가 아니면 받은 요청을 먼저 거절해 비운다 (디자인 기본값: 받은 요청 없음)
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    auto clearRequests = [safe, state]
+    {
+        if (safe != nullptr && state != "requests")
+            for (auto r : safe->core.store().state().friendRequests) safe->core.home().declineFriendRequest (r.id);
+    };
+    clearRequests();
+    juce::Timer::callAfterDelay (1200, clearRequests);   // 가짜 서버의 받은 요청이 늦게 오면 한 번 더
+    juce::Timer::callAfterDelay (1600, [safe, state]
+    {
+        if (safe == nullptr) return;
+        safe->openAddFriend();
+        auto* m = dynamic_cast<AddFriendModal*> (safe->modal.get());
+        if (m == nullptr) return;
+        if (state == "typing" || state == "sent") m->devInput().setText ("minjun", true);
+        if (state == "sent") m->devSend().triggerClick();
+        if (state == "error") m->devSend().triggerClick();   // 빈 칸에서 요청
+        juce::Timer::callAfterDelay (500, [safe]
+        {
+            if (safe == nullptr) return;
+            if (auto* mm = dynamic_cast<AddFriendModal*> (safe->modal.get()))
+            {
+                mm->devInput().grabKeyboardFocus();   // 디자인처럼 입력 칸에 포커스
+                const auto b = mm->boxBounds() + mm->getScreenPosition();
+                std::cerr << "MEON dev: addfriend box " << b.getX() << " " << b.getY() << " " << b.getWidth() << " " << b.getHeight() << std::endl;
+            }
+        });
+    });
+}
+
 void HomeScreen::showModal (std::unique_ptr<Modal> m)
 {
     popover.reset();
     notifications.reset();
     modal = std::move (m);
     modal->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
-                                                               { if (safe != nullptr) { safe->modal.reset(); safe->grabKeyboardFocus(); } }); };
-    addAndMakeVisible (*modal);
-    modal->setBounds (getLocalBounds());
-    modal->toFront (true);
+                                                               { if (safe != nullptr) { safe->modal.reset(); safe->overlayClosed(); } }); };
+    showLayer (*modal, true);
+}
+
+void HomeScreen::showLayer (juce::Component& c, bool fullWindow)
+{
+    // 모달 층 (AppRoot): 창 전체를 덮고 사이드바·접기 버튼 위. 방 화면을 보는 중이어도 화면은 그대로 두고 그 위에 뜬다
+    if (hostOverlay) { hostOverlay (c, fullWindow); return; }
+    addAndMakeVisible (c);
+    if (fullWindow) c.setBounds (getLocalBounds());
+    c.toFront (fullWindow);
+}
+
+void HomeScreen::overlayClosed()
+{
+    if (isShowing()) grabKeyboardFocus();
+    else if (onOverlayClosed) onOverlayClosed();
+}
+
+void HomeScreen::layoutOverlays()
+{
+    if (! hostOverlay)
+    {
+        if (modal != nullptr) modal->setBounds (getLocalBounds());
+        if (confirm != nullptr) confirm->setBounds (getLocalBounds());
+    }
+    if (popover == nullptr || notifications == nullptr) return;
+    // 모달 층이면 AppRoot 좌표 (홈은 AppRoot 전체라 보통 같다)
+    const auto o = popover->getParentComponent() == this ? juce::Point<int>() : getPosition();
+    const int h = popover->getPreferredHeight();
+    popover->setContent (notifications.get(), notifications->getPreferredHeight());
+    const int ph = shell ? popover->getPreferredHeight() : juce::jmax (h, popover->getPreferredHeight());
+    if (shell)   // 사이드바 안: 프로필 줄 위 (디자인 left 9, bottom 55)
+        popover->setPanelBounds (o.x + 9, o.y + getHeight() - 55 - ph, 340, ph);
+    else
+        popover->setPanelBounds (o.x + getWidth() - 12 - 340, o.y + headerLine() + 10, 340, ph);
 }
 
 void HomeScreen::openProfile (const core::UserPublic& u)
@@ -885,15 +1239,15 @@ void HomeScreen::toggleNotifications()
     }
     core.home().markNotificationsRead();
     notifications = std::make_unique<NotificationList> (core);
+    notifications->onAcceptInvite = [this] (const juce::String& id) { if (onAcceptInvite) onAcceptInvite (id); };
     popover = std::make_unique<Popover> (TXT ("알림"));
     popover->onClose = [this] { juce::Component::SafePointer<HomeScreen> safeSelf (this); juce::MessageManager::callAsync ([safe = safeSelf]
                                                                  { if (safe != nullptr) { safe->popover.reset(); safe->notifications.reset(); } }); };
-    notifications->onSizeChanged = [this] { resized(); };
-    notifications->onOpenProfile = [this] (const core::UserPublic& u) { openProfile (u); };
+    notifications->onSizeChanged = [this] { layoutOverlays(); };
+    notifications->onOpenProfile = [this] (const core::UserPublic& u) { if (onOpenProfileFromList) onOpenProfileFromList (u); else openProfile (u); };
     popover->setContent (notifications.get(), notifications->getPreferredHeight());
-    addAndMakeVisible (*popover);
-    resized();
-    popover->toFront (false);
+    showLayer (*popover, false);
+    layoutOverlays();
 }
 
 void HomeScreen::closeOverlays()
@@ -907,7 +1261,7 @@ void HomeScreen::closeOverlays()
 bool HomeScreen::closeTopOverlay()
 {
     // 최소화 중 확인 모달은 그 아래 모달(코드로 입장·프로필)보다 먼저 닫힌다 (Esc = 취소)
-    if (confirm != nullptr) { confirm.reset(); grabKeyboardFocus(); return true; }
+    if (confirm != nullptr) { confirm.reset(); overlayClosed(); return true; }
     if (! hasOverlay()) return false;
     closeOverlays();
     return true;
@@ -940,6 +1294,15 @@ void HomeScreen::setRoomBar (bool show)
 juce::Component* HomeScreen::devRoomBar() const { return roomBar.get(); }
 Button* HomeScreen::devRoomBarLeave() const     { return roomBar != nullptr ? &roomBar->leave : nullptr; }
 int HomeScreen::devRoomBarUnread() const        { return roomBar != nullptr ? roomBar->unreadChats() : -1; }
+
+juce::Component* HomeScreen::devRoomList() const { return roomList.get(); }
+
+std::vector<juce::Component*> HomeScreen::devRoomCardComps() const
+{
+    std::vector<juce::Component*> out;
+    for (auto* c : roomList->cards) out.push_back (c);
+    return out;
+}
 
 std::vector<std::pair<core::Room, juce::Button*>> HomeScreen::devRoomCards() const
 {
@@ -986,12 +1349,10 @@ void HomeScreen::confirmLeaveThen (bool create, const juce::String& roomId, std:
     m->onClose = [this]
     {
         juce::Component::SafePointer<HomeScreen> safeSelf (this);
-        juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) { safe->confirm.reset(); safe->grabKeyboardFocus(); } });
+        juce::MessageManager::callAsync ([safe = safeSelf] { if (safe != nullptr) { safe->confirm.reset(); safe->overlayClosed(); } });
     };
     confirm = std::move (m);
-    addAndMakeVisible (*confirm);
-    confirm->setBounds (getLocalBounds());
-    confirm->toFront (true);
+    showLayer (*confirm, true);   // 그 아래 모달(코드로 입장·프로필) 위
 }
 
 //==============================================================================
@@ -1014,6 +1375,7 @@ void HomeScreen::stateChanged (core::StateKey k)
             break;
         case K::currentRoom: case K::joinRequests:
             if (roomBar != nullptr) { roomBar->resized(); roomBar->repaint(); }
+            if (k == K::currentRoom && shell) resized();   // 머리말 방 만들기: 방에 있으면 숨김
             break;
         case K::link:
             refreshHeader();
@@ -1035,37 +1397,55 @@ void HomeScreen::timerCallback()
     const int before = bannersHeight();
     refreshHeader();
     if (bannersHeight() != before) resized();
-    if (showUpdate()) repaint (0, headerLineY, getWidth(), bannersHeight() + 1);
-    if (! sendGain.isDragging()) refreshAudio();
+    if (showUpdate()) repaint (0, headerLine(), getWidth(), bannersHeight() + 1);
+    // 홈의 내 오디오 카드는 사이드바 안(공개 방)에서는 숨어 있다: 0.5초마다 화면 전체를 다시 배치·그리지 않는다
+    // (예전에는 숨은 카드 때문에 공개 방 목록 전체가 0.5초마다 다시 그려졌다. 방 안이면 떠 있는 내 오디오·모니터 카드까지)
+    if (! sendGain.isDragging() && audioCard.isVisible()) refreshAudio();
 }
 
 //==============================================================================
+int HomeScreen::devRoomCardPaints = 0, HomeScreen::devPaints = 0;
+
 void HomeScreen::paint (juce::Graphics& g)
 {
-    g.fillAll (col::white);
+    ++devPaints;
+    devprobe::note (*this, g, "HomeScreen");
+    const int x0 = shell ? shellInset : 0;   // 사이드바 안이면 왼쪽 사이드바 자리는 그리지 않는다
+    g.setColour (col::white);
+    g.fillRect (x0, 0, getWidth() - x0, getHeight());
     // 배너 아래 작업 영역 (패널들을 감싸는 곳)
-    const int canvasTop = headerLineY + 1 + bannersHeight();
+    const int canvasTop = headerLine() + 1 + bannersHeight();
     g.setColour (col::surfaceCanvas);
-    g.fillRect (0, canvasTop, getWidth(), getHeight() - canvasTop);
-    const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
-    meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
-    g.setColour (col::line);
-    g.fillRect (0, headerLineY, getWidth(), 1);
+    g.fillRect (x0, canvasTop, getWidth() - x0, getHeight() - canvasTop);
+    if (shell)
+    {
+        // 쪽 제목 (디자인: 52 높이, 600 16px, 왼쪽 18. 맥 창 모드에서 사이드바를 접으면 접기 버튼 x - 12 (디자인 72): 신호등·접기 버튼 자리)
+        g.setColour (col::ink);
+        g.setFont (font (600, 16.0f));
+        g.drawText (pageTitle, x0 + titleInset, 0, getWidth() - x0 - titleInset - metric::padX, headerLine(), juce::Justification::centredLeft, true);
+    }
+    else
+    {
+        const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
+        meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
+    }
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, (float) x0, (float) headerLine(), (float) (getWidth() - x0));   // 제목 줄 아래
 
-    int y = headerLineY + 1;
+    int y = headerLine() + 1;
     if (showUpdate())
     {
         g.setColour (col::hoverBg);
-        g.fillRect (0, y, getWidth(), 37);
-        g.setColour (col::line);
-        g.fillRect (0, y + 37, getWidth(), 1);
+        g.fillRect (x0, y, getWidth() - x0, 37);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, (float) x0, (float) (y + 37), (float) (getWidth() - x0));
         const auto st = updateState();
         const auto f1 = font (500, 13.0f);
         const auto t1 = st == UpdateHooks::State::failed ? TXT ("새 버전을 받지 못했어요") : TXT ("새 버전이 나왔어요");
         g.setColour (col::ink);
         g.setFont (f1);
         const int w1 = (int) std::ceil (textWidth (f1, t1)) + 1;
-        g.drawText (t1, metric::padX, y, w1, 37, juce::Justification::centredLeft, false);
+        g.drawText (t1, x0 + metric::padX, y, w1, 37, juce::Justification::centredLeft, false);
         const int latest = update.latestBuild ? update.latestBuild() : 0;
         const auto ver = TXT ("빌드 ") + juce::String (latest);
         juce::String note = ver;
@@ -1078,7 +1458,7 @@ void HomeScreen::paint (juce::Graphics& g)
             note = TXT ("Meon을 응용 프로그램 폴더로 옮긴 뒤 다시 켜 주세요");
         g.setColour (col::inkSub);
         g.setFont (font (400, 12.0f));
-        g.drawText (note, metric::padX + w1 + 9, y, getWidth() / 2, 37, juce::Justification::centredLeft, true);
+        g.drawText (note, x0 + metric::padX + w1 + 9, y, (getWidth() - x0) / 2, 37, juce::Justification::centredLeft, true);
         if (st == UpdateHooks::State::downloading)
         {
             const juce::Rectangle<float> bar ((float) getWidth() - metric::padX - 160.0f, (float) y + 16.5f, 160.0f, 4.0f);
@@ -1092,19 +1472,22 @@ void HomeScreen::paint (juce::Graphics& g)
 
 void HomeScreen::resized()
 {
-    auto area = getLocalBounds();
-    // 헤더: 오른쪽에 설정, 알림
+    auto area = getLocalBounds().withTrimmedLeft (shell ? shellInset : 0);
+    // 헤더: 오른쪽에 설정, 알림 (사이드바 안이면 프로필 메뉴로 옮겨 숨긴다)
+    bell.setVisible (! shell);
+    settings.setVisible (! shell);
+    if (! shell)
     {
         auto h = area.withHeight (metric::headerH).reduced (metric::padX, 0);
         settings.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         h.removeFromRight (metric::gap);
         bell.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
     }
-    area.removeFromTop (headerLineY + 1);
+    area.removeFromTop (headerLine() + 1);
 
     // 배너 버튼
     {
-        const int top = headerLineY + 1;
+        const int top = headerLine() + 1;
         int x = getWidth() - metric::padX;
         if (updateNow.isVisible())
         {
@@ -1132,10 +1515,52 @@ void HomeScreen::resized()
     if (roomBar != nullptr) roomBar->setBounds (area.removeFromBottom (roomBarH));
     area.reduce (metric::padX, metric::padX);
 
-    // 오른쪽: 친구 + 친구 추가
+    if (shell)
+    {
+        // 사이드바 안: 홈 쪽(HomePage) 또는 공개 방 쪽(머리말 필터·방 만들기 + 목록). 친구·친구 추가·내 오디오 카드는 숨긴다
+        friendsCard.setVisible (false);
+        addCard.setVisible (false);
+        roomsCard.setVisible (false);
+        audioCard.setVisible (false);
+        homePage->setVisible (shellHome);
+        roomViewport.setVisible (! shellHome);
+        filterButton->setVisible (! shellHome);
+        createRoom.setVisible (false);
+        createIcon.setVisible (! shellHome && ! core.store().state().currentRoom.has_value());   // 방에 있으면 숨김
+        if (shellHome)
+            homePage->setBounds (area.expanded (metric::padX));   // HomePage 가 디자인 여백 18 을 직접 둔다
+        else
+        {
+            const int titleW = (int) std::ceil (textWidth (font (600, 16.0f), pageTitle));
+            filterButton->setBounds (shellInset + titleInset + titleW + 6, (headerLine() - 24) / 2, 24, 24);
+            createIcon.setBounds (getWidth() - titleRightInset - 32, (headerLine() - 32) / 2, 32, 32);   // 윈도우: 창 버튼 왼쪽 12
+            roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작
+            if (! fold.isMoving (foldFriends)) layoutRooms();
+        }
+        // 방에 있을 때 목록 위에 뜨는 내 오디오·모니터 자리: 목록 영역 안 왼쪽·오른쪽·아래 18 (디자인 hBar)
+        {
+            const auto list = roomViewport.getBounds();
+            juce::Rectangle<int> slot;
+            if (! shellHome && dockH > 0)
+                slot = { list.getX() + metric::padX, list.getBottom() - metric::padX - dockH, list.getWidth() - metric::padX * 2, dockH };
+            if (slot != dockSlotRect)
+            {
+                dockSlotRect = slot;
+                if (onDockSlotChanged) onDockSlotChanged();
+            }
+        }
+        layoutOverlays();
+        repaint();
+        return;
+    }
+
+    // 오른쪽: 친구 + 친구 추가 (사이드바 안이면 친구는 사이드바에 있어 숨긴다)
+    friendsCard.setVisible (! shell);
+    addCard.setVisible (! shell);
     const int sideW = plugin ? sideWidthPlugin : sideWidthApp;
-    auto side = area.removeFromRight (sideW);
-    area.removeFromRight (metric::padX);
+    auto side = shell ? juce::Rectangle<int>() : area.removeFromRight (sideW);
+    if (! shell) area.removeFromRight (metric::padX);
+    if (! shell)
     {
         // 결과 문구: 입력 줄 아래 (디자인 padding 0 18px 12px, margin-top -6px)
         addNote.setText (addMessage);
@@ -1225,15 +1650,15 @@ void HomeScreen::resized()
         sendGain.setBounds (row.withSizeKeepingCentre (row.getWidth(), metric::smallH));
     }
 
-    if (modal != nullptr) modal->setBounds (getLocalBounds());
-    if (confirm != nullptr) confirm->setBounds (getLocalBounds());
-    if (popover != nullptr && notifications != nullptr)
-    {
-        const int h = popover->getPreferredHeight() - 0;
-        popover->setContent (notifications.get(), notifications->getPreferredHeight());
-        popover->setBounds (getWidth() - 12 - 340, headerLineY + 10, 340, juce::jmax (h, popover->getPreferredHeight()));
-    }
+    layoutOverlays();
     if (! fold.isMoving (foldFriends)) repaint();   // 움직이는 동안은 옮겨진 카드 자리만 다시 그린다
+}
+
+void HomeScreen::setDockHeight (int h)
+{
+    if (h == dockH) return;
+    dockH = h;
+    resized();   // 목록 아래 여백·카드 자리
 }
 
 void HomeScreen::previewFold (float e)

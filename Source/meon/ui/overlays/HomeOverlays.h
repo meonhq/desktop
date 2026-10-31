@@ -154,7 +154,7 @@ private:
 };
 
 //==============================================================================
-/** 입장 실패 (380, 덮개 없음, 테두리 #D5D5D5). 제목 + 닫기, 본문, 버전 다름이면 "업데이트" */
+/** 입장 실패 (380, 덮개 없음, 테두리 #EBEBEB). 제목 + 닫기, 본문, 버전 다름이면 "업데이트" */
 class JoinFailDialog : public juce::Component
 {
 public:
@@ -183,6 +183,9 @@ public:
     int getPreferredHeight() const;
     std::function<void()> onSizeChanged;
     std::function<void (const core::UserPublic&)> onOpenProfile;
+    /** 받은 초대 줄 (홈·사이드바 디자인 v2: 알림 = 친구 요청 + 초대). 입장 = 초대 수락(실패 안내는 AppRoot), 거절 = 닫기.
+        비어 있으면 입장은 core 의 acceptInvite 만 부른다 */
+    std::function<void (const juce::String& inviteId)> onAcceptInvite;
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -195,8 +198,10 @@ private:
 };
 
 //==============================================================================
-/** 토스트 (280, 테두리 #D5D5D5, 여백 12 12 12 18). 굵은 줄 + 보조 줄, 선택 버튼(입장), 닫기 */
-class Toast : public juce::Component
+/** 토스트 (280, 여백 12 12 12 18). 굵은 줄 + 보조 줄, 선택 버튼(입장), 닫기.
+    겉모양은 팝오버와 같은 표면 (SurfaceComponent: 테두리 1px #EBEBEB, 그림자 두 겹, 그려 둔 그림자 재사용).
+    구성 요소는 판보다 그림자 폭만큼 크다: 자리는 setPanelBounds, 크기 값(width·heightForWidth)은 판 기준 */
+class Toast : public SurfaceComponent
 {
 public:
     /** normal: 흰 면 (초대·알림). warning: 연한 핑크 면(col::accentSoft), 제목(굵게) + 설명, 설명은 줄바꿈 */
@@ -210,6 +215,9 @@ public:
     int heightForWidth (int w) const;
     /** 닫기 버튼을 숨긴다 (연결이 끊긴 동안의 토스트: 다시 붙으면 저절로 바뀐다) */
     void setClosable (bool c) { close.setVisible (c); repaint(); }
+    /** 주 버튼 왼쪽에 보조 버튼 (입장 요청의 "거절", 홈·사이드바 디자인). 없으면 지금까지와 같다 */
+    void setSecondary (const juce::String& label);
+    std::function<void()> onSecondary;
     juce::String key;   // 초대 ID 등 (지울 때 찾는 용도)
     const juce::String& getTitle() const { return title; }
     void paint (juce::Graphics&) override;
@@ -218,7 +226,7 @@ public:
 private:
     Kind kind = Kind::normal;
     juce::String title, sub;
-    std::unique_ptr<Button> action;
+    std::unique_ptr<Button> action, secondary;
     int textRight (int w) const;
     float subHeight (int w) const;
     IconButton close;

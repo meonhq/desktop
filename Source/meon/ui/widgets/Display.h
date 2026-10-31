@@ -2,7 +2,9 @@
 #pragma once
 
 #include "../theme/Tokens.h"
+#include "../theme/PopoverSurface.h"
 #include "Button.h"
+#include "ModalBase.h"
 
 namespace meon::ui
 {
@@ -21,15 +23,19 @@ private:
     juce::String text { "—" };
 };
 
-/** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #E0E0E0.
+/** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #EBEBEB.
     상태 점(9px, 흰 테두리 2px): 온라인 포인트 #FFD8E4, 방에 있음 #1A1A1A, 오프라인 #D5D5D5 */
-class Avatar : public juce::Component
+class Avatar : public juce::Component,
+               private juce::ChangeListener
 {
 public:
     enum class Status { none, online, inRoom, offline };
     Avatar (float size, float iconPx);
-    void setPart (const juce::String& partKey) { part = partKey; repaint(); }
-    void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 아이콘을 흐린 글자색(#AAAAAA)으로, 옆 이름과 같게
+    ~Avatar() override;
+    /** 이 사용자의 프로필 사진 (없으면 디자인 기본 이미지). 파트 아이콘은 그리지 않는다 (2026-10-31 사용자 지시) */
+    void setUser (const juce::String& userId) { if (user != userId) { user = userId; repaint(); } }
+    void setPart (const juce::String& partKey) { part = partKey; }   // 예전 이름 (그리지 않는다)
+    void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 사진을 흐리게 (불투명도 0.4, 디자인 iconOp)
     void setInk (juce::Colour c) { ink = c; repaint(); } // 아이콘 색 = 주변 글자색 (기본 #1A1A1A)
     void setStatus (Status s) { status = s; repaint(); }
     /** 프로필 창: 상태 점 12×12 (아바타 오른쪽 아래에 붙임) */
@@ -44,13 +50,13 @@ public:
     }
 
     static juce::Colour statusColour (Status);
-    /** 원 + 파트 아이콘만 그린다 (채팅처럼 구성 요소 없이 직접 그리는 곳). partKey 가 비면 아이콘 없는 빈 원.
-        whiteFill: 원 안을 흰색으로 (나중에 프로필 사진이 생기면 이 자리에 들어간다) */
-    static void paintCircle (juce::Graphics&, juce::Rectangle<float> circle, const juce::String& partKey, float iconPx,
-                             juce::Colour ink, bool whiteFill);
+    /** 구성 요소 없이 직접 그리는 곳 (채팅·사이드바·방 카드): 사용자 사진 (없으면 기본 이미지)을 원으로 */
+    static void paintPhoto (juce::Graphics&, juce::Rectangle<float> circle, const juce::String& userId, float opacity = 1.0f);
 
 private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
     float size, iconPx;
+    juce::String user;
     juce::String part { "other" };
     bool dimmed = false;
     juce::Colour ink { col::ink };
@@ -72,7 +78,7 @@ private:
     juce::String text;
 };
 
-/** 카드 (테두리 #E0E0E0, 모서리 6, 흰 면). 머리말이 있으면 12·18 여백 + 제목 600 15px + 접기 버튼, 아래 구분선 */
+/** 카드 (테두리 #EBEBEB, 모서리 6, 흰 면). 머리말이 있으면 12·18 여백 + 제목 600 15px + 접기 버튼, 아래 구분선 */
 class Card : public juce::Component
 {
 public:
@@ -94,6 +100,7 @@ public:
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+    int devPaintCount = 0;   // 개발용 (다시 그리기 확인)
 
 private:
     juce::String title;
@@ -104,8 +111,9 @@ private:
 };
 
 /** 모달: 덮개(rgba 26,26,26,0.4) + 가운데 흰 상자(모서리 6). 머리말 12·18, 제목 600 15/24px, 닫기 24px.
-    덮개를 누르거나 Esc 를 누르면 onClose. 본문은 content 로 넣는다 (머리말 아래 구분선부터) */
-class Modal : public juce::Component
+    덮개를 누르거나 Esc 를 누르면 onClose. 본문은 content 로 넣는다 (머리말 아래 구분선부터).
+    열고 닫는 애니메이션은 공통 래퍼(ModalBase) */
+class Modal : public ModalBase
 {
 public:
     Modal (const juce::String& title, int width);
@@ -122,12 +130,15 @@ public:
     void setOverlayInsets (juce::BorderSize<int> b) { insets = b; resized(); }
 
     juce::Rectangle<int> boxBounds() const;
-    void paint (juce::Graphics&) override;
+    juce::Rectangle<int> dialogBounds() const override { return boxBounds(); }
+    juce::Rectangle<int> dimBounds() const override { return insets.subtractedFrom (getLocalBounds()); }
+    void paintDialog (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (닫기 버튼)
     juce::String title;
     int width, contentH = 100;
     bool showHeader = true, showClose = true;
@@ -152,14 +163,21 @@ public:
     Tip();
     /** target 은 host 의 자손이어야 한다 */
     void show (juce::Component& host, juce::Component& target, const juce::String& text, Place);
+    /** 두 줄 말풍선 (방 나가기 확인, 홈·사이드바 디자인 v2.1 최신): 안쪽 6·8, 줄 높이 1.4, 줄 사이 2.
+        첫 줄 600 흰색, 둘째 줄 500 #D5D5D5. sub 가 비면 첫 줄만 */
+    void showNote (juce::Component& host, juce::Component& target, const juce::String& title, const juce::String& sub, Place);
+    juce::String getText() const { return text; }
+    juce::String getSubText() const { return sub; }
     void hide();
     juce::Component* getTarget() const { return target.getComponent(); }
     void paint (juce::Graphics&) override;
     static int widthFor (const juce::String& text);
     static constexpr int height = 20;
 private:
-    juce::String text;
+    juce::String text, sub;
+    bool note = false;
     juce::Component::SafePointer<juce::Component> target;
+    void place (juce::Component& host, juce::Component& target, int w, int h, Place);
 };
 
 /** target 에 마우스를 올리면 tip 을 띄우고 내리거나 누르면 감춘다 */
@@ -178,8 +196,10 @@ private:
     void mouseDown (const juce::MouseEvent&) override;
 };
 
-/** 팝오버 (테두리 #D5D5D5, 모서리 6, 흰 면, 폭 340). 머리말: 제목 600 15px + 숫자 500 13px #767676 + 닫기 */
-class Popover : public juce::Component
+/** 팝오버 (폭 340): 겉모양은 SurfaceComponent (흰 면, 모서리 6, 1px #EBEBEB, 그림자 두 겹).
+    머리말: 제목 600 15px + 숫자 500 13px #767676 + 닫기.
+    구성 요소는 판보다 그림자 폭만큼 사방으로 크다 (그림자가 잘리지 않게). 자리는 setPanelBounds 로 판 기준으로 정한다 */
+class Popover : public SurfaceComponent
 {
 public:
     Popover (const juce::String& title, int width = 340);
@@ -205,6 +225,7 @@ public:
     const juce::String& getText() const { return text; }
     void setStyle (int weight, float px, juce::Colour ink);
     void setColour (juce::Colour c) { ink = c; repaint(); }
+    juce::Colour getColour() const { return ink; }
     void setJustification (juce::Justification j) { just = j; repaint(); }
     void setLineHeight (float px) { lineH = px; repaint(); }   // 0 이면 한 줄
     void setEllipsis (bool e) { ellipsis = e; repaint(); }

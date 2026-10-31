@@ -19,8 +19,12 @@ namespace col
     const juce::Colour accent       { 0xFFFFD8E4u };   // 포인트 핑크 면
     const juce::Colour accentHover  { 0xFFF5C2D2u };
     const juce::Colour accentSoft   { 0xFFFFF0F4u };   // 연한 핑크: 선택 칩·경고 면·내 말풍선
-    const juce::Colour line         { 0xFFE0E0E0u };   // 카드 테두리·구분선
-    const juce::Colour field        { 0xFFD5D5D5u };   // 입력·버튼 테두리
+    const juce::Colour line         { 0xFFE0E0E0u };   // 테두리가 아닌 회색 면: 토글 끔, 슬라이더·진행 막대 트랙, 온보딩 단계 막대, 미터 상자 테두리
+    const juce::Colour miniBorder   { 0xFFE0E0E0u };   // 19px 미니 버튼 테두리 (관리·거절·복사…, 작은 선택 버튼). 이것만 #E0E0E0 (합주 최종 v2)
+    const juce::Colour borderSubtle { 0xFFEBEBEBu };   // 선 하나로 쓰는 테두리: 구분선·카드·팝오버·패널, 입력 칸, 32·40px 버튼(흰 보조·선택·비활성 주 버튼), 아바타
+                                                       // (예전 #E0E0E0·#D5D5D5 가 진해 보여 연하게. 그릴 때는 ui::hairline 으로 물리 픽셀에 맞춘다)
+    const juce::Colour focusBorder  { 0xFFAAAAAAu };   // 입력 칸 포커스 테두리 (코드 칸은 지금 칸·숫자가 들어간 칸)
+    const juce::Colour field        { 0xFFD5D5D5u };   // 체크박스 테두리, 스크롤 막대, 오프라인 점 (입력·버튼 테두리는 borderSubtle)
     const juce::Colour softBg       { 0xFFFCFCFCu };   // 작은 버튼·미터 상자 배경
     const juce::Colour hoverBg      { 0xFFF5F5F5u };   // 호버·비활성 면
     const juce::Colour badgeBg      { 0xFFF5F5F5u };   // 핑 배지·작은 태그(친구·방장·비공개) 면, 글자는 inkSub. 테두리 없음
@@ -49,11 +53,37 @@ namespace col
     const juce::Colour meterCover   { 0xFFE5E5EAu };
 }
 
+/** 팝오버 겉모양: 프로필 메뉴·알림·입장 요청 패널. 앞으로 생길 팝오버도 이 값만 쓴다.
+    그리기는 ui::PopoverSurface (theme/PopoverSurface): 그림자 → 흰 면 → 1px 테두리. 토스트·모달·버튼은 해당 없음 */
+namespace popoverStyle
+{
+    const juce::Colour background { 0xFFFFFFFFu };
+    const juce::Colour border     { 0xFFEBEBEBu };   // popoverBorder: 1px (col::borderSubtle 과 같은 값)
+    constexpr float radius = 6.0f;
+
+    /** popoverShadow: 디자인 CSS box-shadow 한 겹 = "0 <dy>px <blur>px rgba(0,0,0,<alpha>)". 앞에 적은 겹이 위 */
+    struct ShadowLayer { float dy, blur, alpha; };
+    constexpr ShadowLayer shadow[] = { { 4.0f, 20.0f, 0.07f },    // 넓고 옅게
+                                       { 1.0f,  3.0f, 0.04f } };  // 가장자리에 붙는 얇은 그림자
+    /** CSS 값을 JUCE 로 옮기는 비율 (브라우저 캡처와 나란히 놓고 가장자리 밝기를 픽셀로 비교해 맞춘 값, PR #90 보고서):
+        흐림은 가우스 표준편차 σ = blur × sigmaPerBlur (논리 px, CSS 명세와 같은 B/2),
+        진하기는 alpha × opacityScale (크롬은 옅은 그림자를 8비트로 깎아 같은 수치보다 조금 옅게 그린다) */
+    constexpr float sigmaPerBlur = 0.5f;
+    constexpr float opacityScale = 0.92f;
+}
+
 /** 접기·펼치기 (채팅·친구·내 오디오·모니터·홈 친구가 모두 이 값을 읽는다. ui/widgets/FoldAnimator) */
 namespace motion
 {
     constexpr int foldDurationMs = 180;
     constexpr double foldEase[4] = { 0.2, 0.0, 0.0, 1.0 };   // cubic-bezier(0.2, 0, 0, 1)
+    // 모달 (디자인 v2.1 mEl): 열기 덮개 200ms ease-out · 상자 240ms foldEase (8px 아래·98%·투명 → 제자리), 닫기 상자 160ms foldEase (→ 4px 아래·98%·투명) · 덮개 180ms ease-in
+    constexpr double modalOpenDimMs = 200.0, modalOpenBoxMs = 240.0, modalCloseBoxMs = 160.0, modalCloseDimMs = 180.0;
+    constexpr float modalOpenDy = 8.0f, modalCloseDy = 4.0f, modalScale = 0.98f;
+    constexpr double easeOut[4] = { 0.0, 0.0, 0.58, 1.0 };   // CSS ease-out
+    constexpr double easeIn[4] = { 0.42, 0.0, 1.0, 1.0 };    // CSS ease-in
+    // 방 화면 ↔ 공개 방: 내 오디오·모니터 카드 묶음 (디자인 v2.1 barFlip) 320ms foldEase, 그림자 0 ↔ 팝오버 그림자
+    constexpr double dockFlipMs = 320.0;
 }
 
 namespace metric
@@ -67,6 +97,7 @@ namespace metric
     constexpr int smallH = 19;          // 작은 버튼·슬라이더·미터 상자
     constexpr int bigButtonH = 40;      // 온보딩 버튼
     constexpr int gap = 9;              // 나란히 붙는 카드·헤더 버튼 사이
+    constexpr int pagePad = 18;         // 사이드바 오른쪽 쪽(홈·공개 방)의 바깥 여백: 머리말 아래 본문 가장자리 ~ 카드 (홈·사이드바 디자인 padding 18)
     constexpr float radius = 6.0f;      // 카드·버튼·입력
     constexpr float smallRadius = 5.0f; // 작은 버튼·미터 상자
 

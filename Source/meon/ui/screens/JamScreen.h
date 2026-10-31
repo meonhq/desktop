@@ -16,6 +16,7 @@
 #include "../../core/MeonCore.h"
 #include "../overlays/JamOverlays.h"
 #include "../overlays/HomeOverlays.h"
+#include "../shell/AudioDock.h"
 
 namespace meon::ui
 {
@@ -37,6 +38,7 @@ public:
     std::function<void (const core::ApiError&)> onJoinFailure;
 
     void paint (juce::Graphics&) override;
+    static int devPaints;   // 개발용 (다시 그리기 확인)
     bool keyPressed (const juce::KeyPress&) override;
     /** 단축키 (설정 › 단축키, REMAKE_PLAN 4.4): M 송출, N 모니터, ⌘↑/⌘↓ 마스터 ±1 dB, Enter 채팅 입력, Esc 겹침 닫기 */
     bool handleShortcut (const juce::KeyPress&);
@@ -55,6 +57,9 @@ public:
     int devLastChatLines() const;
     /** 개발용 스냅숏: 채팅 입력 칸에 글을 넣고 커서를 끝에 */
     void devSetChatInput (const juce::String&);
+    /** 개발용 (캡처·CPU 확인·자가 테스트): 헤더의 팝오버를 연다 ("requests" 입장 요청, "notif" 알림) */
+    void devOpenPopover (const juce::String& which) { if (which == "requests") toggleRequests(); else if (which == "notif") toggleNotifications(); else if (which == "gear") gear.onClick(); }
+    const Popover* devPopover() const { return popover.get(); }
     /** 개발용 스냅숏: 방 나가기를 한 번 누른 상태 */
     void devArmLeave() { leave.triggerClick(); }
     /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */
@@ -65,21 +70,57 @@ public:
 private:
     mutable std::map<juce::String, juce::String> knownNames;   // 나간 멤버의 채팅 줄도 이름으로 (마지막으로 본 이름)
 public:
+    /** 프로필 창 (사이드바의 친구를 눌렀을 때도 연다. 홈·사이드바 디자인) */
+    void openProfile (const juce::String& userId);
+    /** 사이드바 친구·알림 목록의 사람 (AppRoot) */
+    void openProfile (const core::UserPublic&);
+    /** 홈·사이드바 디자인 v2: 사이드바가 옆에 있으면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 숨긴다
+        (방 이름·방 설정·입장 요청·입장 코드·방 나가기만). 사이드바가 숨으면(좁은 플러그인 창) 예전 윗줄로 돌아간다 */
+    void setSidebarShown (bool);
+    /** 방 이름 왼쪽 여백 (디자인 hdPL: 보통 18, 맥 창 모드에서 사이드바를 접으면 72: 신호등·접기 버튼 자리) */
+    void setHeaderInset (int);
+    /** 모달이 떠 있다 (모달 층이면 창 전체, 사이드바까지 덮는다) */
+    bool dimsScreen() const { return modal != nullptr; }
+    /** 모달을 띄울 곳 (AppRoot 의 모달 층: 창 전체. 설정 창처럼 사이드바까지 어둡게 덮고 창 가운데). 없으면 방 화면 위.
+        주인은 방 화면이다 (닫으면 방 화면이 지운다) */
+    std::function<void (juce::Component&, bool fullWindow)> hostOverlay;
+    /** 겹침이 생기거나 사라졌다 (AppRoot 가 접기 버튼을 덮개 아래로) */
+    std::function<void()> onOverlayChanged;
+    /** 윗줄의 빈 곳·방 이름을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */
+    std::function<void()> onTitleBarMouseDown;
+    /** 윗줄의 빈 곳·방 이름인지 (mouseDown 의 맥 창 끌기와 같은 조건. 윈도우는 이 자리를 운영체제 제목 줄로 판정한다) */
+    bool titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const
+    {
+        return (hit == this || hit == &roomTitle) && sidebarShown && modal == nullptr && p.y < headerLine();
+    }
+    /** 제목 줄 오른쪽 여백 (디자인 hdPR: 보통 18, 윈도우 독립 앱은 창 버튼 + 12 = 150) */
+    void setHeaderRightInset (int);
+    /** 내 오디오·모니터 카드 묶음 (AppRoot 가 갖는다. 단축키·개발용 접기를 넘긴다) */
+    void setDock (AudioDock*);
+    /** 카드 묶음 자리 (이 화면 좌표: 멤버 아래 왼쪽 열, 오른쪽 채팅 영역 제외) */
+    juce::Rectangle<int> dockSlot() const { return dockSlotRect; }
+    std::function<void()> onDockSlotChanged;
+    void mouseDown (const juce::MouseEvent&) override;
+    void childrenChanged() override { if (onOverlayChanged) onOverlayChanged(); }
 
 private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     core::JamSession& jam;
     const bool plugin;
+    bool sidebarShown = false;
+    int headerInset = metric::padX, headerRightInset = metric::padX;
+    /** 윗줄 아래 선의 y: 사이드바가 옆에 있으면 사이드바·홈 머리말과 같은 51 (높이 52), 아니면 예전 58 (로고 높이) */
+    int headerLine() const { return sidebarShown ? 51 : metric::headerH; }
 
     // 헤더
     Text roomTitle { {}, 600, 16.0f };
     std::unique_ptr<Tag> privateTag;
     struct CodeBox;
     std::unique_ptr<CodeBox> codeBox;
-    Button leave { Button::Kind::secondary, TXT ("방 나가기") };
+    ConfirmIconButton leave { (int) icons::Id::logout };   // 방 나가기 (두 번 눌러 확정, v2.1 최신: 아이콘만)
     IconButton gear { (int) icons::Id::gear, IconButton::Style::plain24, 14.0f };              // 방장: 방 설정
-    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장: 입장 요청 (요청이 없어도 보임)
+    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::ghost32, 18.0f };    // 방장: 입장 요청 (요청이 없어도 보임. v2.1 최신: 테두리 없음)
     IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };           // 알림 (받은 친구 요청, 홈과 같은 목록)
     IconButton settings { (int) icons::Id::gearHeader, IconButton::Style::bordered32, 16.0f }; // 설정
     IconButton lobby { (int) icons::Id::lobby, IconButton::Style::bordered32, 16.0f };         // 로비 보기 (방 최소화)
@@ -87,15 +128,17 @@ private:
     std::unique_ptr<TipOnHover> settingsTip, lobbyTip;
 
     // 겹침 (방 설정·멤버 관리·프로필, 입장 요청 팝오버)
-    std::unique_ptr<Modal> modal;
+    ModalSlot<Modal> modal;   // 지우면 닫히는 애니메이션 (ModalBase)
     std::unique_ptr<Popover> popover;
     std::unique_ptr<JoinRequestList> requestList;
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
     void closePopover();
     void toggleRequests();
+    /** 방 나가기 확인 말풍선: 첫 줄 "한 번 더 누르면 나가요", 둘째 줄은 방장일 때만
+        (혼자면 "나가면 방이 닫혀요": 서버가 마지막 사람이 나가면 방을 닫는다. 다른 사람이 있으면 "돌아올 때까지 방장 자리가 비어요") */
+    void syncLeaveNote();
     void toggleNotifications();
-    void openProfile (const juce::String& userId);
     void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);
 
@@ -106,12 +149,9 @@ private:
     std::unique_ptr<MemberList> memberList;
     juce::Viewport memberViewport;
 
-    // 내 오디오 · 모니터
-    Card sendCard, monCard;
-    Button sendMute { Button::Kind::small, TXT ("송출 정지") }, monMute { Button::Kind::small, TXT ("전체 음소거") };
-    DbSlider sendGain { -30.0f, 10.0f }, master { -30.0f, 6.0f };
-    MeterBox inputMeter { TXT ("입력 미터") }, outputMeter { TXT ("출력 미터") };
-    bool sendOpen = true, monOpen = true;
+    // 내 오디오 · 모니터: 카드 묶음은 AppRoot 가 갖고(공개 방과 같이 쓴다) 이 화면은 자리만 비워 둔다
+    AudioDock* dock = nullptr;
+    juce::Rectangle<int> dockSlotRect;
 
     // 오른쪽 패널 너비 조절 (멤버·패널 사이 18 전체, 끌기·더블클릭하면 기본)
     struct SideResizer;
@@ -167,13 +207,12 @@ private:
     void toggleFold (int panel, bool open);
     void layoutChatContent (int cardW, int cardH);
     void layoutFriendsContent (int cardW, int cardH);
-    int sideAvail = 0, bottomAvail = 0;   // 지난 resized 의 묶음 안 크기 (간격 뺀 값)
-    int foldChatH = 0, foldFriendsH = 0, foldSendW = 0, foldMonW = 0;
-    bool foldFillV = true, foldFillH = true;   // 이번 움직임의 시작·끝이 모두 묶음을 채우는지 (FoldLayout::blend)
+    int sideAvail = 0;   // 지난 resized 의 묶음 안 크기 (간격 뺀 값)
+    int foldChatH = 0, foldFriendsH = 0;
+    bool foldFillV = true;   // 이번 움직임의 시작·끝이 모두 묶음을 채우는지 (FoldLayout::blend)
     juce::Point<int> laidChat, laidFriends;   // 움직이는 동안 배치해 둔 크기 (같으면 다시 배치하지 않는다)
     FoldAnimator fold { *this, [this] { resized(); } };
-    const int foldChat = fold.add ("chat", true), foldFriends = fold.add ("friends", true),
-              foldSend = fold.add ("send", true), foldMon = fold.add ("mon", true);
+    const int foldChat = fold.add ("chat", true), foldFriends = fold.add ("friends", true);   // 내 오디오·모니터는 AudioDock
 };
 
 } // namespace meon::ui

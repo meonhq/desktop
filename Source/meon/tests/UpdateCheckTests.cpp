@@ -207,7 +207,7 @@ public:
             n3.set (github, 404);
             expect (! check (input(), trusted, n3.fetch()).ok);
 
-            // GitHub 대체가 없는 설정 (meon-app 의 엄격 모드)
+            // GitHub 대체가 없는 설정 (app 의 엄격 모드)
             auto in = input();
             in.githubBuildTxt = {};
             FakeNet n4;

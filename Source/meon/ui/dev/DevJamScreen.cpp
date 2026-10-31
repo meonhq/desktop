@@ -1,4 +1,5 @@
 #include "DevJamScreen.h"
+#include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 #include "../Messages.h"
 #include "../../shell/ShellHooks.h"
@@ -52,7 +53,7 @@ struct DevJamScreen::Row : juce::Component
 
     void update (const JamSession::Member& m)
     {
-        avatar.setPart (m.part);
+        avatar.setUser (m.userId);
         avatar.setDimmed (! me && (m.muted || m.state != PeerState::State::connected));
         name.setText ((m.nickname.isNotEmpty() ? m.nickname : m.userId.substring (0, 10)) + (m.isHost ? TXT (" · 방장") : juce::String())
                       + (me ? TXT (" · 나") : juce::String()) + "  " + icons::partLabel (m.part));
@@ -87,8 +88,8 @@ struct DevJamScreen::Row : juce::Component
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (col::line);
-        g.fillRect (0, getHeight() - 1, getWidth(), 1);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, 0.0f, (float) getHeight() - 1.0f, (float) getWidth());
     }
 
     JamSession& jam;

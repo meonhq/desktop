@@ -26,7 +26,7 @@ LookAndFeel::LookAndFeel()
 
     setColour (juce::ComboBox::backgroundColourId, col::white);
     setColour (juce::ComboBox::textColourId, col::ink);
-    setColour (juce::ComboBox::outlineColourId, col::field);
+    setColour (juce::ComboBox::outlineColourId, col::borderSubtle);
     setColour (juce::ComboBox::arrowColourId, col::inkSub);
 
     setColour (juce::PopupMenu::backgroundColourId, juce::Colours::transparentWhite);   // 불투명이면 메뉴 창이 사각 불투명 창이 된다
@@ -59,7 +59,8 @@ void LookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool, 
     const bool enabled = box.isEnabled();
     g.setColour (enabled ? col::white : col::hoverBg);
     g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (enabled ? col::field : col::line);
+    // 선택 상자는 입력 칸과 같은 테두리: #EBEBEB, 열려 있거나 키보드 포커스면 #AAAAAA
+    g.setColour (enabled && (box.isPopupActive() || box.hasKeyboardFocus (true)) ? col::focusBorder : col::borderSubtle);
     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
 
     // 브라우저 select 의 화살표 자리: 작은 아래 화살표
@@ -104,7 +105,7 @@ void LookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int hei
     auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height);
     g.setColour (col::white);
     g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
+    g.setColour (col::borderSubtle);   // 펼친 목록 (선택 상자): 팝오버와 같은 테두리
     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
 }
 
@@ -113,7 +114,7 @@ void LookAndFeel::drawPopupMenuItemWithOptions (juce::Graphics& g, const juce::R
 {
     if (item.isSeparator)
     {
-        g.setColour (col::line);
+        g.setColour (col::borderSubtle);   // 메뉴 구분선 (그리는 구성 요소를 받지 않아 물리 픽셀 맞춤은 하지 않는다)
         g.fillRect (area.reduced (fieldPad, 0).withHeight (1).withY (area.getCentreY()));
         return;
     }

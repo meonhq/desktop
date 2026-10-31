@@ -65,7 +65,7 @@ jobs:
         id: num
         # 릴리스: 커밋 수 (두 플랫폼 같은 번호, D3). 그 밖은 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다).
         # 감시 (배포 설계 4.1): windows-latest 의 build.txt 보다 커야 하고, mac-latest 보다 작으면 옛 커밋이라 멈춘다.
-        # desktop 은 10000 미만 (그 위는 meon-app). dl 매니페스트 감시는 publish-dl 이 한다
+        # desktop 은 10000 미만 (그 위는 app). dl 매니페스트 감시는 publish-dl 이 한다
         run: |
           if [ "$RELEASE" != "true" ]; then echo "build_id=0" >> "$GITHUB_OUTPUT"; echo "BUILD_ID=0" >> "$GITHUB_ENV"; exit 0; fi
           if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch --unshallow --quiet origin; fi
@@ -87,6 +87,14 @@ jobs:
 
       - name: 빌드
         run: cmake --build build --config Release --parallel --target MEON_Standalone MEON_VST3
+
+      # 윈도우 11 러너(아래 win11-check)에서 화면 자가 테스트를 돌릴 실행 파일 (빌드 0 만, 3일 보관)
+      - uses: actions/upload-artifact@v4
+        if: env.RELEASE != 'true'
+        with:
+          name: uitest-exe-${{ github.run_number }}
+          path: build/MEON_artefacts/Release/Standalone/Meon.exe
+          retention-days: 3
 
       # 크래시 덤프(%APPDATA%\MEON\crashes\*.dmp)를 읽을 때 쓰는 디버그 정보. 설치 파일에는 넣지 않는다
       - uses: actions/upload-artifact@v4
@@ -111,6 +119,62 @@ jobs:
           "$T" Aoo   # AOO 소켓: 끊긴 연결에 써도 SIGPIPE 없음(E8), 거부된 연결은 실패(E9)
           "$T" Update   # 업데이트 매니페스트 검증(Ed25519·sha256)과 확인 순서를 이 플랫폼 컴파일러로 빌드한 것으로
 
+      - name: 사이드바 폭 확인 (화면 자가 테스트)
+        # 방 화면 사이드바를 창 폭 1100 / 1280 / 1440 에서 펼친 채·접은 채 들어가 본다 (--uitest=roomsidebar, 빌드 0 전용: ui/dev/UiSelfTest. 마우스 클릭 없이).
+        # 1180 미만은 접힌 아이콘 줄(56), 그 이상은 사용자가 둔 상태. 독립 앱은 숨지 않는다. 결과는 "UITEST INFO room sidebar" 줄. 빌드를 막지는 않는다
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: |
+          EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
+          for w in 1100 1280 1440; do
+            timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=roomsidebar --window=0,0,$w,800 > "uitest-$w.log" 2>&1 || true
+            grep -E "^UITEST (INFO room sidebar|FAIL|DONE)" "uitest-$w.log" || { echo "결과 없음 (폭 $w)"; tail -20 "uitest-$w.log"; }
+          done
+
+      - name: 윈도우 창 윗부분 확인 (화면 자가 테스트)
+        # 운영체제 창 틀은 두고 제목 줄 자리만 앱 내용으로 덮었는지 (MeonWindowFrame: WM_NCCALCSIZE·WM_NCHITTEST).
+        # 영역 판정(위 가장자리·제목 줄 빈 곳·최대화 버튼 HTMAXBUTTON·최소화/닫기·옆·아래 가장자리), 맨 위 줄 픽셀(1px 색 선),
+        # 최대화(내용이 작업 영역 안에 딱, 닫기 버튼이 오른쪽 위 모서리), 버튼 마우스 올림 색, 더블클릭 최대화·복원, Alt+Space 창 메뉴,
+        # 제목 줄 끌기, 최소화. 입력은 SendInput (--uitest=winchrome, 빌드 0 전용). 결과는 "UITEST" 줄. 빌드를 막지는 않는다
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: |
+          EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
+          timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=winchrome --window=0,0,1024,700 > uitest-winchrome.log 2>&1 || true
+          grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-winchrome.log || { echo "결과 없음"; tail -30 uitest-winchrome.log; }
+          # 창 왼쪽·오른쪽·아래 가장자리 픽셀 (흰 바탕 창을 뒤에 깔고): 우리 창(normal)과 운영체제 제목 줄 그대로인 창(baseline, --no-winframe),
+          # 그리고 '제목 표시줄 및 창 테두리에 강조 색 표시'를 켠 채(accent)
+          powershell -NoProfile -Command "try { Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop; 'display 1920x1080' } catch { 'display resolution unchanged' }" || true
+          for v in normal baseline accent; do
+            extra=""; [ "$v" = baseline ] && extra="--no-winframe"
+            [ "$v" = accent ] && powershell -NoProfile -Command "Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name ColorPrevalence -Value 1 -Type DWord" || true
+            timeout 120 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=winedge --window=100,60,800,560 $extra > "uitest-winedge-$v.log" 2>&1 || true
+            echo "── winedge $v"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" "uitest-winedge-$v.log" || { echo "결과 없음"; tail -20 "uitest-winedge-$v.log"; }
+          done
+          # 전체 화면 단축키 (F11, 채팅 입력 중): 모니터 전체, 창 버튼 숨김·맨 위에 대면 보임, 이전 크기로, 끌 때 원래 창 (--uitest=fullscreen)
+          timeout 180 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=fullscreen --window=100,60,1024,680 > uitest-fullscreen.log 2>&1 || true
+          echo "── fullscreen"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-fullscreen.log || { echo "결과 없음"; tail -20 uitest-fullscreen.log; }
+
+      - name: 윈도우 창 상태별 확인 (화면 자가 테스트, 배율 100·125·150%)
+        # 보통·최대화·전체 화면·최소화 후 복원·활성/비활성·사이드바 펼침/접힘·모달·온보딩·로그인 직후·여러 번 오가기·배율 바꾸기에서
+        # 화면에 보이는 창을 앱이 그린 그림과 비교 (네 가장자리 줄·창 버튼 자리), 상태별 내용 자리, 크기 조절 끌기. 캡처는 아티팩트 wincaps-<번호>
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: bash scripts/win_uitest_states.sh build/MEON_artefacts/Release/Standalone/Meon.exe win10
+
+      - name: 배율 되돌리기
+        if: always() && env.RELEASE != 'true'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win_set_scale.ps1 -Steps 0
+
+      - uses: actions/upload-artifact@v4
+        if: always() && env.RELEASE != 'true'
+        with:
+          name: wincaps-${{ github.run_number }}
+          path: wincaps-win10/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
         if: env.RELEASE != 'true'
@@ -118,9 +182,13 @@ jobs:
         run: |
           mkdir -p snapshots
           EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
-          for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast jam jam:host settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
+          for s in login signup verify nickname part discord done home home:create home:filter home:code home:notif home:fail home:toast jam jam:host jam:invite=pending settings:account settings:audio settings:jam settings:privacy settings:about widgets; do
             D=3000; [ "$s" = "home:toast" ] && D=6000; case "$s" in jam*|settings*) D=5000;; esac
             timeout 60 "$EXE" --nickname=테스트 --screen=$s --window=0,0,1280,800 --snapshot-delay=$D --snapshot=snapshots/win_${s//:/_}.png || true
+          done
+          # 방 화면 사이드바: 창 폭별 (1180 미만은 접힌 아이콘 줄)
+          for w in 1100 1440; do
+            timeout 60 "$EXE" --nickname=테스트 --screen=jam --window=0,0,$w,800 --snapshot-delay=5000 --snapshot=snapshots/win_jam_w$w.png || true
           done
           ls -la snapshots
 
@@ -157,6 +225,48 @@ jobs:
           # 앱의 업데이트 확인용 빌드 번호. 설치 파일이 다 올라간 뒤에 올려야 앱이 반쯤 올라간 파일을 받지 않는다.
           echo "${{ steps.num.outputs.build_id }}" > build.txt
           gh release upload windows-latest build.txt
+
+  win11-check:
+    # 윈도우 11 계열(Windows Server 2025 러너)에서 창 윗부분·가장자리 화면 자가 테스트 (빌드 0 만). 빌드 결과를 막지 않는다
+    needs: build
+    if: ${{ !(startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    runs-on: windows-2025
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: uitest-exe-${{ github.run_number }}
+          path: exe
+      - name: 창 윗부분·가장자리 (윈도우 11 계열)
+        run: |
+          EXE=exe/Meon.exe
+          timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=winchrome --window=0,0,1024,700 > uitest-winchrome.log 2>&1 || true
+          grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-winchrome.log || { echo "결과 없음"; tail -30 uitest-winchrome.log; }
+          powershell -NoProfile -Command "try { Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop; 'display 1920x1080' } catch { 'display resolution unchanged' }" || true
+          for v in normal baseline accent; do
+            extra=""; [ "$v" = baseline ] && extra="--no-winframe"
+            [ "$v" = accent ] && powershell -NoProfile -Command "Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name ColorPrevalence -Value 1 -Type DWord" || true
+            timeout 120 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=winedge --window=100,60,800,560 $extra > "uitest-winedge-$v.log" 2>&1 || true
+            echo "── winedge $v"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" "uitest-winedge-$v.log" || { echo "결과 없음"; tail -20 "uitest-winedge-$v.log"; }
+          done
+          # 전체 화면 단축키 (F11, 채팅 입력 중): 모니터 전체, 창 버튼 숨김·맨 위에 대면 보임, 이전 크기로, 끌 때 원래 창 (--uitest=fullscreen)
+          timeout 180 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=fullscreen --window=100,60,1024,680 > uitest-fullscreen.log 2>&1 || true
+          echo "── fullscreen"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-fullscreen.log || { echo "결과 없음"; tail -20 uitest-fullscreen.log; }
+      - name: 창 상태별 (윈도우 11 계열, 배율 100·125·150%)
+        run: bash scripts/win_uitest_states.sh exe/Meon.exe win11
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wincaps-win11-${{ github.run_number }}
+          path: wincaps-win11/
+          retention-days: 7
+          if-no-files-found: ignore
 
   publish-dl:
     # dl.meon.co.kr 에 올린다 (배포 설계 3.6·3.9, scripts/dl_publish.sh): 빌드 파일 → CDN 으로 sha256 확인 → release.json → 채널 매니페스트 마지막.

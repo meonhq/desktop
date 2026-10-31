@@ -121,6 +121,16 @@ void MeonSettings::setChatOpen (bool open)
     props->setValue ("chatOpen", open);
 }
 
+bool MeonSettings::isWindowMaximised() const
+{
+    return props->getBoolValue ("windowMaximised", false);
+}
+
+void MeonSettings::setWindowMaximised (bool maximised)
+{
+    props->setValue ("windowMaximised", maximised);
+}
+
 void MeonSettings::save()
 {
     props->saveIfNeeded();

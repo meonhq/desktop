@@ -1,10 +1,13 @@
 #include "SettingsModal.h"
+#include "../theme/Hairline.h"
 #include "../Messages.h"
 #include "../Links.h"
 #include "../theme/Icons.h"
 #include "../../shell/ShellHooks.h"
 #include "../../MeonAudio.h"
 #include "../../MeonSettings.h"
+#include "../ProfilePhoto.h"
+#include "../theme/Avatars.h"
 
 namespace meon::ui
 {
@@ -33,7 +36,7 @@ namespace
         t.draw (g, r.toFloat());
     }
 
-    /** 펼침 상자 (테두리 #E0E0E0 또는 빨강 테두리, 여백 12) */
+    /** 펼침 상자 (테두리 #EBEBEB 또는 빨강 테두리, 여백 12) */
     struct Panel : juce::Component
     {
         bool danger = false, filled = true;
@@ -41,8 +44,8 @@ namespace
         {
             auto r = getLocalBounds().toFloat();
             if (filled && ! danger) { g.setColour (col::softBg); g.fillRoundedRectangle (r, metric::radius); }
-            g.setColour (danger ? col::dangerLine : col::line);
-            g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+            g.setColour (danger ? col::dangerLine : col::borderSubtle);
+            hairline::roundedBorder (g, *this, r, metric::radius);
         }
     };
 
@@ -272,8 +275,8 @@ namespace
                 {
                     auto r = getLocalBounds().toFloat();
                     if (! danger) { g.setColour (col::softBg); g.fillRoundedRectangle (r, metric::radius); }
-                    g.setColour (danger ? col::dangerLine : col::line);
-                    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+                    g.setColour (danger ? col::dangerLine : col::borderSubtle);
+                    hairline::roundedBorder (g, *this, r, metric::radius);
                 }
                 if (paintFn) paintFn (g);
             }
@@ -573,10 +576,45 @@ namespace
 
     //==========================================================================
     // 프로필
-    struct ProfilePage : SettingsModal::Page
+    struct ProfilePage : SettingsModal::Page,
+                         private juce::ChangeListener
     {
+        /** 프로필 사진 줄 오른쪽 (디자인: 폭 220, 사진 40 · 사이 12 · 미니 버튼 사이 6) */
+        struct PhotoControl : juce::Component
+        {
+            Avatar photo { 40.0f, 20.0f };
+            Button pick { Button::Kind::small, TXT ("올리기") }, reset { Button::Kind::small, TXT ("기본 이미지로") };
+            PhotoControl()
+            {
+                addAndMakeVisible (photo);
+                addAndMakeVisible (pick);
+                addChildComponent (reset);
+                photo.setTitle (TXT ("프로필 사진 변경"));
+            }
+            void resized() override
+            {
+                photo.setBounds (0, 0, 40, 40);
+                int x = 40 + 12;
+                const int y = (40 - metric::smallH) / 2;
+                pick.setBounds (x, y, pick.getIdealWidth(), metric::smallH);
+                x += pick.getWidth() + 6;
+                reset.setBounds (x, y, reset.getIdealWidth(), metric::smallH);
+            }
+        };
+
         ProfilePage (SettingsModal& o, core::MeonCore& c) : Page (o), core (c)
         {
+            add (photoRow).setControl (&photoCtl, 220, 40);
+            photoCtl.photo.onClick = [this] { choosePhoto(); };   // 사진을 눌러도 고르기 (디자인 "프로필 사진 변경")
+            photoCtl.pick.onPress = [this] { choosePhoto(); };
+            photoCtl.reset.onPress = [this]
+            {
+                if (const auto& me = core.store().state().me) profilephoto::remove (me->id);
+                showPhotoDesc ({});
+                refreshPhoto();
+            };
+            avatars::changes().addChangeListener (this);
+            refreshPhoto();
             add (nickRow).setControl (&nick, 220, 32);
             add (partRow).setControl (&part, 220, 32);
             const auto& me = core.store().state().me;
@@ -588,6 +626,52 @@ namespace
                            { TXT ("기타"), TXT ("베이스"), TXT ("드럼"), TXT ("키보드"), TXT ("보컬"), TXT ("그 외") });
             part.setValue (me && me->part ? *me->part : juce::String ("other"));
             part.onValueChange = [this] (const juce::String& v) { core.account().setPart (v); };
+        }
+
+        ~ProfilePage() override { avatars::changes().removeChangeListener (this); }
+
+        void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshPhoto(); }
+
+        void refreshPhoto()
+        {
+            const auto& me = core.store().state().me;
+            const juce::String id = me ? me->id : juce::String();
+            photoCtl.photo.setUser (id);
+            const bool has = id.isNotEmpty() && avatars::myId() == id && avatars::hasMyPhoto();
+            photoCtl.pick.setButtonText (has ? TXT ("변경") : TXT ("올리기"));
+            photoCtl.reset.setVisible (has);
+            photoCtl.resized();
+        }
+
+        /** 빈 값이면 기본 설명 (디자인 파일 문구), 아니면 빨강 오류 */
+        void showPhotoDesc (const juce::String& error)
+        {
+            photoRow.desc = error.isNotEmpty() ? error : TXT ("합주실과 친구 목록에 보여요 · JPG, PNG 5MB 이하");
+            photoRow.descInk = error.isNotEmpty() ? col::danger : col::inkSub;
+            photoRow.repaint();
+        }
+
+        void choosePhoto()
+        {
+            chooser = std::make_unique<juce::FileChooser> (TXT ("프로필 사진"), juce::File(), "*.jpg;*.jpeg;*.png;*.webp");
+            juce::Component::SafePointer<ProfilePage> safe (this);
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [safe] (const juce::FileChooser& fc)
+                                  {
+                                      if (safe != nullptr && fc.getResult().existsAsFile()) safe->applyPickedFile (fc.getResult());
+                                  });
+        }
+
+        /** 고른 파일: 형식·크기 확인 → 256×256 JPEG 로 이 컴퓨터에 저장 (서버에 올리지 않는다) */
+        void applyPickedFile (const juce::File& f)
+        {
+            const auto& me = core.store().state().me;
+            if (! me) return;
+            const auto r = profilephoto::process (f);
+            if (r.error != profilephoto::Error::none) { showPhotoDesc (profilephoto::message (r.error)); return; }
+            if (! profilephoto::save (me->id, r)) { showPhotoDesc (profilephoto::message (profilephoto::Error::unreadable)); return; }
+            showPhotoDesc ({});
+            refreshPhoto();
         }
 
         void saveNick()
@@ -615,6 +699,9 @@ namespace
         }
 
         core::MeonCore& core;
+        SettingsModal::Row photoRow { TXT ("프로필 사진"), TXT ("합주실과 친구 목록에 보여요 · JPG, PNG 5MB 이하") };
+        PhotoControl photoCtl;
+        std::unique_ptr<juce::FileChooser> chooser;
         SettingsModal::Row nickRow { TXT ("닉네임"), TXT ("합주실과 친구 목록에 보이는 이름이에요") };
         SettingsModal::Row partRow { TXT ("파트"), TXT ("방에서 이름 옆에 표시돼요") };
         TextInput nick;
@@ -1009,14 +1096,14 @@ namespace
                     return;
                 }
                 auto r = getLocalBounds().toFloat();
-                g.setColour (col::line);
-                g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+                g.setColour (col::borderSubtle);
+                hairline::roundedBorder (g, *this, r, metric::radius);
                 for (size_t i = 0; i < owner->blocks.size(); ++i)
                 {
                     const int y = (int) i * 38;
-                    // 앞 행의 글자색이 남아 있으므로 구분선 색을 매번 다시 정한다 (디자인 #E0E0E0)
-                    g.setColour (col::line);
-                    if (i > 0) g.fillRect (1, y, getWidth() - 2, 1);
+                    // 앞 행의 글자색이 남아 있으므로 구분선 색을 매번 다시 정한다 (첫 행 위에는 없다)
+                    g.setColour (col::borderSubtle);
+                    if (i > 0) hairline::horizontal (g, *this, 1.0f, (float) y, (float) getWidth() - 2.0f);
                     const auto& u = owner->blocks[i].user;
                     const auto nf = font (600, 13.0f);
                     const auto nm = u.nickname.value_or (u.username);
@@ -1084,7 +1171,7 @@ namespace
                     juce::Rectangle<float> r ((float) x, 0.0f, (float) w, 24.0f);
                     g.setColour (col::white);
                     g.fillRoundedRectangle (r, 5.0f);
-                    g.setColour (col::field);
+                    g.setColour (col::borderSubtle);   // 단축키 글쇠 테두리 (아래 1px 덧선 포함)
                     g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, 1.0f);
                     g.fillRect (r.getX() + 2.0f, r.getBottom() - 1.5f, r.getWidth() - 4.0f, 1.0f);
                     g.setColour (col::ink);
@@ -1178,8 +1265,8 @@ namespace
             licView.setIndents (12, 9);
             licView.setColour (juce::TextEditor::backgroundColourId, col::white);
             licView.setColour (juce::TextEditor::textColourId, col::inkSub);
-            licView.setColour (juce::TextEditor::outlineColourId, col::line);
-            licView.setColour (juce::TextEditor::focusedOutlineColourId, col::line);
+            licView.setColour (juce::TextEditor::outlineColourId, col::borderSubtle);
+            licView.setColour (juce::TextEditor::focusedOutlineColourId, col::borderSubtle);
             licView.setMouseCursor (juce::MouseCursor::NormalCursor);   // 누르는 곳이 아니다 (글자 선택·복사는 된다)
 
             licBox.layoutFn = [this]
@@ -1303,8 +1390,8 @@ namespace
                 auto r = getLocalBounds().toFloat();
                 g.setColour (col::softBg);
                 g.fillRoundedRectangle (r, metric::radius);
-                g.setColour (col::line);
-                g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+                g.setColour (col::borderSubtle);
+                hairline::roundedBorder (g, *this, r, metric::radius);
                 if (paintFn) paintFn (g);
             }
             void resized() override { if (layoutFn) layoutFn(); }
@@ -1374,6 +1461,19 @@ juce::String SettingsModal::tabTitle (Tab t)
     return {};
 }
 
+void SettingsModal::devPickPhoto (const juce::File& f)
+{
+    if (auto* p = dynamic_cast<ProfilePage*> (page.get())) p->applyPickedFile (f);
+}
+
+juce::String SettingsModal::devPhotoRow() const
+{
+    if (auto* p = dynamic_cast<ProfilePage*> (page.get()))
+        return p->photoRow.desc + "|" + p->photoCtl.pick.getButtonText() + "|" + juce::String (p->photoCtl.reset.isVisible() ? 1 : 0)
+               + "|" + juce::String (p->photoRow.descInk == col::danger ? "red" : "grey");
+    return {};
+}
+
 void SettingsModal::showTab (Tab t)
 {
     tab = t;
@@ -1406,10 +1506,8 @@ juce::Rectangle<int> SettingsModal::tabBounds (int i) const
     return { b.getX() + 9, b.getY() + 12 + 32 + 6 + i * 34, tabsW - 18, 32 };
 }
 
-void SettingsModal::paint (juce::Graphics& g)
+void SettingsModal::paintDialog (juce::Graphics& g)
 {
-    g.setColour (col::overlay);
-    g.fillRect (getLocalBounds());
     const auto b = box().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (b, metric::radius);
@@ -1419,8 +1517,8 @@ void SettingsModal::paint (juce::Graphics& g)
         left.addRoundedRectangle (b.getX(), b.getY(), (float) tabsW, b.getHeight(), metric::radius, metric::radius, true, false, true, false);
         g.setColour (col::softBg);
         g.fillPath (left);
-        g.setColour (col::line);
-        g.fillRect (b.getX() + (float) tabsW - 1.0f, b.getY(), 1.0f, b.getHeight());
+        g.setColour (col::borderSubtle);
+        hairline::vertical (g, *this, b.getX() + (float) tabsW - 1.0f, b.getY(), b.getHeight());
         g.setColour (col::ink);
         g.setFont (font (600, 16.0f));
         g.drawText (TXT ("설정"), (int) b.getX() + 18, (int) b.getY() + 12, tabsW - 36, 32, juce::Justification::centredLeft, false);
@@ -1443,8 +1541,8 @@ void SettingsModal::paint (juce::Graphics& g)
     g.setColour (col::ink);
     g.setFont (font (600, 16.0f));
     g.drawText (tabTitle (tab), right.withHeight (57.0f).reduced (18.0f, 0.0f), juce::Justification::centredLeft, false);
-    g.setColour (col::line);
-    g.fillRect (right.getX(), right.getY() + 56.0f, right.getWidth(), 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, right.getX(), right.getY() + 56.0f, right.getWidth());
 }
 
 void SettingsModal::resized()

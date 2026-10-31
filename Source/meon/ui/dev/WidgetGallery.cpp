@@ -239,7 +239,7 @@ void WidgetGallery::resized()
     }
     card.setBounds (18, y, 360, 120);
     chatCard.setBounds (18 + 369, y, 320, 48);
-    popover.setBounds (getWidth() - 18 - 340, y, 340, popover.getPreferredHeight() + 60);
+    popover.setPanelBounds (getWidth() - 18 - 340, y, 340, popover.getPreferredHeight() + 60);
     popover.setContent (nullptr, 60);
     modal.setBounds (getWidth() - 18 - 340 - 18 - 400, y - 20, 400, 220);
 }

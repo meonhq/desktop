@@ -1,4 +1,5 @@
 #include "OnboardingScreen.h"
+#include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 #include "../Messages.h"
 #include "../Links.h"
@@ -93,8 +94,8 @@ namespace
         void paint (juce::Graphics& g) override
         {
             // margin: 0 -18px — 카드 가장자리까지 닿는 선
-            g.setColour (col::line);
-            g.fillRect (-cardPad, 0, getWidth() + cardPad * 2, 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, (float) -cardPad, 0.0f, (float) (getWidth() + cardPad * 2));
         }
         Text question;
         Button link;
@@ -259,8 +260,8 @@ struct LoginView : StepView
         {
             g.setColour (col::softBg);
             g.fillRoundedRectangle (getLocalBounds().toFloat(), metric::radius);
-            g.setColour (col::line);
-            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), metric::radius, 1.0f);
+            g.setColour (col::borderSubtle);
+            hairline::roundedBorder (g, *this, getLocalBounds().toFloat(), metric::radius);
         }
     } forgotBox;
     Footer footer { TXT ("계정이 없나요?"), TXT ("회원가입") };
@@ -360,7 +361,7 @@ struct SignupView : StepView
         uid.transform = [] (const juce::String& s) { return s.toLowerCase(); };
         uid.onChange = [this] { uidState = Uid::idle; uidNote.set ({}); uid.setError (false); update(); };
         uid.onReturn = [this] { checkUid(); };
-        // 디자인 버튼: 32px 흰 면 #D5D5D5, 600 13px #767676, 호버 #F5F5F5·#1A1A1A (= cancel)
+        // 디자인 버튼: 32px 흰 면 #EBEBEB 테두리, 600 13px #767676, 호버 #F5F5F5·#1A1A1A (= cancel)
         check.setKind (Button::Kind::cancel);
         check.onPress = [this] { checkUid(); };
         pw.input.setPassword (true);
@@ -739,7 +740,7 @@ struct PartTile : juce::Button
         auto r = getLocalBounds().toFloat();
         g.setColour (on ? col::accentSoft : col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (on ? col::accent : col::line);
+        g.setColour (on ? col::accent : col::borderSubtle);   // 꺼진 파트 카드 #EBEBEB, 고른 카드 #FFD8E4
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
         // 아이콘 28 + 간격 9 + 글자 500 13
         const float top = r.getCentreY() - (28.0f + 9.0f + 16.0f) * 0.5f;
@@ -841,8 +842,8 @@ struct DiscordView : StepView
             auto r = getLocalBounds().toFloat();
             g.setColour (col::softBg);
             g.fillRoundedRectangle (r, metric::radius);
-            g.setColour (col::line);
-            g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+            g.setColour (col::borderSubtle);
+            hairline::roundedBorder (g, *this, r, metric::radius);
             float y = 12.0f;
             const float tw = (float) getWidth() - 24.0f - 21.0f;
             for (auto& s : items)
@@ -900,7 +901,7 @@ struct DoneView : StepView
         if (! meonCore().isPlugin()) addAndMakeVisible (note);
         const bool login = auth().cameFromLogin();
         const auto& me = state().me;
-        icon.setPart (me && me->part ? *me->part : juce::String ("other"));
+        icon.setUser (me ? me->id : juce::String());
         title.setText (login ? TXT ("다시 오셨네요") : TXT ("준비됐어요, ") + (me && me->nickname ? *me->nickname : juce::String()) + TXT ("님"));
         desc.setText (login ? TXT ("마지막으로 쓰던 설정 그대로 이어서 합주할 수 있어요")
                             : TXT ("공개 방에 들어가거나 직접 방을 만들어 합주를 시작해 보세요"));
@@ -1161,7 +1162,7 @@ void OnboardingScreen::layout()
     const int columnH = metric::logoH + blockGap + cardH;
 
     // 스크롤 영역 안에서 세로 가운데 (margin: auto 0), 위아래 여백 18
-    const int areaH = juce::jmax (getHeight(), columnH + 36);
+    const int areaH = juce::jmax (viewport.getHeight(), columnH + 36);
     content.setSize (getWidth(), areaH);
     const int top = (areaH - columnH) / 2;
     const int x = (getWidth() - w) / 2;
@@ -1178,8 +1179,27 @@ void OnboardingScreen::layout()
 
 void OnboardingScreen::resized()
 {
-    viewport.setBounds (getLocalBounds());
+    viewport.setBounds (getLocalBounds().withTrimmedTop (titleInset));
     layout();
+}
+
+void OnboardingScreen::setTitleBarInset (int inset)
+{
+    if (inset == titleInset) return;
+    titleInset = inset;
+    resized();
+}
+
+void OnboardingScreen::mouseDown (const juce::MouseEvent& e)
+{
+    // 맨 윗줄(신호등 줄)의 빈 곳: 창 끌기·더블클릭 (내용은 그 아래 viewport 안이라 여기로 오지 않는다)
+    if (titleBarDragAt (e.eventComponent, e.getPosition()) && onTitleBarMouseDown)
+        onTitleBarMouseDown();
+}
+
+bool OnboardingScreen::titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const
+{
+    return hit == this && p.y < titleInset;
 }
 
 void OnboardingScreen::paint (juce::Graphics& g)
@@ -1193,8 +1213,8 @@ void OnboardingScreen::paintContent (juce::Graphics& g)
     meon::drawLogo (g, logoBounds.toFloat(), metric::logoDrawH, col::ink);
     g.setColour (col::white);
     g.fillRoundedRectangle (cardBounds.toFloat(), metric::radius);
-    g.setColour (col::line);
-    g.drawRoundedRectangle (cardBounds.toFloat().reduced (0.5f), metric::radius, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::roundedBorder (g, content, cardBounds.toFloat(), metric::radius);   // content 에 그린다 (paintContent)
 }
 
 } // namespace meon::ui

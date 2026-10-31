@@ -55,6 +55,9 @@ public:
     Button* devRoomBarLeave() const;
     int devRoomBarUnread() const;
     std::vector<std::pair<core::Room, juce::Button*>> devRoomCards() const;
+    /** 개발용: 공개 방 목록(뷰포트 안 내용)과 방 카드들 */
+    juce::Component* devRoomList() const;
+    std::vector<juce::Component*> devRoomCardComps() const;
     void openFilter();
     void toggleNotifications();
     void openProfile (const core::UserPublic&);
@@ -64,18 +67,66 @@ public:
     /** Esc: 맨 위 겹침 하나만 (최소화 중 확인 모달 → 그 아래 모달·팝오버) */
     bool closeTopOverlay();
     bool hasOverlay() const { return modal != nullptr || popover != nullptr || confirm != nullptr; }
+    /** 창 전체를 어둡게 덮는 겹침 (모달·확인 창). 팝오버는 덮지 않는다 */
+    bool dimsWindow() const { return modal != nullptr || confirm != nullptr; }
+    /** 겹침이 생기거나 사라졌다 (AppRoot 가 접기 버튼을 덮개 아래로) */
+    std::function<void()> onOverlayChanged;
+    /** 모달·확인 창·알림 팝오버를 띄울 곳 (AppRoot 의 모달 층: 창 전체, 방 화면 위에도 뜬다). 없으면 홈 위.
+        주인은 홈이다 (닫으면 홈이 지운다). fullWindow: 창 전체 크기 + 글자 입력 */
+    std::function<void (juce::Component&, bool fullWindow)> hostOverlay;
+    /** 모달 층의 창이 닫혔는데 홈이 숨어 있다 (방 화면): AppRoot 가 보이는 화면에 글자 입력을 돌려준다 */
+    std::function<void()> onOverlayClosed;
+    /** 알림 목록에서 사람을 눌렀다 (AppRoot: 보이는 화면의 프로필). 없으면 홈의 프로필 */
+    std::function<void (const core::UserPublic&)> onOpenProfileFromList;
+    /** 맨 윗줄(제목 줄)의 빈 곳을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */
+    std::function<void()> onTitleBarMouseDown;
+    /** 제목 줄의 빈 곳인지 (mouseDown 의 맥 창 끌기와 같은 조건. 윈도우는 이 자리를 운영체제 제목 줄로 판정한다) */
+    bool titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const
+    {
+        return hit == this && shell && ! hasOverlay() && p.y < headerLine() && p.x >= shellInset;
+    }
+    void mouseDown (const juce::MouseEvent&) override;
+    void childrenChanged() override { if (onOverlayChanged) onOverlayChanged(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool hitTest (int x, int y) override;
+
+    /** 사이드바 안에 들어간 홈 (홈·사이드바 디자인). 창 전체를 덮되 왼쪽 leftInset(사이드바 폭)은 그리지도 받지도 않는다
+        (모달·확인 창은 창 전체를 덮는다). 머리말은 52 높이의 쪽 제목, 로고·알림·설정과 오른쪽 친구 패널은 사이드바로 옮겨 숨긴다.
+        titleInset: 쪽 제목 왼쪽 여백 (디자인 hdPL: 보통 18, 맥 창 모드에서 사이드바를 접으면 72) */
+    void setShell (int leftInset, const juce::String& title, bool homePage = true, int titleInset = metric::padX, int titleRight = metric::padX);
+    /** 사이드바 안 홈 쪽 (HomePage) 이 쓰는 연결 */
+    std::function<void (int tab)> onOpenSettingsTab;
+    std::function<void()> onShowRooms;
+    /** 알림 목록의 초대 "입장" (AppRoot::acceptInvite: 실패하면 토스트·입장 실패 상자) */
+    std::function<void (const juce::String& inviteId)> onAcceptInvite;
+    bool isShell() const { return shell; }
+    /** 방에 있으면 공개 방 목록 위에 뜨는 내 오디오·모니터 카드 높이 (AppRoot 가 카드를 재서 준다. 0 = 방 밖: 카드도 늘린 여백도 없다).
+        목록 아래 안쪽 여백 = 카드 높이 + 위아래 18 (끝까지 내리면 마지막 방이 카드 위로 다 올라온다) */
+    void setDockHeight (int);
+    /** 카드 자리 (이 화면 좌표): 목록 영역 안 왼쪽·오른쪽·아래 18. 공개 방 쪽이 아니면 빈 사각형 */
+    juce::Rectangle<int> dockSlot() const { return dockSlotRect; }
+    std::function<void()> onDockSlotChanged;
+    /** 친구 추가 (사이드바의 +) */
+    void openAddFriend();
+    void devAddFriendState (const juce::String& state);   // 개발용 (디자인 비교): empty·typing·sent·error·requests
 
     static constexpr int sideWidthApp = 320, sideWidthPlugin = 240;
+    /** 개발용 (다시 그리기 확인): 이 화면·방 카드 paint 횟수 */
+    static int devPaints, devRoomCardPaints;
 
 private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     core::MeonCore& core;
     UpdateHooks update;
     const bool plugin;
+    bool shell = false, shellHome = true;
+    int shellInset = 0, titleInset = metric::padX, titleRightInset = metric::padX;   // 제목 줄 오른쪽 여백: 윈도우 독립 앱 150 (창 버튼 + 12)
+    std::unique_ptr<juce::Component> homePage;   // 사이드바 안 "홈" (HomePage)
+    juce::String pageTitle;
+    int headerLine() const;   // 헤더 아래 구분선 y (사이드바 안이면 51)
 
     // 헤더
     IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };
@@ -99,12 +150,16 @@ private:
     struct FilterButton;
     std::unique_ptr<FilterButton> filterButton;
     Button joinCode { Button::Kind::secondary, TXT ("코드로 입장") }, createRoom { Button::Kind::primary, TXT ("방 만들기") };
+    // 공개 방 쪽 머리말의 방 만들기 (홈·사이드바 디자인 v2.1 최신): + 아이콘만, 툴팁 "방 만들기". 방에 있으면 숨긴다 (사이드바 방 만들기와 같은 규칙)
+    IconButton createIcon { (int) icons::Id::plusHeader, IconButton::Style::ghost32, 18.0f };
     struct RoomCard;
     struct RoomList;
     std::unique_ptr<RoomList> roomList;
     juce::Viewport roomViewport;
     Masonry masonry;
     bool roomsShownOnce = false;   // 처음 목록은 애니메이션 없이
+    int dockH = 0;
+    juce::Rectangle<int> dockSlotRect;
     core::RoomFilter filter;
 
     // 내 오디오
@@ -136,15 +191,18 @@ private:
     void sendFriendRequest();
 
     // 겹침
-    std::unique_ptr<Modal> modal;
+    ModalSlot<Modal> modal;   // 지우면 닫히는 애니메이션 (ModalBase)
     std::unique_ptr<Popover> popover;
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
+    void showLayer (juce::Component&, bool fullWindow);   // hostOverlay 또는 홈 위
+    void overlayClosed();                                 // 글자 입력을 홈(보이면)이나 보이는 화면으로
+    void layoutOverlays();                                // 알림 팝오버 자리 (모달 층이면 그 좌표), 홈 위 모달 크기
 
     // 방 최소화
     struct RoomBar;
     std::unique_ptr<RoomBar> roomBar;
-    std::unique_ptr<Modal> confirm;   // 최소화 중 나가기 확인 (프로필·코드로 입장 모달 위에 뜬다)
+    ModalSlot<Modal> confirm;   // 최소화 중 나가기 확인 (프로필·코드로 입장 모달 위에 뜬다)
     /** 방에 없으면 바로 proceed. roomId 가 지금 방이면 합주 화면으로 돌아간다. 아니면 확인 모달 → 나간 뒤 proceed */
     void confirmLeaveThen (bool create, const juce::String& roomId, std::function<void()> proceed);
     LeaveGuard leaveGuard();

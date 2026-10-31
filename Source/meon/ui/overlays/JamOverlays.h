@@ -98,6 +98,7 @@ public:
     LeaveGuard beforeJoin;
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
     void joinFriendRoomNow();
     core::MeonCore& core;
     core::UserPublic user;
@@ -116,6 +117,10 @@ private:
     Button unblock { Button::Kind::small, TXT ("차단 해제") };
     Button request { Button::Kind::primary, TXT ("친구 요청") }, joinRoom { Button::Kind::primary, TXT ("참여") };
     Button decline { Button::Kind::cancel, TXT ("거절") }, accept { Button::Kind::primary, TXT ("수락") };
+    // 방 초대 (홈·사이드바 디자인 v2.1): 내가 방에 있고 초대할 수 있는 친구면. 친구 패널의 "초대" 와 같은 동작
+    // (3초 동안 "취소", 그 뒤 "초대됨"). 방 화면에서 친구 패널을 빼서 방 안 초대는 여기서 한다
+    Button invite { Button::Kind::primary, TXT ("방 초대") };
+    bool canInvite() const;
     ModalFooter footer;
     juce::String note;
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };

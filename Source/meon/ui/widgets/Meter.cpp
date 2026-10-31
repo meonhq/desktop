@@ -92,7 +92,7 @@ void Meter::paint (juce::Graphics& g)
     auto box = getLocalBounds().toFloat().withSizeKeepingCentre ((float) getWidth(), 19.0f);
     g.setColour (col::softBg);
     g.fillRoundedRectangle (box, metric::smallRadius);
-    g.setColour (col::line);
+    g.setColour (col::borderSubtle);   // 미터 상자 테두리 (미니 버튼이 아니라 #EBEBEB)
     g.drawRoundedRectangle (box.reduced (0.5f), metric::smallRadius, 1.0f);
 
     auto inner = box.reduced (9.0f, 5.0f).withSizeKeepingCentre (box.getWidth() - 18.0f, 7.0f);

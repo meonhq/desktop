@@ -207,6 +207,14 @@ set(MEON_CORE_SOURCES
 # MEON ui: 새 화면·위젯 (리메이크). 앱·플러그인 타깃만 쓴다 (GUI)
 set(MEON_UI_SOURCES
     Source/meon/ui/theme/Tokens.h
+    Source/meon/ui/theme/Hairline.h
+    Source/meon/ui/theme/Hairline.cpp
+    Source/meon/ui/theme/PopoverSurface.h
+    Source/meon/ui/theme/PopoverSurface.cpp
+    Source/meon/ui/theme/Avatars.h
+    Source/meon/ui/theme/Avatars.cpp
+    Source/meon/ui/ProfilePhoto.h
+    Source/meon/ui/ProfilePhoto.cpp
     Source/meon/ui/theme/Icons.h
     Source/meon/ui/theme/Icons.cpp
     Source/meon/ui/theme/LookAndFeel.h
@@ -221,6 +229,10 @@ set(MEON_UI_SOURCES
     Source/meon/ui/widgets/Meter.cpp
     Source/meon/ui/widgets/Display.h
     Source/meon/ui/widgets/Display.cpp
+    Source/meon/ui/widgets/ModalBase.h
+    Source/meon/ui/widgets/ModalBase.cpp
+    Source/meon/ui/shell/AudioDock.h
+    Source/meon/ui/shell/AudioDock.cpp
     Source/meon/ui/widgets/FoldAnimator.h
     Source/meon/ui/widgets/FoldAnimator.cpp
     Source/meon/ui/widgets/Masonry.h
@@ -229,6 +241,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/screens/OnboardingScreen.h
     Source/meon/ui/screens/OnboardingScreen.cpp
     Source/meon/ui/screens/HomeScreen.h
+    Source/meon/ui/screens/HomePage.h
+    Source/meon/ui/screens/HomePage.cpp
     Source/meon/ui/screens/HomeScreen.cpp
     Source/meon/ui/screens/JamScreen.h
     Source/meon/ui/screens/JamScreen.cpp
@@ -240,12 +254,17 @@ set(MEON_UI_SOURCES
     Source/meon/ui/overlays/SettingsModal.h
     Source/meon/ui/overlays/SettingsModal.cpp
     Source/meon/ui/AppRoot.h
+    Source/meon/ui/shell/Sidebar.h
+    Source/meon/ui/shell/Sidebar.cpp
+    Source/meon/ui/shell/WindowChromeView.h
+    Source/meon/ui/shell/WindowChromeView.cpp
     Source/meon/ui/AppRoot.cpp
     Source/meon/ui/dev/WidgetGallery.h
     Source/meon/ui/dev/WidgetGallery.cpp
     Source/meon/ui/dev/DevJamScreen.h
     Source/meon/ui/dev/DevJamScreen.cpp
     Source/meon/ui/dev/UiSelfTest.h
+    Source/meon/ui/dev/RepaintProbe.h
     Source/meon/ui/dev/UiSelfTest.cpp
     Source/meon/ui/dev/ShowcaseEngine.h
     Source/meon/ui/dev/ShowcaseEngine.cpp
@@ -375,7 +394,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
     if (APPLE)
         list (APPEND HEADER_INCLUDES deps/mac/include)
         list (APPEND LIB_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/deps/mac/lib)
-        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsMac.mm Source/meon/MeonKeyRepeat_mac.mm Source/meon/MeonReduceMotion_mac.mm)
+        list (APPEND PlatSourceFiles  Source/CrossPlatformUtilsMac.mm Source/meon/MeonKeyRepeat_mac.mm Source/meon/MeonReduceMotion_mac.mm Source/meon/MeonWindowChrome_mac.mm Source/meon/MeonImageDecode_mac.mm)
     elseif (WIN32)
         # ASIO SDK (Steinberg, 2.3.4 부터 GPLv3 이중 라이선스). 기본 위치: 저장소 옆 ../asiosdk
         if (NOT ASIO_SDK_PATH)
@@ -455,6 +474,14 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonKeyRepeat.h
         Source/meon/MeonReduceMotion.h
         Source/meon/MeonReduceMotion.cpp
+        Source/meon/MeonWindowChrome.h
+        Source/meon/MeonWindowChrome.cpp
+        Source/meon/MeonWindowFrame.h
+        Source/meon/MeonWindowFrame.cpp
+        Source/meon/MeonWindowFrame_win.cpp
+        Source/meon/MeonImageDecode.h
+        Source/meon/MeonImageDecode.cpp
+        Source/meon/MeonImageDecode_win.cpp
         Source/meon/MeonParts.cpp
         Source/meon/MeonParts.h
         Source/meon/MeonEarGuard.cpp
@@ -665,6 +692,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         images/brand/part-icons/part-other-thin.svg
         images/brand/part-icons/part-vocal.svg
         images/brand/part-icons/part-vocal-thin.svg
+        images/brand/avatar/avatar-default.png
         LICENSE
         LICENSE_EXCEPTION
         Source/meon/resources/ThirdPartyNotices.txt

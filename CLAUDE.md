@@ -10,7 +10,7 @@ macOS / Windows 독립 앱 + 플러그인(AU / VST3). UI 문구는 한국어 존
 - `.github/workflows/mac.yml`, `windows.yml` 는 main push 와 PR 에서 **빌드만** 한다. 릴리스는 건드리지 않고, 앱 빌드 번호는 `0`(로컬 빌드와 같음, 자동 업데이트 꺼짐).
 - **릴리스**는 `v*` 태그를 push 하거나 main 에서 `workflow_dispatch` 로 수동 실행할 때만 한다. main 이 아닌 브랜치에서 수동 실행하면 빌드만 한다.
   - 빌드 번호 `MEON_BUILD_ID` = 그 커밋까지의 **커밋 수** (`git rev-list --count HEAD`, D3). 같은 커밋이면 mac·windows 가 같은 번호다.
-    이미 낸 번호보다 커야 하고(같은 커밋을 두 번 릴리스할 수 없다), 10000 미만이다 (10000 이상은 meon-app). '빌드 번호' 단계가 막는다.
+    이미 낸 번호보다 커야 하고(같은 커밋을 두 번 릴리스할 수 없다), 10000 미만이다 (10000 이상은 app). '빌드 번호' 단계가 막는다.
     브리지 전에는 워크플로마다 `run_number` 였다 (마지막 mac 200, windows 208).
   - build 작업이 GitHub 프리릴리스를 갱신한다 (`build.txt` 마지막):
     - macOS: `mac-latest` 에 `meon.dmg`(사용자 다운로드), `MEON-mac.zip`, `build.txt`

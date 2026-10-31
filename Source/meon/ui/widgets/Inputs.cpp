@@ -1,4 +1,5 @@
 #include "Inputs.h"
+#include "ModalBase.h"
 #include "../theme/Icons.h"
 #include "../../core/model/Validation.h"
 
@@ -207,7 +208,9 @@ void TextInput::paint (juce::Graphics& g)
     {
         g.setColour (isEnabled() ? col::white : col::hoverBg);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (error ? col::danger : (isEnabled() ? col::field : col::line));
+        // 테두리: 오류 빨강, 글자 입력 중(포커스) #AAAAAA, 그 밖(비활성 포함) #EBEBEB
+        const bool focused = isEnabled() && ed.hasKeyboardFocus (true);
+        g.setColour (error ? col::danger : (focused ? col::focusBorder : col::borderSubtle));
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
     }
     if (placeholder.isNotEmpty() && ed.getTotalNumChars() == 0)
@@ -258,7 +261,18 @@ void TextInput::textEditorTextChanged (juce::TextEditor&)
 }
 
 void TextInput::textEditorReturnKeyPressed (juce::TextEditor&) { if (onReturn) onReturn(); }
-void TextInput::textEditorEscapeKeyPressed (juce::TextEditor&) { if (onEscape) onEscape(); }
+
+bool TextInput::isComposing() const
+{
+    return ed.composing || (ed.composeEndMs != 0 && juce::Time::getMillisecondCounter() - ed.composeEndMs < 60);
+}
+void TextInput::textEditorEscapeKeyPressed (juce::TextEditor&)
+{
+    if (onEscape) { onEscape(); return; }
+    // 모달 안에서 글자를 넣는 중에도 Esc 는 모달을 닫는다 (입력 칸이 Esc 를 먹어 모달까지 가지 않으므로 넘겨 준다)
+    if (auto* m = findParentComponentOfClass<ModalBase>())
+        m->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+}
 void TextInput::textEditorFocusLost (juce::TextEditor&) { if (onFocusLost) onFocusLost(); }
 
 //==============================================================================
@@ -421,10 +435,11 @@ void OtpInput::paint (juce::Graphics& g)
         const bool filled = cells[i] != ' ';
         g.setColour (col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (error ? col::danger : (filled ? col::inkFaint : col::field));
+        const bool here = focused && i == active;
+        // 오류 빨강, 숫자가 들어간 칸·지금 입력할 칸 #AAAAAA, 빈 칸 #EBEBEB
+        g.setColour (error ? col::danger : (filled || here ? col::focusBorder : col::borderSubtle));
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
 
-        const bool here = focused && i == active;
         if (filled)
         {
             const auto s = juce::String::charToString (cells[i]);
