@@ -1,5 +1,5 @@
 // MEON ui - 레벨 미터 (Logic 스타일, 디자인의 mt()).
-// 상자: 높이 19, 모서리 5, 테두리 #E0E0E0, 면 #FCFCFC, 안쪽 여백 5·9 → 막대 높이 7 (2채널이면 3 + 1 + 3).
+// 상자: 높이 19, 모서리 5, 테두리 #EBEBEB, 면 #FCFCFC, 안쪽 여백 5·9 → 막대 높이 7 (2채널이면 3 + 1 + 3).
 // 막대: 초록(≤ −18) → 노랑(−6) → 주황 → 빨강(0 dB) 그라데이션 위에 남은 부분을 #E5E5EA 로 덮는다.
 // 감쇠 26 dB/s, 피크 1.5초 유지 뒤 10 dB/s. 0 dBFS 에 닿으면 클리핑(빨강)으로 남고 클릭하면 지운다 (Q11 잠정안).
 #pragma once
@@ -45,7 +45,7 @@ private:
     juce::VBlankAttachment vblank;
 };
 
-/** 미터 상자 (높이 19, 테두리 #E0E0E0, 면 #FCFCFC, 모서리 5, 여백 5·9, 막대 7px) — 멤버 행·내 오디오·모니터 */
+/** 미터 상자 (높이 19, 테두리 #EBEBEB, 면 #FCFCFC, 모서리 5, 여백 5·9, 막대 7px) — 멤버 행·내 오디오·모니터 */
 class MeterBox : public juce::Component
 {
 public:
@@ -56,7 +56,7 @@ public:
         auto r = getLocalBounds().toFloat();
         g.setColour (col::softBg);
         g.fillRoundedRectangle (r, metric::smallRadius);
-        g.setColour (col::line);
+        g.setColour (col::borderSubtle);
         g.drawRoundedRectangle (r.reduced (0.5f), metric::smallRadius, 1.0f);
     }
     void resized() override { meter.setBounds (getLocalBounds().reduced (9, 0).withSizeKeepingCentre (getWidth() - 18, 7)); }

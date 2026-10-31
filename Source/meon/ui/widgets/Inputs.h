@@ -6,7 +6,7 @@
 namespace meon::ui
 {
 
-/** 한 줄 입력 (높이 32, 여백 0 12, 글자 400 13px, 테두리 #D5D5D5 / 오류 #D92D20, 모서리 6).
+/** 한 줄 입력 (높이 32, 여백 0 12, 글자 400 13px, 테두리 #EBEBEB / 포커스 #AAAAAA / 오류 #D92D20, 모서리 6).
     TextEditor 를 담고 테두리·placeholder 를 직접 그린다. 한글 입력기는 TextEditor 가 처리한다. */
 class TextInput : public juce::Component, private juce::TextEditor::Listener
 {
@@ -49,6 +49,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void enablementChanged() override;
+    void focusOfChildComponentChanged (FocusChangeType) override { repaint(); }   // 포커스 테두리
 
 private:
     juce::TextEditor ed;

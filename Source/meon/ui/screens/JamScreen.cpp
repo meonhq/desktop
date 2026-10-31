@@ -52,7 +52,7 @@ namespace
 }
 
 //==============================================================================
-/** 입장 코드 상자 (높이 32, 테두리 #E0E0E0, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
+/** 입장 코드 상자 (높이 32, 테두리 #EBEBEB, 면 #FCFCFC): "입장 코드" + 코드(600 14, 자간 2) + 복사 */
 struct JamScreen::CodeBox : juce::Component
 {
     CodeBox()
@@ -499,7 +499,7 @@ struct JamScreen::ChatView : juce::Component
             }
             else
             {
-                // 아바타: 테두리 1px #E0E0E0, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음.
+                // 아바타: 테두리 1px #EBEBEB, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음.
                 // 파트·이름은 받은 순간의 값 (보낸 사람이 바꾸거나 나가도 그대로. 모르면 빈 원·"멤버")
                 Avatar::paintCircle (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
                                                                 (float) avatarSize, (float) avatarSize),
@@ -597,7 +597,7 @@ struct JamScreen::ChatView : juce::Component
 };
 
 //==============================================================================
-/** 채팅 카드 위에 겹쳐 그리는 것: 목록과 입력 줄 사이 구분선(디자인 border-top 1px #E0E0E0),
+/** 채팅 카드 위에 겹쳐 그리는 것: 목록과 입력 줄 사이 구분선 (#EBEBEB),
     입력 남은 글자(100 B 미만일 때)·안내 문구. 채팅 카드의 자식이라 화면 위 모달·덮개보다 아래에 그려진다 */
 struct JamScreen::ChatDecor : juce::Component
 {

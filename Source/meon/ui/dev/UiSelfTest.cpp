@@ -49,6 +49,7 @@ void UiSelfTest::start()
     if (want ("dock"))     addDockTests();
     if (want ("modalanim")) addModalAnimTests();
     if (which == "reducedmotion") addReducedMotionTests();   // MEON_REDUCE_MOTION=1 로 돌린다 (all 에 없음)
+    if (want ("profilefooter")) addProfileFooterTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -3608,6 +3609,85 @@ void UiSelfTest::addWinStatesTests()
         expect (fixes == 0, TXT ("JUCE 창 틀 두께가 한 번도 어긋나지 않음 (맞춤 ") + juce::String (fixes) + TXT ("번)"));
     }, 0);
     add ([sh] { sh->backdrop.reset(); }, 0);
+}
+
+void UiSelfTest::addProfileFooterTests()
+{
+    begin (TXT ("프로필 아래 줄"));
+    // 지금 떠 있는 프로필 창 (홈·방 화면)
+    auto current = [this]() -> ProfileModal*
+    {
+        if (auto* m = dynamic_cast<ProfileModal*> (home().modal.get())) return m;
+        if (auto* j = jam()) return dynamic_cast<ProfileModal*> (j->modal.get());
+        return nullptr;
+    };
+    auto openFor = [this] (const core::UserPublic& u) { if (auto* j = jam(); j != nullptr && j->isShowing()) j->openProfile (u); else home().openProfile (u); };
+    auto closeModal = [this] { if (auto* e = root.getParentComponent()) e->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)); };
+    // 한 사람: 열고 → 프로필을 받은 뒤 (아래 줄 보임 ⇔ 보이는 버튼이 있음)
+    auto checkUser = [this, current, openFor, closeModal] (std::function<std::optional<core::UserPublic>()> pick, const juce::String& caseName)
+    {
+        auto user = std::make_shared<std::optional<core::UserPublic>>();
+        add ([pick, user, openFor] { *user = pick(); if (*user) openFor (**user); }, 0);
+        waitUntilOr (caseName + TXT (": 프로필"), [user, current] { auto* m = current(); return ! *user || (m != nullptr && m->profile.has_value()); }, 4000,
+                     [this, caseName] { expect (false, caseName + TXT (": 프로필을 받지 못함")); });
+        add ([this, user, current, caseName]
+        {
+            if (! *user) { std::cerr << "UITEST INFO profilefooter " << caseName << ": 이 경우가 없음 (가짜 서버)" << std::endl; return; }
+            auto* m = current();
+            if (m == nullptr) return;
+            juce::StringArray shown;
+            for (auto* b : { &m->request, &m->joinRoom, &m->decline, &m->accept, &m->invite })
+                if (b->isVisible()) shown.add (b->getButtonText());
+            const bool footer = m->footer.isVisible();
+            std::cerr << "UITEST INFO profilefooter " << caseName << ": relation " << m->profile->relation << " status " << m->profile->status.value_or ("-")
+                      << " buttons [" << shown.joinIntoString (", ") << "] footer " << (footer ? 1 : 0) << std::endl;
+            expect (footer == ! shown.isEmpty(), caseName + TXT (": 아래 줄 ") + (footer ? TXT ("있음") : TXT ("없음")) + TXT (" / 버튼 ") + juce::String (shown.size()) + TXT ("개"));
+        }, 300);
+        add (closeModal, 400);
+    };
+    auto friendWith = [this] (const char* status, bool inMyRoom) -> std::function<std::optional<core::UserPublic>()>
+    {
+        return [this, status, inMyRoom]() -> std::optional<core::UserPublic>
+        {
+            const auto& st = core.store().state();
+            for (auto& f : st.friends)
+            {
+                if (f.status != status) continue;
+                const bool same = st.currentRoom && f.room && f.room->id == st.currentRoom->id;
+                if (same == inMyRoom) return f.user;
+            }
+            return std::nullopt;
+        };
+    };
+    auto stranger = [this]() -> std::optional<core::UserPublic>
+    {
+        const auto& st = core.store().state();
+        for (auto& r : st.publicRooms)
+            for (auto& m : r.members)
+                if (m.user.id != (st.me ? st.me->id : juce::String()) && st.findFriend (m.user.id) == nullptr) return m.user;
+        return std::nullopt;
+    };
+    auto requester = [this]() -> std::optional<core::UserPublic>
+    {
+        const auto& st = core.store().state();
+        if (! st.friendRequests.empty()) return st.friendRequests.front().from;
+        return std::nullopt;
+    };
+
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    closeToasts();
+    checkUser (stranger, TXT ("친구 아님"));
+    checkUser (requester, TXT ("요청 받음"));
+    checkUser (friendWith ("online", false), TXT ("접속 중 (나는 방 없음)"));
+    checkUser (friendWith ("in_room", false), TXT ("합주 중 (다른 방, 나는 방 없음)"));
+    checkUser (friendWith ("offline", false), TXT ("오프라인"));
+    enterNewRoom();
+    closeToasts();
+    checkUser (friendWith ("online", false), TXT ("접속 중 (나는 방 있음)"));
+    checkUser (friendWith ("in_room", false), TXT ("합주 중 (다른 방)"));
+    checkUser (friendWith ("in_room", true), TXT ("합주 중 (같은 방)"));
+    checkUser (friendWith ("offline", false), TXT ("오프라인 (나는 방 있음)"));
 }
 
 } // namespace meon::ui

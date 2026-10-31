@@ -34,7 +34,7 @@ namespace
         t.draw (g, r.toFloat());
     }
 
-    /** 펼침 상자 (테두리 #E0E0E0 또는 빨강 테두리, 여백 12) */
+    /** 펼침 상자 (테두리 #EBEBEB 또는 빨강 테두리, 여백 12) */
     struct Panel : juce::Component
     {
         bool danger = false, filled = true;
@@ -1085,7 +1085,7 @@ namespace
                     juce::Rectangle<float> r ((float) x, 0.0f, (float) w, 24.0f);
                     g.setColour (col::white);
                     g.fillRoundedRectangle (r, 5.0f);
-                    g.setColour (col::field);
+                    g.setColour (col::borderSubtle);   // 단축키 글쇠 테두리 (아래 1px 덧선 포함)
                     g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, 1.0f);
                     g.fillRect (r.getX() + 2.0f, r.getBottom() - 1.5f, r.getWidth() - 4.0f, 1.0f);
                     g.setColour (col::ink);

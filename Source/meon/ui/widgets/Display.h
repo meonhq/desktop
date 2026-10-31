@@ -23,7 +23,7 @@ private:
     juce::String text { "—" };
 };
 
-/** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #E0E0E0.
+/** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #EBEBEB.
     상태 점(9px, 흰 테두리 2px): 온라인 포인트 #FFD8E4, 방에 있음 #1A1A1A, 오프라인 #D5D5D5 */
 class Avatar : public juce::Component
 {
@@ -74,7 +74,7 @@ private:
     juce::String text;
 };
 
-/** 카드 (테두리 #E0E0E0, 모서리 6, 흰 면). 머리말이 있으면 12·18 여백 + 제목 600 15px + 접기 버튼, 아래 구분선 */
+/** 카드 (테두리 #EBEBEB, 모서리 6, 흰 면). 머리말이 있으면 12·18 여백 + 제목 600 15px + 접기 버튼, 아래 구분선 */
 class Card : public juce::Component
 {
 public:

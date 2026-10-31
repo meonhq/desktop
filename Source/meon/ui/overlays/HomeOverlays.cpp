@@ -465,7 +465,7 @@ void JoinFailDialog::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
+    g.setColour (col::borderSubtle);
     g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
     g.setColour (col::ink);
     g.setFont (font (600, 15.0f));

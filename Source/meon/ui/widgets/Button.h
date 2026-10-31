@@ -1,14 +1,14 @@
 // MEON ui - 버튼. 디자인의 버튼 모양을 종류(Kind)로 묶었다.
 //   primary      32px 포인트 (방 만들기·입장·저장)          600 13px
-//   secondary    32px 흰 면 + #D5D5D5 (방 나가기)         600 13px #1A1A1A
-//   quiet        32px 투명 + #D5D5D5 (설정)               500 13px #767676
+//   secondary    32px 흰 면 + #EBEBEB (방 나가기)         600 13px #1A1A1A
+//   quiet        32px 투명 + #EBEBEB (설정)               500 13px #767676
 //   large        40px 포인트, 폭 가득 (온보딩)               600 13px
 //   dangerOutline 32px 흰 면 + #F2C4C0, 빨간 글자 (방 닫기)
 //   small        19px #FCFCFC + #E0E0E0 (관리·거절·복사…)  400 12px #767676
 //   smallPrimary 19px 포인트 (수락·확인)                     500 12px
 //   smallDanger  19px 빨간 글자 (친구 삭제·차단·내보내기)
-//   largeSecondary 40px 흰 면 + #D5D5D5 (온보딩 "이전")      600 13px #767676
-//   cancel       32px 흰 면 + #D5D5D5 (취소·거절·중복 확인)  600 13px #767676 → 호버 #1A1A1A
+//   largeSecondary 40px 흰 면 + #EBEBEB (온보딩 "이전")      600 13px #767676
+//   cancel       32px 흰 면 + #EBEBEB (취소·공개 방 보기·중복 확인) 600 13px #767676 → 호버 #1A1A1A, 면 #F5F5F5
 //   link         글자만 (전송)                             500 13px #767676 → 호버 #1A1A1A
 //   linkSmall    글자만 (비밀번호를 잊었나요?)             500 12px #767676 → 호버 #1A1A1A
 //   linkUnderline 밑줄 글자 (회원가입·로그인·코드 다시 받기) 500 12px #1A1A1A

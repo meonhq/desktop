@@ -19,10 +19,12 @@ namespace col
     const juce::Colour accent       { 0xFFFFD8E4u };   // 포인트 핑크 면
     const juce::Colour accentHover  { 0xFFF5C2D2u };
     const juce::Colour accentSoft   { 0xFFFFF0F4u };   // 연한 핑크: 선택 칩·경고 면·내 말풍선
-    const juce::Colour line         { 0xFFE0E0E0u };   // 컨트롤 테두리: 작은 버튼(19)·비활성 버튼·입력·호버, 미터 상자·팬 노브·선택 칩, 막대 트랙
-    const juce::Colour borderSubtle { 0xFFEBEBEBu };   // 영역을 나누거나 감싸는 선: 사이드바·제목 줄·카드·패널 테두리, 목록 구분선, 아바타 테두리
-                                                       // (예전 #E0E0E0 이 진해 보여 연하게. 그릴 때는 ui::hairline 으로 물리 픽셀에 맞춘다)
-    const juce::Colour field        { 0xFFD5D5D5u };   // 입력·버튼 테두리
+    const juce::Colour line         { 0xFFE0E0E0u };   // 테두리가 아닌 회색 면: 토글 끔, 슬라이더·진행 막대 트랙, 온보딩 단계 막대, 미터 상자 테두리
+    const juce::Colour miniBorder   { 0xFFE0E0E0u };   // 19px 미니 버튼 테두리 (관리·거절·복사…, 작은 선택 버튼). 이것만 #E0E0E0 (합주 최종 v2)
+    const juce::Colour borderSubtle { 0xFFEBEBEBu };   // 선 하나로 쓰는 테두리: 구분선·카드·팝오버·패널, 입력 칸, 32·40px 버튼(흰 보조·선택·비활성 주 버튼), 아바타
+                                                       // (예전 #E0E0E0·#D5D5D5 가 진해 보여 연하게. 그릴 때는 ui::hairline 으로 물리 픽셀에 맞춘다)
+    const juce::Colour focusBorder  { 0xFFAAAAAAu };   // 입력 칸 포커스 테두리 (코드 칸은 지금 칸·숫자가 들어간 칸)
+    const juce::Colour field        { 0xFFD5D5D5u };   // 체크박스 테두리, 스크롤 막대, 오프라인 점 (입력·버튼 테두리는 borderSubtle)
     const juce::Colour softBg       { 0xFFFCFCFCu };   // 작은 버튼·미터 상자 배경
     const juce::Colour hoverBg      { 0xFFF5F5F5u };   // 호버·비활성 면
     const juce::Colour badgeBg      { 0xFFF5F5F5u };   // 핑 배지·작은 태그(친구·방장·비공개) 면, 글자는 inkSub. 테두리 없음

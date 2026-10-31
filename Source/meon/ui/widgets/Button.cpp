@@ -131,32 +131,32 @@ Button::Look Button::currentLook() const
     {
         case Kind::primary:
         case Kind::large:
-            if (disabled) return { col::hoverBg, col::line, col::inkFaint, 600 };
+            if (disabled) return { col::hoverBg, col::borderSubtle, col::inkFaint, 600 };
             return { col::accent, col::accent, col::ink, 600 };
         case Kind::secondary:
             if (armed) return { col::danger, col::danger, col::white, 600 };   // 방 나가기 확인 상태 (합주 최종 디자인)
-            return { col::white, col::field, disabled ? col::inkFaint : col::ink, 600 };
+            return { col::white, col::borderSubtle, disabled ? col::inkFaint : col::ink, 600 };
         case Kind::quiet:
-            return { juce::Colours::transparentWhite, col::field, disabled ? col::inkFaint : col::inkSub, 500 };
+            return { juce::Colours::transparentWhite, col::borderSubtle, disabled ? col::inkFaint : col::inkSub, 500 };
         case Kind::dangerOutline:
             if (armed) return { col::danger, col::danger, col::white, 600 };
             return { col::white, col::dangerLine, col::danger, 600 };
         case Kind::smallPrimary:
-            if (disabled) return { col::hoverBg, col::line, col::inkFaint, 500 };
+            if (disabled) return { col::hoverBg, col::miniBorder, col::inkFaint, 500 };
             return { col::accent, col::accent, col::ink, 500 };
         case Kind::smallDanger:
-            if (disabled) return { col::hoverBg, col::line, col::inkFaint, 400 };
+            if (disabled) return { col::hoverBg, col::miniBorder, col::inkFaint, 400 };
             if (armed) return { col::danger, col::danger, col::white, 400 };
-            return { col::softBg, col::line, col::danger, 400 };
+            return { col::softBg, col::miniBorder, col::danger, 400 };
         case Kind::small:
             if (armed) return confirmAccent ? Look { col::accent, col::accent, col::ink, 400 } : Look { col::danger, col::danger, col::white, 400 };
             if (on) return { col::accent, col::accent, col::ink, 400 };
             if (pending) return { col::accentSoft, col::accent, col::ink, 400 };
-            if (disabled) return { col::softBg, col::line, col::inkFaint, 400 };
-            return { col::softBg, col::line, col::inkSub, 400 };
+            if (disabled) return { col::softBg, col::miniBorder, col::inkFaint, 400 };
+            return { col::softBg, col::miniBorder, col::inkSub, 400 };
         case Kind::largeSecondary:
         case Kind::cancel:
-            return { col::white, col::field, disabled ? col::inkFaint : col::inkSub, 600 };
+            return { col::white, col::borderSubtle, disabled ? col::inkFaint : col::inkSub, 600 };
         case Kind::link:
         case Kind::linkSmall:
             return { juce::Colours::transparentWhite, juce::Colours::transparentWhite, disabled ? col::inkFaint : col::inkSub, 500 };
@@ -296,7 +296,7 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool)
         auto r = b.withSizeKeepingCentre (32.0f, 32.0f);
         g.setColour (highlighted ? col::hoverBg : col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::field);
+        g.setColour (col::borderSubtle);   // 32px 버튼 테두리
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
         icons::draw (g, (icons::Id) icon, r.withSizeKeepingCentre (iconPx, iconPx), highlighted ? inkHover : ink);
         if (dot)

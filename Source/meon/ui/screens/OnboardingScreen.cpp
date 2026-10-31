@@ -361,7 +361,7 @@ struct SignupView : StepView
         uid.transform = [] (const juce::String& s) { return s.toLowerCase(); };
         uid.onChange = [this] { uidState = Uid::idle; uidNote.set ({}); uid.setError (false); update(); };
         uid.onReturn = [this] { checkUid(); };
-        // 디자인 버튼: 32px 흰 면 #D5D5D5, 600 13px #767676, 호버 #F5F5F5·#1A1A1A (= cancel)
+        // 디자인 버튼: 32px 흰 면 #EBEBEB 테두리, 600 13px #767676, 호버 #F5F5F5·#1A1A1A (= cancel)
         check.setKind (Button::Kind::cancel);
         check.onPress = [this] { checkUid(); };
         pw.input.setPassword (true);
@@ -740,7 +740,7 @@ struct PartTile : juce::Button
         auto r = getLocalBounds().toFloat();
         g.setColour (on ? col::accentSoft : col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (on ? col::accent : col::line);
+        g.setColour (on ? col::accent : col::borderSubtle);   // 꺼진 파트 카드 #EBEBEB, 고른 카드 #FFD8E4
         g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
         // 아이콘 28 + 간격 9 + 글자 500 13
         const float top = r.getCentreY() - (28.0f + 9.0f + 16.0f) * 0.5f;
