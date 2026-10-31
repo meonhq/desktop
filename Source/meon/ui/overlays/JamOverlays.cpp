@@ -1,4 +1,5 @@
 #include "JamOverlays.h"
+#include "../theme/Hairline.h"
 #include "FormText.h"
 #include "../Messages.h"
 #include "../theme/Icons.h"
@@ -127,8 +128,8 @@ void RoomSettingsModal::Body::paint (juce::Graphics& g)
     }
     y += 18;
     // 방 닫기 줄
-    g.setColour (col::line);
-    g.fillRect (0, y, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, (float) y, (float) getWidth());
     g.setColour (col::ink);
     g.setFont (font (500, 14.0f));
     g.drawText (TXT ("방 닫기"), metric::padX, y + 12, w - 150, 17, juce::Justification::centredLeft, false);
@@ -323,8 +324,8 @@ void JoinRequestList::paint (juce::Graphics& g)
         g.drawText (TXT ("새 입장 요청이 없어요"), metric::padX, 6, getWidth() - 36, 41, juce::Justification::centredLeft, true);
     }
     const int y = getHeight() - 38;
-    g.setColour (col::line);
-    g.fillRect (0, y, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, (float) y, (float) getWidth());
     g.setColour (col::inkSub);
     g.setFont (font (400, 12.0f));
     g.drawText (isFull() ? TXT ("방이 가득 찼어요. 자리가 나야 수락할 수 있어요") : TXT ("거절해도 상대에게는 알리지 않아요"),

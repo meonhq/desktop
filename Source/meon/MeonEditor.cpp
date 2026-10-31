@@ -102,6 +102,26 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
         if (meon::devOptions().containsKey ("showcase"))
             devHomePreview = "showcase";   // 소개 페이지 캡처 (ui/dev/Showcase: 가상 인물 승찬으로 자동 가입)
     }
+    // --scaled-snapshot=경로@배율 (예: shot.png@1.25): 화면 배율(윈도우 125%·150%, 맥 레티나 200%)로 그린 화면을 PNG 로 남기고 끝낸다.
+    // 1px 선이 물리 픽셀에 맞는지 보는 용도 (소프트웨어 렌더러에 배율 변환을 건다: 윈도우 앱이 그리는 방식과 같다)
+    if (const auto spec = meon::devOptions()["scaled-snapshot"]; spec.isNotEmpty())
+    {
+        const auto path = spec.upToLastOccurrenceOf ("@", false, false);
+        const float scale = juce::jmax (0.5f, spec.fromLastOccurrenceOf ("@", false, false).getFloatValue());
+        const int delay = meon::devOptions().containsKey ("snapshot-delay") ? meon::devOptions()["snapshot-delay"].getIntValue() : 3500;
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        juce::Timer::callAfterDelay (delay, [safe, path, scale]
+        {
+            if (safe == nullptr) return;
+            const auto img = safe->createComponentSnapshot (safe->getLocalBounds(), true, scale);
+            juce::File f (path);
+            f.deleteFile();
+            juce::FileOutputStream out (f);
+            if (out.openedOk()) juce::PNGImageFormat().writeImageToStream (img, out);
+            std::cerr << "MEON dev: scaled snapshot " << path << " " << img.getWidth() << "x" << img.getHeight() << std::endl;
+            juce::JUCEApplicationBase::quit();
+        });
+    }
    #endif
     core.auth().addListener (this);
     core.store().addListener (this);

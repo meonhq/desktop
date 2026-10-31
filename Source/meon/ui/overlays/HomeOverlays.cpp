@@ -1,4 +1,5 @@
 #include "HomeOverlays.h"
+#include "../theme/Hairline.h"
 #include "../Messages.h"
 #include "../theme/Icons.h"
 #include "FormText.h"
@@ -25,8 +26,8 @@ void ModalFooter::setNote (const juce::String& n, juce::Colour c)
 
 void ModalFooter::paint (juce::Graphics& g)
 {
-    g.setColour (col::line);
-    g.fillRect (0, 0, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
     if (note.isNotEmpty())
     {
         int right = getWidth() - metric::padX;
@@ -157,8 +158,8 @@ int LeaveConfirmModal::textHeight() const
 
 void LeaveConfirmModal::Body::paint (juce::Graphics& g)
 {
-    g.setColour (col::line);
-    g.fillRect (0, 0, getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
     juce::TextLayout t;
     t.createLayout (owner.text(), (float) (getWidth() - metric::padX * 2));
     t.draw (g, juce::Rectangle<float> ((float) metric::padX, 18.0f, (float) (getWidth() - metric::padX * 2), (float) owner.textHeight()));
@@ -469,8 +470,8 @@ void JoinFailDialog::paint (juce::Graphics& g)
     g.setColour (col::ink);
     g.setFont (font (600, 15.0f));
     g.drawText (title, metric::padX, 0, getWidth() - 36 - 30, 48, juce::Justification::centredLeft, true);
-    g.setColour (col::line);
-    g.fillRect (1, 48, getWidth() - 2, 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 1.0f, 48.0f, (float) getWidth() - 2.0f);
     juce::AttributedString a;
     a.append (body, font (400, 13.0f), col::inkSub);
     a.setLineSpacing (13.0f * 0.6f);

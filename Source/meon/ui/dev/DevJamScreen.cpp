@@ -1,4 +1,5 @@
 #include "DevJamScreen.h"
+#include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 #include "../Messages.h"
 #include "../../shell/ShellHooks.h"
@@ -87,8 +88,8 @@ struct DevJamScreen::Row : juce::Component
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (col::line);
-        g.fillRect (0, getHeight() - 1, getWidth(), 1);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, 0.0f, (float) getHeight() - 1.0f, (float) getWidth());
     }
 
     JamSession& jam;

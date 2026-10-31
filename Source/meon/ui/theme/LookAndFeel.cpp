@@ -113,7 +113,7 @@ void LookAndFeel::drawPopupMenuItemWithOptions (juce::Graphics& g, const juce::R
 {
     if (item.isSeparator)
     {
-        g.setColour (col::line);
+        g.setColour (col::borderSubtle);   // 메뉴 구분선 (그리는 구성 요소를 받지 않아 물리 픽셀 맞춤은 하지 않는다)
         g.fillRect (area.reduced (fieldPad, 0).withHeight (1).withY (area.getCentreY()));
         return;
     }

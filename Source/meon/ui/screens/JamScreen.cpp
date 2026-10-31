@@ -1,4 +1,5 @@
 #include "JamScreen.h"
+#include "../theme/Hairline.h"
 #include "../Messages.h"
 #include "../../core/api/ApiJson.h"
 #include "../../core/util/ChatLinks.h"
@@ -45,7 +46,7 @@ namespace
     struct Separator : juce::Component
     {
         Separator() { setInterceptsMouseClicks (false, false); }
-        void paint (juce::Graphics& g) override { g.fillAll (col::line); }
+        void paint (juce::Graphics& g) override { g.setColour (col::borderSubtle); hairline::line (g, *this, getLocalBounds().toFloat()); }
     };
 }
 
@@ -77,8 +78,8 @@ struct JamScreen::CodeBox : juce::Component
         auto r = getLocalBounds().toFloat();
         g.setColour (col::softBg);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, *this, r, metric::radius);
         const auto lf = font (400, 12.0f);
         const int lw = (int) std::ceil (textWidth (lf, TXT ("입장 코드")));
         g.setColour (col::inkSub);
@@ -254,10 +255,10 @@ struct JamScreen::MemberRow : juce::Component
                 g.drawText (t, cx, 9, 120, 17, juce::Justification::centredLeft, true);
             }
         }
-        if (getY() > 0)
+        if (getY() > 0)   // 첫 행 위에는 없다
         {
-            g.setColour (col::line);
-            g.fillRect (0, 0, getWidth(), 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
         }
     }
 
@@ -607,8 +608,8 @@ struct JamScreen::ChatDecor : juce::Component
         if (owner.chatViewport.isVisible())   // resized() 가 목록 아래 1px 를 비워 둔다
         {
             const auto vb = owner.chatViewport.getBounds();
-            g.setColour (col::line);
-            g.fillRect (vb.getX(), vb.getBottom(), vb.getWidth(), 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, (float) vb.getX(), (float) vb.getBottom(), (float) vb.getWidth());
         }
         // 바이트 수: 900 부터 "962 / 1000" (400 12 #767676, 고정폭), 1000 을 넘으면 #D92D20 (합주 최종 디자인 7. 남은 글자 표시 대신)
         if (! owner.chatCounterArea.isEmpty())
@@ -823,8 +824,8 @@ struct JamScreen::FilePlayer : juce::Component
         auto r = getLocalBounds().toFloat();
         g.setColour (col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, *this, r, metric::radius);
         if (! loaded())
         {
             const int w = emptyTextW (getWidth());
@@ -1324,8 +1325,8 @@ void JamScreen::paint (juce::Graphics& g)
         meon::drawLogo (g, juce::Rectangle<float> ((float) metric::padX, 12.0f, logoW, (float) metric::logoH), metric::logoDrawH, col::ink,
                         juce::Justification::centredLeft);
     // 로고 오른쪽 세로 구분선은 없다 (디자인 파일과 다른 결정, REMAKE_PLAN 3.6). 로고 끝에서 18px 뒤에 방 제목
-    g.setColour (col::line);
-    g.fillRect (0, headerLine(), getWidth(), 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 0.0f, (float) headerLine(), (float) getWidth());   // 제목 줄 아래
 
 
 }

@@ -207,6 +207,8 @@ set(MEON_CORE_SOURCES
 # MEON ui: 새 화면·위젯 (리메이크). 앱·플러그인 타깃만 쓴다 (GUI)
 set(MEON_UI_SOURCES
     Source/meon/ui/theme/Tokens.h
+    Source/meon/ui/theme/Hairline.h
+    Source/meon/ui/theme/Hairline.cpp
     Source/meon/ui/theme/Icons.h
     Source/meon/ui/theme/Icons.cpp
     Source/meon/ui/theme/LookAndFeel.h

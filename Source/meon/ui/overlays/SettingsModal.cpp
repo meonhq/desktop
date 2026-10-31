@@ -1,4 +1,5 @@
 #include "SettingsModal.h"
+#include "../theme/Hairline.h"
 #include "../Messages.h"
 #include "../Links.h"
 #include "../theme/Icons.h"
@@ -41,8 +42,8 @@ namespace
         {
             auto r = getLocalBounds().toFloat();
             if (filled && ! danger) { g.setColour (col::softBg); g.fillRoundedRectangle (r, metric::radius); }
-            g.setColour (danger ? col::dangerLine : col::line);
-            g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+            g.setColour (danger ? col::dangerLine : col::borderSubtle);
+            hairline::roundedBorder (g, *this, r, metric::radius);
         }
     };
 
@@ -272,8 +273,8 @@ namespace
                 {
                     auto r = getLocalBounds().toFloat();
                     if (! danger) { g.setColour (col::softBg); g.fillRoundedRectangle (r, metric::radius); }
-                    g.setColour (danger ? col::dangerLine : col::line);
-                    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+                    g.setColour (danger ? col::dangerLine : col::borderSubtle);
+                    hairline::roundedBorder (g, *this, r, metric::radius);
                 }
                 if (paintFn) paintFn (g);
             }
@@ -1009,14 +1010,14 @@ namespace
                     return;
                 }
                 auto r = getLocalBounds().toFloat();
-                g.setColour (col::line);
-                g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+                g.setColour (col::borderSubtle);
+                hairline::roundedBorder (g, *this, r, metric::radius);
                 for (size_t i = 0; i < owner->blocks.size(); ++i)
                 {
                     const int y = (int) i * 38;
-                    // 앞 행의 글자색이 남아 있으므로 구분선 색을 매번 다시 정한다 (디자인 #E0E0E0)
-                    g.setColour (col::line);
-                    if (i > 0) g.fillRect (1, y, getWidth() - 2, 1);
+                    // 앞 행의 글자색이 남아 있으므로 구분선 색을 매번 다시 정한다 (첫 행 위에는 없다)
+                    g.setColour (col::borderSubtle);
+                    if (i > 0) hairline::horizontal (g, *this, 1.0f, (float) y, (float) getWidth() - 2.0f);
                     const auto& u = owner->blocks[i].user;
                     const auto nf = font (600, 13.0f);
                     const auto nm = u.nickname.value_or (u.username);
@@ -1178,8 +1179,8 @@ namespace
             licView.setIndents (12, 9);
             licView.setColour (juce::TextEditor::backgroundColourId, col::white);
             licView.setColour (juce::TextEditor::textColourId, col::inkSub);
-            licView.setColour (juce::TextEditor::outlineColourId, col::line);
-            licView.setColour (juce::TextEditor::focusedOutlineColourId, col::line);
+            licView.setColour (juce::TextEditor::outlineColourId, col::borderSubtle);
+            licView.setColour (juce::TextEditor::focusedOutlineColourId, col::borderSubtle);
             licView.setMouseCursor (juce::MouseCursor::NormalCursor);   // 누르는 곳이 아니다 (글자 선택·복사는 된다)
 
             licBox.layoutFn = [this]
@@ -1303,8 +1304,8 @@ namespace
                 auto r = getLocalBounds().toFloat();
                 g.setColour (col::softBg);
                 g.fillRoundedRectangle (r, metric::radius);
-                g.setColour (col::line);
-                g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+                g.setColour (col::borderSubtle);
+                hairline::roundedBorder (g, *this, r, metric::radius);
                 if (paintFn) paintFn (g);
             }
             void resized() override { if (layoutFn) layoutFn(); }
@@ -1419,8 +1420,8 @@ void SettingsModal::paint (juce::Graphics& g)
         left.addRoundedRectangle (b.getX(), b.getY(), (float) tabsW, b.getHeight(), metric::radius, metric::radius, true, false, true, false);
         g.setColour (col::softBg);
         g.fillPath (left);
-        g.setColour (col::line);
-        g.fillRect (b.getX() + (float) tabsW - 1.0f, b.getY(), 1.0f, b.getHeight());
+        g.setColour (col::borderSubtle);
+        hairline::vertical (g, *this, b.getX() + (float) tabsW - 1.0f, b.getY(), b.getHeight());
         g.setColour (col::ink);
         g.setFont (font (600, 16.0f));
         g.drawText (TXT ("설정"), (int) b.getX() + 18, (int) b.getY() + 12, tabsW - 36, 32, juce::Justification::centredLeft, false);
@@ -1443,8 +1444,8 @@ void SettingsModal::paint (juce::Graphics& g)
     g.setColour (col::ink);
     g.setFont (font (600, 16.0f));
     g.drawText (tabTitle (tab), right.withHeight (57.0f).reduced (18.0f, 0.0f), juce::Justification::centredLeft, false);
-    g.setColour (col::line);
-    g.fillRect (right.getX(), right.getY() + 56.0f, right.getWidth(), 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, right.getX(), right.getY() + 56.0f, right.getWidth());
 }
 
 void SettingsModal::resized()

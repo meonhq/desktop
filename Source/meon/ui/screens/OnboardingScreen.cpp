@@ -1,4 +1,5 @@
 #include "OnboardingScreen.h"
+#include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 #include "../Messages.h"
 #include "../Links.h"
@@ -93,8 +94,8 @@ namespace
         void paint (juce::Graphics& g) override
         {
             // margin: 0 -18px — 카드 가장자리까지 닿는 선
-            g.setColour (col::line);
-            g.fillRect (-cardPad, 0, getWidth() + cardPad * 2, 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, (float) -cardPad, 0.0f, (float) (getWidth() + cardPad * 2));
         }
         Text question;
         Button link;
@@ -259,8 +260,8 @@ struct LoginView : StepView
         {
             g.setColour (col::softBg);
             g.fillRoundedRectangle (getLocalBounds().toFloat(), metric::radius);
-            g.setColour (col::line);
-            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), metric::radius, 1.0f);
+            g.setColour (col::borderSubtle);
+            hairline::roundedBorder (g, *this, getLocalBounds().toFloat(), metric::radius);
         }
     } forgotBox;
     Footer footer { TXT ("계정이 없나요?"), TXT ("회원가입") };
@@ -841,8 +842,8 @@ struct DiscordView : StepView
             auto r = getLocalBounds().toFloat();
             g.setColour (col::softBg);
             g.fillRoundedRectangle (r, metric::radius);
-            g.setColour (col::line);
-            g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+            g.setColour (col::borderSubtle);
+            hairline::roundedBorder (g, *this, r, metric::radius);
             float y = 12.0f;
             const float tw = (float) getWidth() - 24.0f - 21.0f;
             for (auto& s : items)
@@ -1207,8 +1208,8 @@ void OnboardingScreen::paintContent (juce::Graphics& g)
     meon::drawLogo (g, logoBounds.toFloat(), metric::logoDrawH, col::ink);
     g.setColour (col::white);
     g.fillRoundedRectangle (cardBounds.toFloat(), metric::radius);
-    g.setColour (col::line);
-    g.drawRoundedRectangle (cardBounds.toFloat().reduced (0.5f), metric::radius, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::roundedBorder (g, content, cardBounds.toFloat(), metric::radius);   // content 에 그린다 (paintContent)
 }
 
 } // namespace meon::ui

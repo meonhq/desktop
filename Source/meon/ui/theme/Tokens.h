@@ -19,7 +19,9 @@ namespace col
     const juce::Colour accent       { 0xFFFFD8E4u };   // 포인트 핑크 면
     const juce::Colour accentHover  { 0xFFF5C2D2u };
     const juce::Colour accentSoft   { 0xFFFFF0F4u };   // 연한 핑크: 선택 칩·경고 면·내 말풍선
-    const juce::Colour line         { 0xFFE0E0E0u };   // 카드 테두리·구분선
+    const juce::Colour line         { 0xFFE0E0E0u };   // 컨트롤 테두리: 작은 버튼(19)·비활성 버튼·입력·호버, 미터 상자·팬 노브·선택 칩, 막대 트랙
+    const juce::Colour borderSubtle { 0xFFEBEBEBu };   // 영역을 나누거나 감싸는 선: 사이드바·제목 줄·카드·패널 테두리, 목록 구분선, 아바타 테두리
+                                                       // (예전 #E0E0E0 이 진해 보여 연하게. 그릴 때는 ui::hairline 으로 물리 픽셀에 맞춘다)
     const juce::Colour field        { 0xFFD5D5D5u };   // 입력·버튼 테두리
     const juce::Colour softBg       { 0xFFFCFCFCu };   // 작은 버튼·미터 상자 배경
     const juce::Colour hoverBg      { 0xFFF5F5F5u };   // 호버·비활성 면

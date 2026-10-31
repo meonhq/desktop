@@ -1,4 +1,5 @@
 #include "HomeScreen.h"
+#include "../theme/Hairline.h"
 #include "HomePage.h"
 #include "../Messages.h"
 #include "../Links.h"
@@ -32,7 +33,7 @@ namespace
 struct HomeScreen::Separator : juce::Component
 {
     Separator() { setInterceptsMouseClicks (false, false); }
-    void paint (juce::Graphics& g) override { g.fillAll (col::line); }
+    void paint (juce::Graphics& g) override { g.setColour (col::borderSubtle); hairline::line (g, *this, getLocalBounds().toFloat()); }
 };
 
 /** 필터 버튼 24×24 (아이콘 14px). 필터가 켜져 있으면 진한 색 + 포인트 색 점 */
@@ -104,8 +105,8 @@ struct HomeScreen::RoomCard : juce::Component
         auto r = getLocalBounds().toFloat();
         g.setColour (col::white);
         g.fillRoundedRectangle (r, metric::radius);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, *this, r, metric::radius);
 
         const int x = 18, w = getWidth() - 36;
         int y = 13;
@@ -389,8 +390,8 @@ struct HomeScreen::RoomBar : juce::Component,
     void paint (juce::Graphics& g) override
     {
         g.fillAll (isMouseOver (true) ? col::rowHover : col::white);
-        g.setColour (col::line);
-        g.fillRect (0, 0, getWidth(), 1);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
 
         const auto& s = owner.core.store().state();
         if (! s.currentRoom) return;
@@ -1196,16 +1197,16 @@ void HomeScreen::paint (juce::Graphics& g)
         const auto logoArea = juce::Rectangle<int> (metric::padX, 12, 200, metric::logoH);
         meon::drawLogo (g, logoArea.toFloat(), metric::logoDrawH, col::ink, juce::Justification::centredLeft);
     }
-    g.setColour (col::line);
-    g.fillRect (x0, headerLine(), getWidth() - x0, 1);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, (float) x0, (float) headerLine(), (float) (getWidth() - x0));   // 제목 줄 아래
 
     int y = headerLine() + 1;
     if (showUpdate())
     {
         g.setColour (col::hoverBg);
         g.fillRect (x0, y, getWidth() - x0, 37);
-        g.setColour (col::line);
-        g.fillRect (x0, y + 37, getWidth() - x0, 1);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, (float) x0, (float) (y + 37), (float) (getWidth() - x0));
         const auto st = updateState();
         const auto f1 = font (500, 13.0f);
         const auto t1 = st == UpdateHooks::State::failed ? TXT ("새 버전을 받지 못했어요") : TXT ("새 버전이 나왔어요");

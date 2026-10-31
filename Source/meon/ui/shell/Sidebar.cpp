@@ -1,4 +1,5 @@
 #include "Sidebar.h"
+#include "../theme/Hairline.h"
 #include "../../MeonTheme.h"
 #include <map>
 
@@ -431,15 +432,15 @@ struct Sidebar::Body : public juce::Component
                     break;
                 }
                 case Kind::separator:
-                    g.setColour (col::line);
-                    g.fillRect (r.r);
+                    g.setColour (col::borderSubtle);
+                    hairline::line (g, *this, r.r.toFloat());
                     break;
                 case Kind::invite:
                 {
                     g.setColour (col::white);
                     g.fillRoundedRectangle (rf, 6.0f);
-                    g.setColour (col::line);
-                    g.drawRoundedRectangle (rf.reduced (0.5f), 6.0f, 1.0f);
+                    g.setColour (col::borderSubtle);
+                    hairline::roundedBorder (g, *this, rf, 6.0f);
                     // v2.1: 안쪽 10 (테두리 1 + 9), 아바타 줄 34 (아바타 32 가운데), 제목 17 · 간격 2 · 보조 16
                     const auto av = juce::Rectangle<float> (rf.getX() + 10.0f, rf.getY() + 11.0f, 32.0f, 32.0f);
                     Avatar::paintCircle (g, av, r.part, 16.0f, col::ink, true);
@@ -753,14 +754,14 @@ void Sidebar::resized()
 void Sidebar::paint (juce::Graphics& g)
 {
     g.fillAll (sideBg);
-    g.setColour (col::line);
-    // 오른쪽 선: 맥 창 모드에서 접히면 52 부터 (맨 윗줄이 본문 제목 줄과 이어진다, 디자인 divTop)
+    g.setColour (col::borderSubtle);
+    // 오른쪽 선 (사이드바·본문 경계): 맥 창 모드에서 접히면 52 부터 (맨 윗줄이 본문 제목 줄과 이어진다, 디자인 divTop)
     const int divTop = chrome == Chrome::macWindow && shut() ? headerH : 0;
-    g.fillRect (getWidth() - 1, divTop, 1, getHeight() - divTop);
+    hairline::vertical (g, *this, (float) getWidth() - 1.0f, (float) divTop, (float) (getHeight() - divTop));
     // 맨 윗줄 아래 선: 접혔을 때만 (펼치면 로고·메뉴와 이어진다, 디자인 topLine)
     if (shut())
-        g.fillRect (0, topRowH() - 1, divTop > 0 ? getWidth() : getWidth() - 1, 1);
-    g.fillRect (0, getHeight() - profileH, getWidth() - 1, 1);
+        hairline::horizontal (g, *this, 0.0f, (float) topRowH() - 1.0f, (float) (divTop > 0 ? getWidth() : getWidth() - 1));
+    hairline::horizontal (g, *this, 0.0f, (float) (getHeight() - profileH), (float) (getWidth() - 1));   // 맨 아래 프로필 위
 
     // 내 프로필 줄
     const auto pb = profileBounds().toFloat();

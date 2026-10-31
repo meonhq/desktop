@@ -1,4 +1,5 @@
 #include "Display.h"
+#include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 
 namespace meon::ui
@@ -65,7 +66,7 @@ void Avatar::paintCircle (juce::Graphics& g, juce::Rectangle<float> r, const juc
         g.setColour (col::white);
         g.fillEllipse (r);
     }
-    g.setColour (col::line);
+    g.setColour (col::borderSubtle);   // 아바타 원 테두리 (곡선이라 늘 부드럽게 그려진다: 물리 픽셀 맞춤은 하지 않는다)
     g.drawEllipse (r.reduced (0.5f), 1.0f);
     if (partKey.isNotEmpty())
         icons::drawPart (g, partKey, r, iconPx, inkColour);   // 얇은 아이콘 (PartWeight::thin)
@@ -175,16 +176,16 @@ void Card::paint (juce::Graphics& g)
         // 옆으로 접는 카드(내 오디오·모니터)는 접혀도 아래에 미터가 남으므로 늘 긋는다
         if (fold > 0.0f || ! collapsible || sidewaysFold)
         {
-            g.setColour (col::line);
-            g.fillRect (1, headerHeight(), getWidth() - 2, 1);
+            g.setColour (col::borderSubtle);
+            hairline::horizontal (g, *this, 1.0f, (float) headerHeight(), (float) getWidth() - 2.0f);
         }
     }
 }
 
 void Card::paintOverChildren (juce::Graphics& g)
 {
-    g.setColour (col::line);
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), metric::radius, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::roundedBorder (g, *this, getLocalBounds().toFloat(), metric::radius);
 }
 
 //==============================================================================
@@ -251,8 +252,8 @@ void Modal::paint (juce::Graphics& g)
         g.setColour (col::ink);
         g.setFont (font (600, 15.0f));
         g.drawText (title, box.withHeight (48.0f).reduced ((float) metric::padX, 0.0f).toNearestInt(), juce::Justification::centredLeft, true);
-        g.setColour (col::line);
-        g.fillRect (box.getX(), box.getY() + 48.0f, box.getWidth(), 1.0f);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, box.getX(), box.getY() + 48.0f, box.getWidth());
     }
 }
 
@@ -419,8 +420,8 @@ void Popover::paint (juce::Graphics& g)
         g.setFont (font (500, 13.0f));
         g.drawText (count, juce::Rectangle<float> ((float) metric::padX + tw + 6.0f, 0.0f, 60.0f, 43.0f), juce::Justification::centredLeft, false);
     }
-    g.setColour (col::line);
-    g.fillRect (1.0f, 43.0f, r.getWidth() - 2.0f, 1.0f);
+    g.setColour (col::borderSubtle);
+    hairline::horizontal (g, *this, 1.0f, 43.0f, r.getWidth() - 2.0f);
 }
 
 //==============================================================================

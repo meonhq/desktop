@@ -1,4 +1,5 @@
 #include "HomePage.h"
+#include "../theme/Hairline.h"
 #include "../../shell/ShellHooks.h"
 
 namespace meon::ui
@@ -10,14 +11,14 @@ namespace
     constexpr int pad = 18, gap = 9, cardHeadH = 48, readyH = 1 + cardHeadH + 9 + 36 + 2 + 58 + 2 + 36 + 2 + 36 + 9;
     constexpr int recentRowH = 48, recentGap = 2;
 
-    void paintCard (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, const juce::String& count = {})
+    void paintCard (juce::Graphics& g, const juce::Component& c, juce::Rectangle<int> r, const juce::String& title, const juce::String& count = {})
     {
         const auto rf = r.toFloat();
         g.setColour (col::white);
         g.fillRoundedRectangle (rf, 6.0f);
-        g.setColour (col::line);
-        g.drawRoundedRectangle (rf.reduced (0.5f), 6.0f, 1.0f);
-        g.fillRect (r.getX() + 1, r.getY() + cardHeadH, r.getWidth() - 2, 1);
+        g.setColour (col::borderSubtle);
+        hairline::roundedBorder (g, c, rf, 6.0f);
+        hairline::horizontal (g, c, (float) r.getX() + 1.0f, (float) (r.getY() + cardHeadH), (float) r.getWidth() - 2.0f);
         const auto tf = font (600, 15.0f);
         g.setColour (col::ink);
         g.setFont (tf);
@@ -421,7 +422,7 @@ void HomePage::paint (juce::Graphics& g)
     const bool noSrv = s.link != core::Realtime::Link::online;
 
     // 내 준비 상태
-    paintCard (g, l.readyCard, TXT ("내 준비 상태"));
+    paintCard (g, *this, l.readyCard, TXT ("내 준비 상태"));
     auto rowBg = [&] (juce::Rectangle<int> r, bool bad) { if (bad) { g.setColour (badBg); g.fillRoundedRectangle (r.toFloat(), 6.0f); } };
     auto rowLabel = [&] (juce::Rectangle<int> r, const juce::String& t, bool top)
     {
@@ -471,7 +472,7 @@ void HomePage::paint (juce::Graphics& g)
     }
 
     // 최근 같이 합주한 사람 (목 데이터)
-    paintCard (g, l.recentCard, TXT ("최근 같이 합주한 사람"));
+    paintCard (g, *this, l.recentCard, TXT ("최근 같이 합주한 사람"));
     {
         auto body = l.recentCard.withTrimmedTop (cardHeadH + 1);
         if (hasRecent())
@@ -526,7 +527,7 @@ void HomePage::paint (juce::Graphics& g)
     }
 
     // 내 프로필 (이름·파트·아이디는 실제, 합주한 사람·이번 달 합주는 목 데이터)
-    paintCard (g, l.profileCard, TXT ("내 프로필"));
+    paintCard (g, *this, l.profileCard, TXT ("내 프로필"));
     {
         const auto& me = s.me;
         const juce::String part = me ? me->part.value_or ("other") : juce::String ("other");
@@ -562,7 +563,7 @@ void HomePage::paint (juce::Graphics& g)
     }
 
     // 합주 기록 (달력: 오늘은 실제 날짜, 합주한 날은 목 데이터)
-    paintCard (g, l.calCard, TXT ("합주 기록"));
+    paintCard (g, *this, l.calCard, TXT ("합주 기록"));
     {
         const auto now = juce::Time::getCurrentTime();
         int y = now.getYear(), m = now.getMonth() + calOff;
@@ -622,15 +623,15 @@ void HomePage::paint (juce::Graphics& g)
         }
         // 아래: 합주한 날 N일
         const int fy = body.getY() + 9 + 28 + 2 + rows * 34 - 2 + 12;
-        g.setColour (col::line);
-        g.fillRect (l.calCard.getX() + 1, fy, l.calCard.getWidth() - 2, 1);
+        g.setColour (col::borderSubtle);
+        hairline::horizontal (g, *this, (float) l.calCard.getX() + 1.0f, (float) fy, (float) l.calCard.getWidth() - 2.0f);
         label (g, TXT ("합주한 날"), { l.calCard.getX() + pad, fy + 1, 120, 33 }, 400, 12.0f, col::inkSub);
         label (g, juce::String ((int) jam.size()) + TXT ("일"), { l.calCard.getRight() - pad - 80, fy + 1, 80, 33 }, 600, 12.0f, col::ink,
                juce::Justification::centredRight);
     }
 
     // 합주 중인 친구 (실제 데이터)
-    paintCard (g, l.jamCard, TXT ("합주 중인 친구"), juce::String (jamFriendCount()));
+    paintCard (g, *this, l.jamCard, TXT ("합주 중인 친구"), juce::String (jamFriendCount()));
     {
         if (groups.empty())
         {
