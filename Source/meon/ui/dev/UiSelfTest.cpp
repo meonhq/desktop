@@ -1895,11 +1895,14 @@ void UiSelfTest::addWinChromeTests()
         if (! sh->real) return;
         const auto p = meon::winframe::probe (handle());
         std::cerr << "UITEST INFO winchrome maximised: window " << rectStr (p.window) << " client " << rectStr (p.client) << " work " << rectStr (p.work) << std::endl;
-        const bool fits = std::abs (p.client[0] - p.work[0]) <= 1 && std::abs (p.client[1] - p.work[1]) <= 1
-                       && std::abs (p.client[2] - p.work[2]) <= 1 && std::abs (p.client[3] - p.work[3]) <= 1;
-        expect (fits, TXT ("최대화: 내용이 작업 영역과 같다 (위·오른쪽이 잘리지 않음)"));
+        // 위 틀은 0 이라 내용 위쪽 hidden 만큼은 화면 밖 (앱이 비워 둔다). 보이는 내용 = 작업 영역
+        const int hidden = meon::winframe::hiddenTop (handle());
+        const int vis[4] = { p.client[0], p.client[1] + hidden, p.client[2], p.client[3] - hidden };
+        const bool fits = std::abs (vis[0] - p.work[0]) <= 1 && std::abs (vis[1] - p.work[1]) <= 1
+                       && std::abs (vis[2] - p.work[2]) <= 1 && std::abs (vis[3] - p.work[3]) <= 1;
+        expect (fits, TXT ("최대화: 보이는 내용이 작업 영역과 같다 (위·오른쪽이 잘리지 않음, 화면 밖 위 ") + juce::String (hidden) + "px)");
         auto* cb = caption();
-        expect (cb->isMaximised(), TXT ("최대화 버튼이 '이전 크기로' 아이콘"));
+        expect (cb->isMaximised(), TXT ("최대화 버튼이 '이전 크기로' 아이콘 (상태 알림 ") + juce::String (p.notifies) + ")");
         const auto tr = phys (*cb, { cb->getWidth() - 1, 0 });
         expect (tr.x == p.work[0] + p.work[2] - 1 && tr.y == p.work[1], TXT ("닫기 버튼이 화면 오른쪽 위 모서리에 딱 (") + tr.toString() + ")");
         const int corner = ht ({ p.work[0] + p.work[2] - 1, p.work[1] });
@@ -1910,12 +1913,37 @@ void UiSelfTest::addWinChromeTests()
         meon::winframe::devMouse (c.x, c.y, true, true);   // 이전 크기로
     }, 0);
     waitUntilOr (TXT ("이전 크기로"), [sh, handle] { return ! sh->real || ! meon::winframe::isMaximised (handle()); }, 5000, [this] { expect (false, TXT ("이전 크기로 버튼을 눌러도 돌아오지 않음")); });
-    add ([this, sh, handle]
+    add ([this, sh, handle, caption]
     {
         if (! sh->real) return;
         const auto p = meon::winframe::probe (handle());
         expect (std::equal (p.client, p.client + 4, sh->before.client), TXT ("이전 크기로: 내용 자리·크기가 처음과 같다"));
+        expect (! caption()->isMaximised(), TXT ("이전 크기로: 최대화 아이콘으로 돌아옴"));
     }, 400);
+    // 다른 창이 앞에 오면 아이콘 #AAAAAA (비활성), 돌아오면 #1A1A1A
+    struct Other { std::unique_ptr<juce::DocumentWindow> w; };
+    auto other = std::make_shared<Other>();
+    add ([sh, other]
+    {
+        if (! sh->real) return;
+        other->w = std::make_unique<juce::DocumentWindow> ("other", juce::Colours::grey, juce::DocumentWindow::closeButton);
+        other->w->setUsingNativeTitleBar (true);
+        other->w->setBounds (200, 200, 300, 200);
+        other->w->setVisible (true);
+        other->w->toFront (true);
+    }, 0);
+    waitUntilOr (TXT ("비활성"), [sh, caption] { return ! sh->real || ! caption()->isActiveLook(); }, 3000,
+                 [this] { expect (false, TXT ("다른 창이 앞에 와도 창 버튼이 비활성 모양으로 바뀌지 않음")); });
+    add ([this, sh, other, caption, handle]
+    {
+        if (! sh->real) return;
+        if (! caption()->isActiveLook()) expect (true, TXT ("다른 창이 앞에 오면 창 버튼 아이콘 #AAAAAA (비활성)"));
+        other->w.reset();
+        if (auto* p = peer()) p->toFront (true);
+    }, 0);
+    waitUntilOr (TXT ("다시 활성"), [sh, caption] { return ! sh->real || caption()->isActiveLook(); }, 3000,
+                 [this] { expect (false, TXT ("창이 다시 앞에 와도 창 버튼이 활성 모양으로 돌아오지 않음")); });
+    add ([this, sh] { if (sh->real) expect (true, TXT ("다시 앞에 오면 아이콘 #1A1A1A (활성)")); }, 0);
     // 제목 줄 빈 곳 더블클릭 → 최대화, 다시 → 이전 크기로 (운영체제 HTCAPTION 처리)
     auto doubleClick = [sh, phys, this, emptyTitle]
     {

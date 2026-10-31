@@ -105,6 +105,7 @@ private:
     void ensureWindowChrome();
     void windowChromeChanged();   // 붙은 뒤·전체 화면에 들어가고 나온 뒤·최대화·활성 바뀜
     void syncChromeView();        // 운영체제별 창 윗부분 구성 요소: 만들기·자리·상태·맨 위로
+    void updateWindowState();     // 창 버튼 표시 (최대화·활성)
     /** 윈도우 창 영역 판정 (화면 물리 좌표): 창 버튼(최대화는 운영체제 영역) · 제목 줄 빈 곳 · 그 밖 */
     winframe::Region windowRegionAt (int screenX, int screenY);
     void childrenChanged() override;

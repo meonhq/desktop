@@ -37,7 +37,7 @@ namespace
         Hooks hooks;
         int maxState = 0;              // 최대화 버튼 표시 (0 보통, 1 올림, 2 누름)
         bool maxPressed = false, trackingNc = false, notifyPending = false;
-        int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0;
+        int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0, notifies = 0;
     };
     State st;
 
@@ -83,6 +83,7 @@ namespace
         juce::MessageManager::callAsync ([]
         {
             st.notifyPending = false;
+            ++st.notifies;
             if (st.hwnd != nullptr && st.hooks.onStateChange) st.hooks.onStateChange();
         });
     }
@@ -363,6 +364,7 @@ Probe probe (void* handle)
     p.ncCalc = st.ncCalc;
     p.sysMenuOpened = st.sysMenuOpened;
     p.maxClicks = st.maxClicks;
+    p.notifies = st.notifies;
     p.os = juce::SystemStats::getOperatingSystemName().toStdString();
     return p;
 }

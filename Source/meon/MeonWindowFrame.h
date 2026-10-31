@@ -49,7 +49,7 @@ struct Probe
     bool installed = false, maximised = false, active = false;
     int window[4] {}, client[4] {}, monitor[4] {}, work[4] {};   // x, y, w, h
     int dpi = 0, resizeBorder = 0;
-    int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0;   // WM_NCCALCSIZE 처리 횟수, 시스템 메뉴가 열린 횟수, 최대화 버튼 누름
+    int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0, notifies = 0;   // WM_NCCALCSIZE 처리 횟수, 창 메뉴가 열린 횟수, 최대화 버튼 누름, 상태 알림 횟수
     std::string os;
 };
 Probe probe (void* hwnd);

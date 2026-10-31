@@ -1019,18 +1019,7 @@ void MeonEditor::syncChromeView()
     chromeView->place (contentBounds());
     if (chromeView->kind() == Kind::windows)
     {
-        auto* peer = getPeer();
-        void* h = peer != nullptr ? peer->getNativeHandle() : nullptr;
-        bool maxed = winFrameInstalled && winframe::isMaximised (h), active = ! winFrameInstalled || winframe::isActive (h);
-       #if MEON_DEV_OPTIONS
-        if (devMockWin)   // 미리 보기: --winstate=max|inactive|max+inactive (디자인 winState·winActive)
-        {
-            const auto ws = meon::devOptions()["winstate"];
-            maxed = ws.contains ("max");
-            active = ! ws.contains ("inactive");
-        }
-       #endif
-        chromeView->setWindowState (maxed, active);
+        updateWindowState();
         chromeView->setVisible (true);   // 윈도우는 전체 화면 기능이 없다 (JUCE 의 전체 화면 = 최대화): 늘 보인다
     }
     else
@@ -1038,6 +1027,24 @@ void MeonEditor::syncChromeView()
         chromeView->setVisible (titleBarInset() > 0);   // 맥 전체 화면이면 신호등이 없다
     }
     childrenChanged();   // 맨 위로 (툴팁 창 아래)
+}
+
+void MeonEditor::updateWindowState()
+{
+    // 창 버튼 표시: 최대화(이전 크기로 아이콘)·활성(비활성이면 회색)
+    if (chromeView == nullptr || chromeView->kind() != ui::WindowChromeView::Kind::windows) return;
+    auto* peer = getPeer();
+    void* h = peer != nullptr ? peer->getNativeHandle() : nullptr;
+    bool maxed = winFrameInstalled && winframe::isMaximised (h), active = ! winFrameInstalled || winframe::isActive (h);
+   #if MEON_DEV_OPTIONS
+    if (devMockWin)   // 미리 보기: --winstate=max|inactive|max+inactive (디자인 winState·winActive)
+    {
+        const auto ws = meon::devOptions()["winstate"];
+        maxed = ws.contains ("max");
+        active = ! ws.contains ("inactive");
+    }
+   #endif
+    chromeView->setWindowState (maxed, active);
 }
 
 void MeonEditor::childrenChanged()
@@ -1103,7 +1110,7 @@ void MeonEditor::resized()
         appRoot->setBounds (contentBounds());
     if (onboarding != nullptr)
         onboarding->setBounds (contentBounds());
-    if (chromeView != nullptr) chromeView->place (contentBounds());
+    if (chromeView != nullptr) { chromeView->place (contentBounds()); updateWindowState(); }   // 최대화·복원은 크기가 바뀌므로 아이콘도 바로
     processor.setLastPluginBounds (getLocalBounds());
 }
 
