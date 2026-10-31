@@ -117,6 +117,7 @@ private:
     void addFullscreenTests();    // 전체 화면 단축키 (--uitest=fullscreen, 실제 창: windows.yml·mac.yml)
     void addWinStatesTests();     // 윈도우 창 상태별 가장자리·창 버튼·크기 조절 (--uitest=winstates, windows.yml)
     void addProfileFooterTests(); // 친구 프로필 아래 줄: 보이는 버튼이 없으면 아래 줄(구분선 포함)도 없다 (--uitest=profilefooter)
+    void addCodeInputTests();     // 6칸 코드 입력: 위 숫자 줄·숫자 키패드·붙여넣기·한글 자판 (방 코드 / 이메일 인증) (--uitest=codeinput)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

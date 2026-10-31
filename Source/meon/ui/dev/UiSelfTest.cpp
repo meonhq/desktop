@@ -50,6 +50,7 @@ void UiSelfTest::start()
     if (want ("modalanim")) addModalAnimTests();
     if (which == "reducedmotion") addReducedMotionTests();   // MEON_REDUCE_MOTION=1 로 돌린다 (all 에 없음)
     if (want ("profilefooter")) addProfileFooterTests();
+    if (want ("codeinput")) addCodeInputTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -3722,6 +3723,127 @@ void UiSelfTest::addProfileFooterTests()
     checkUser (friendWith ("in_room", false), TXT ("합주 중 (다른 방)"));
     checkUser (friendWith ("in_room", true), TXT ("합주 중 (같은 방)"));
     checkUser (friendWith ("offline", false), TXT ("오프라인 (나는 방 있음)"));
+}
+
+//==============================================================================
+// 6칸 코드 입력 (방 코드: 코드로 입장 / 숫자: 온보딩·설정 이메일 인증).
+// 방 코드 글자는 서버와 같다 (server rooms.go codeAlphabet = A~Z 에서 O·I 를 뺀 것 + 2~9: 0·1·O·I 는 서버가 만들지 않는다).
+// 0·1 을 눌러도 아무 일 없이 무시한다 (안내 문구 없음: 사용자 결정 2026-10-31). 숫자 칸은 0~9 를 모두 받는다
+void UiSelfTest::addCodeInputTests()
+{
+    begin (TXT ("코드 입력 칸"));
+    struct Fixture
+    {
+        std::unique_ptr<OtpInput> room, digits;
+        juce::String clipBefore;
+    };
+    auto fx = std::make_shared<Fixture>();
+    add ([this, fx]
+    {
+        fx->room = std::make_unique<OtpInput> (OtpInput::Charset::roomCode, OtpInput::Size::medium);
+        fx->digits = std::make_unique<OtpInput> (OtpInput::Charset::digits, OtpInput::Size::large);
+        root.addAndMakeVisible (*fx->room);
+        root.addAndMakeVisible (*fx->digits);
+        fx->room->setBounds (20, 20, fx->room->getPreferredWidth(), fx->room->getPreferredHeight());
+        fx->digits->setBounds (20, 100, fx->digits->getPreferredWidth(), fx->digits->getPreferredHeight());
+        fx->clipBefore = juce::SystemClipboard::getTextFromClipboard();
+    }, 100);
+    // 글자 하나씩 누른 결과 (칸을 비우고 시작)
+    auto typeAll = [] (OtpInput& o, const std::vector<juce::KeyPress>& keys)
+    {
+        o.clear();
+        for (auto& k : keys) o.keyPressed (k);
+        return o.getCode();
+    };
+    auto row = [] (const juce::String& s)   // 위 숫자 줄·글자 키 (눌린 글자 = 키)
+    {
+        std::vector<juce::KeyPress> v;
+        for (auto c : s) v.push_back (juce::KeyPress ((int) c, {}, c));
+        return v;
+    };
+    auto pad = [] (const juce::String& s)   // 오른쪽 숫자 키패드 (키 코드는 numberPad0~9, 글자는 숫자)
+    {
+        std::vector<juce::KeyPress> v;
+        for (auto c : s) v.push_back (juce::KeyPress (juce::KeyPress::numberPad0 + (int) (c - '0'), {}, c));
+        return v;
+    };
+    auto paste = [] (OtpInput& o, const juce::String& clip, bool hangulV)
+    {
+        juce::SystemClipboard::copyTextToClipboard (clip);
+        o.clear();
+        // 붙여넣기: ⌘V(맥)·Ctrl+V(윈도우) = commandModifier. 한글 자판에서는 V 자리에서 'ㅍ' 가 온다
+        const juce::juce_wchar ch = hangulV ? (juce::juce_wchar) 0x314D : (juce::juce_wchar) 'v';
+        o.keyPressed (juce::KeyPress ((int) 'V', juce::ModifierKeys::commandModifier, ch));
+        return o.getCode();
+    };
+    add ([this, fx, typeAll, row, pad, paste]
+    {
+        auto& r = *fx->room;
+        auto& d = *fx->digits;
+        auto check = [this] (const juce::String& got, const juce::String& want, const juce::String& what)
+        {
+            std::cerr << "UITEST INFO codeinput " << what << ": " << got << std::endl;
+            expect (got == want, what + " (" + got + TXT (" / 기대 ") + want + ")");
+        };
+        // 방 코드
+        check (typeAll (r, row ("234567")), "234567", TXT ("방 코드: 위 숫자 줄 2~7"));
+        check (typeAll (r, row ("0189")), "89", TXT ("방 코드: 0·1 은 무시 (서버가 만들지 않는 글자)"));
+        check (typeAll (r, row ("abcxyz")), "ABCXYZ", TXT ("방 코드: 영문 소문자 → 대문자"));
+        check (typeAll (r, row ("oiab")), "AB", TXT ("방 코드: O·I 는 무시"));
+        check (typeAll (r, pad ("234589")), "234589", TXT ("방 코드: 숫자 키패드"));
+        check (typeAll (r, pad ("0123")), "23", TXT ("방 코드: 숫자 키패드 0·1 은 무시"));
+        {
+            // 한글 자판 상태: 자모는 같은 자리 영문 키로, 숫자는 그대로
+            std::vector<juce::KeyPress> v;
+            for (auto c : { (juce::juce_wchar) 0x3141, (juce::juce_wchar) 0x3160, (juce::juce_wchar) '2', (juce::juce_wchar) 0x314A, (juce::juce_wchar) '9', (juce::juce_wchar) 0x3147 })
+                v.push_back (juce::KeyPress ((int) c, {}, c));
+            check (typeAll (r, v), "AB2C9D", TXT ("방 코드: 한글 자판 (ㅁㅠ2ㅊ9ㅇ → AB2C9D)"));
+        }
+        check (paste (r, "ab2-cd3", false), "AB2CD3", TXT ("방 코드: 붙여넣기 6자리 한 번에 (소문자·- 섞임)"));
+        check (paste (r, " k7m 9pq \n", false), "K7M9PQ", TXT ("방 코드: 붙여넣기 (빈칸·줄바꿈 섞임)"));
+        check (paste (r, "AB2CD3", true), "AB2CD3", TXT ("방 코드: 한글 자판에서 붙여넣기 (ㅍ 로 들어온 V)"));
+        check (paste (r, "A0B1C2D3E4", false), "ABC2D3", TXT ("방 코드: 붙여넣은 글에 0·1 이 있으면 빼고 앞에서 6자리"));
+        // 숫자 칸 (온보딩·설정 이메일 인증)
+        check (typeAll (d, row ("012345")), "012345", TXT ("숫자 칸: 위 숫자 줄 0~5"));
+        check (typeAll (d, row ("678901")), "678901", TXT ("숫자 칸: 위 숫자 줄 6~9·0·1"));
+        check (typeAll (d, pad ("019283")), "019283", TXT ("숫자 칸: 숫자 키패드 (0·1 포함)"));
+        check (typeAll (d, row ("1a2b3c")), "123", TXT ("숫자 칸: 영문은 무시"));
+        {
+            std::vector<juce::KeyPress> v;
+            for (auto c : { (juce::juce_wchar) '1', (juce::juce_wchar) 0x3141, (juce::juce_wchar) '0', (juce::juce_wchar) '0' })
+                v.push_back (juce::KeyPress ((int) c, {}, c));
+            check (typeAll (d, v), "100", TXT ("숫자 칸: 한글 자판 상태의 숫자 (자모는 무시)"));
+        }
+        check (paste (d, "123 456", false), "123456", TXT ("숫자 칸: 붙여넣기 (빈칸 섞임)"));
+        check (paste (d, "000111", true), "000111", TXT ("숫자 칸: 한글 자판에서 붙여넣기 0·1"));
+    }, 0);
+    // 실제 창이 쓰는 종류: 코드로 입장 = 방 코드, 온보딩·설정 이메일 인증 = 숫자 (코드 위치: HomeOverlays.h, OnboardingScreen.cpp, SettingsModal.cpp)
+    add ([this, fx]
+    {
+        home().openJoinCode();
+    }, 300);
+    add ([this, fx, typeAll, row]
+    {
+        OtpInput* inModal = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            if (inModal != nullptr) return;
+            if (auto* o = dynamic_cast<OtpInput*> (&c)) { inModal = o; return; }
+            for (auto* ch : c.getChildren()) find (*ch);
+        };
+        if (auto* m = home().modal.get()) find (*m);
+        expect (inModal != nullptr, TXT ("코드로 입장 창의 6칸"));
+        if (inModal != nullptr)
+        {
+            const auto got = typeAll (*inModal, row ("a01b23"));
+            expect (got == "AB23", TXT ("코드로 입장 창: a01b23 → AB23 (") + got + ")");
+            inModal->clear();
+        }
+        home().closeOverlays();
+        juce::SystemClipboard::copyTextToClipboard (fx->clipBefore);
+        fx->room.reset();
+        fx->digits.reset();
+    }, 300);
 }
 
 } // namespace meon::ui
