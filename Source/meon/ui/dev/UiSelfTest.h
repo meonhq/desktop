@@ -27,6 +27,14 @@ public:
     /** 맥 창 제목 줄 상태 한 줄 (UITEST INFO chrome …) */
     static juce::String describe (const meon::chrome::Probe&);
 
+    /** 윈도우 창 틀 확인 한 번 (--uitest=winstates): 상태별 내용 자리(보통 = 창 - 틀, 최대화 = 작업 영역, 전체 화면 = 모니터),
+        JUCE 가 아는 내용 자리·크기, 화면에 보이는 창과 앱이 그린 그림을 비교 (네 가장자리 줄·창 버튼 자리: 여백·운영체제 창 버튼이 있으면 다르다).
+        key 는 캡처 파일 이름 (환경 변수 MEON_WINCAPS 폴더에 PNG). 실패 내용은 detail 에 */
+    static bool checkWindowFrame (juce::Component& editor, const juce::String& label, const juce::String& key, juce::String& detail);
+    /** 켠 직후(온보딩 화면) 확인 결과: 에디터가 창이 뜰 때 한 번 (실패 수, 설명) */
+    static inline int launchFrameFailures = 0, launchFrameChecks = 0;
+    static inline juce::String launchFrameDetail;
+
 private:
     core::MeonCore& core;
     AppRoot& root;
@@ -107,6 +115,7 @@ private:
     void addReducedMotionTests(); // 동작 줄이기 (--uitest=reducedmotion, MEON_REDUCE_MOTION=1)
     void addWinEdgeTests();       // 윈도우 창 왼쪽·오른쪽·아래 가장자리 픽셀 (--uitest=winedge, windows.yml)
     void addFullscreenTests();    // 전체 화면 단축키 (--uitest=fullscreen, 실제 창: windows.yml·mac.yml)
+    void addWinStatesTests();     // 윈도우 창 상태별 가장자리·창 버튼·크기 조절 (--uitest=winstates, windows.yml)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

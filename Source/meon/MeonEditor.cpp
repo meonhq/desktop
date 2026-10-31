@@ -11,6 +11,7 @@
 #include "ui/overlays/SettingsModal.h"
 #include "MeonWindowChrome.h"
 #include "MeonWindowFrame.h"
+#include "core/log/AppLog.h"
 #include <optional>
 
 namespace meon
@@ -280,13 +281,13 @@ void MeonEditor::toggleFullscreen()
 
 void MeonEditor::updateCaptionReveal()
 {
-    // 윈도우 전체 화면: 마우스를 화면 맨 위(2px)에 대면 창 버튼이 나타나고, 버튼 둘레를 벗어나면 숨는다
+    // 윈도우 전체 화면: 마우스를 화면 맨 위(2px)에 대면 창 버튼이 나타나고, 맨 윗줄(창 버튼 높이 + 16) 아래로 내려가면 숨는다
     if (chromeView == nullptr || ! winFullscreen()) { revealTimer.stopTimer(); return; }
     const auto pos = getMouseXYRelative();
     const bool inside = getLocalBounds().contains (pos.withY (juce::jmax (0, pos.y)));
     bool want = captionRevealed;
     if (! captionRevealed) want = inside && pos.y <= 1;
-    else want = chromeView->getBounds().expanded (16, 16).contains (pos);
+    else want = inside && pos.y < chromeView->getBottom() + 16;
     if (want == captionRevealed) return;
     captionRevealed = want;
     chromeView->setVisible (want);
@@ -299,6 +300,11 @@ bool MeonEditor::requestedQuit()
     if (auto* peer = getPeer(); peer != nullptr && ! pluginMode)
     {
         if (winFullscreen()) winframe::setFullscreen (peer->getNativeHandle(), false);   // 바로 되돌아온다
+        if (winFrameInstalled)
+        {
+            // 최대화였으면 보통 크기로 저장하고(창이 사라질 때 저장된다) 다음에 켤 때 다시 최대화한다
+            settings->setWindowMaximised (winframe::unmaximiseForSave (peer->getNativeHandle()));
+        }
        #if JUCE_MAC
         if (chrome::isFullScreen (peer->getNativeHandle()) && ! quittingFromFullscreen)
         {
@@ -926,8 +932,22 @@ void MeonEditor::paint (juce::Graphics& g)
     g.fillAll (col::white);
 }
 
-void MeonEditor::paintOverChildren (juce::Graphics&)
+void MeonEditor::paintOverChildren (juce::Graphics& g)
 {
+    // 윈도우 10 보통 창: 운영체제 1px 테두리(#707070, 색을 바꿀 수 없음) 대신 내용 네 변 끝 1px 에 #EBEBEB (윈도우 11 테두리와 같은 모양).
+    // 물리 픽셀 한 줄에 정확히 (배율이 정수가 아니어도 번지지 않게): 실제 내용 크기(물리 px)로 그린다
+    auto* peer = getPeer();
+    if (peer == nullptr || ! winFrameInstalled || ! winframe::appDrawsBorder (peer->getNativeHandle())) return;
+    int w = 0, h = 0;
+    if (! winframe::clientPixelSize (peer->getNativeHandle(), w, h) || w <= 2 || h <= 2) return;
+    const float s = (float) w / (float) juce::jmax (1, getWidth());
+    juce::Graphics::ScopedSaveState save (g);
+    g.addTransform (juce::AffineTransform::scale (1.0f / s));
+    g.setColour (juce::Colour (0xFF000000u | winframe::borderColourRGB));
+    g.fillRect (0, 0, w, 1);
+    g.fillRect (0, h - 1, w, 1);
+    g.fillRect (0, 0, 1, h);
+    g.fillRect (w - 1, 0, 1, h);
 }
 
 //==============================================================================
@@ -971,11 +991,31 @@ void MeonEditor::ensureWindowChrome()
         if (winFrameInstalled && ! winframe::isMaximised (peer->getNativeHandle()))
         {
             // JUCE 는 창 틀 두께를 크기가 바뀔 때만 다시 읽는다 (HWNDComponentPeer::updateBorderSize). 옛 두께(제목 줄 포함)를 쓰면
-            // 내용 자리·마우스 좌표가 제목 줄 높이만큼 어긋나므로, 크기를 1px 바꿨다 되돌려 새 두께(위 0)를 읽게 하고 내용 자리를 그대로 둔다
+            // 내용 자리·마우스 좌표가 제목 줄 높이만큼 어긋나므로, 크기를 1px 바꿨다 되돌려 새 두께(위 0)를 읽게 하고 내용 자리를 그대로 둔다.
+            // 그 뒤로는 틀 두께가 상태와 상관없이 같다 (checkJuceFrame 이 확인)
             peer->setBounds (clientBefore.withHeight (clientBefore.getHeight() + 1), false);
             peer->setBounds (clientBefore, false);
         }
+        if (winFrameInstalled && settings->isWindowMaximised())
+        {
+            settings->setWindowMaximised (false);
+            winframe::toggleMaximise (peer->getNativeHandle());   // 지난번에 최대화한 채 껐다
+        }
        #if MEON_DEV_OPTIONS
+        // 창 상태별 자가 테스트(--uitest=winstates): 켠 직후 온보딩 화면에서 가장자리·창 버튼 확인 (테스트는 로그인 뒤에 시작한다)
+        if (winFrameInstalled && meon::devOptions()["uitest"] == "winstates")
+          for (int ms : { 150, 350, 600 })   // 가짜 계정 자동 가입이 끝나기 전 (온보딩이 떠 있을 때) 한 번
+            juce::Timer::callAfterDelay (ms, [safe]
+            {
+                if (safe == nullptr || safe->onboarding == nullptr || ! safe->onboarding->isShowing() || ui::UiSelfTest::launchFrameChecks > 0) return;
+                juce::String detail;
+                ++ui::UiSelfTest::launchFrameChecks;
+                if (! ui::UiSelfTest::checkWindowFrame (*safe, TXT ("켠 직후 (온보딩)"), "00_launch_onboarding", detail))
+                {
+                    ++ui::UiSelfTest::launchFrameFailures;
+                    ui::UiSelfTest::launchFrameDetail = detail;
+                }
+            });
         // 화면 자가 테스트(--uitest): 켠 직후 (창이 뜨기 전에 붙었는지, 창·내용 사각형)
         if (meon::devOptions().containsKey ("uitest"))
         {
@@ -1002,26 +1042,33 @@ void MeonEditor::ensureWindowChrome()
    #endif
 }
 
-int MeonEditor::hiddenTopLogical() const
+void MeonEditor::checkJuceFrame()
 {
-    // 윈도우 최대화: 창 위가 화면 밖으로 나간 만큼 (물리 px → 논리 px, 올림). 그 밖은 0
-    if (! winFrameInstalled) return 0;
+    // JUCE 는 창 틀 두께를 크기가 바뀔 때만 다시 읽어 논리 px 로 기억하고(HWNDComponentPeer::updateBorderSize), 내용 자리·마우스 좌표를
+    // 그 값으로 셈한다. 틀 두께는 상태와 상관없이 같게 두지만(MeonWindowFrame), 어긋나 있으면 크기를 1px 바꿨다 되돌려 다시 읽게 한다
+    if (! winFrameInstalled) return;
     auto* peer = getPeer();
-    if (peer == nullptr) return 0;
-    const int px = winframe::hiddenTop (peer->getNativeHandle());
-    if (px <= 0) return 0;
+    if (peer == nullptr || peer->isMinimised()) return;
+    int in[4];
+    winframe::frameInsets (peer->getNativeHandle(), in);
     const double s = juce::jmax (0.5, peer->getPlatformScaleFactor());
-    return (int) std::ceil ((double) px / s - 0.001);
-}
-
-juce::Rectangle<int> MeonEditor::contentBounds() const
-{
-    return getLocalBounds().withTrimmedTop (hiddenTopLogical());
+    const auto have = peer->getFrameSize();
+    const juce::BorderSize<int> want (juce::roundToInt (in[1] / s), juce::roundToInt (in[0] / s), juce::roundToInt (in[3] / s), juce::roundToInt (in[2] / s));
+    if (have == want) return;
+    ++juceFrameFixes;
+    core::AppLog::write ("window", "JUCE 창 틀 두께 맞춤: " + juce::String (have.getTop()) + "," + juce::String (have.getLeft()) + ","
+                                   + juce::String (have.getBottom()) + "," + juce::String (have.getRight()) + " -> "
+                                   + juce::String (want.getTop()) + "," + juce::String (want.getLeft()) + ","
+                                   + juce::String (want.getBottom()) + "," + juce::String (want.getRight()));
+    // JUCE 가 아는 내용 자리 = 창 - 옛 두께. 실제 내용 자리 = 창 - 새 두께
+    const auto client = want.subtractedFrom (have.addedTo (peer->getBounds()));
+    peer->setBounds (client.withHeight (client.getHeight() + 1), false);
+    peer->setBounds (client, false);
 }
 
 void MeonEditor::windowChromeChanged()
 {
-    if (const int ht = hiddenTopLogical(); ht != lastHiddenTop) { lastHiddenTop = ht; resized(); }   // 최대화·복원: 내용 자리
+    checkJuceFrame();
     syncChromeView();
     if (onboarding != nullptr) onboarding->setTitleBarInset (titleBarInset());
     if (appRoot != nullptr)

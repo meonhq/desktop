@@ -14,6 +14,8 @@
 #include "../../MeonReduceMotion.h"
 #include "RepaintProbe.h"
 #include "../../shell/ShellHooks.h"
+#include "../../MeonEditor.h"
+#include <climits>
 
 namespace meon::ui
 {
@@ -40,8 +42,9 @@ void UiSelfTest::start()
     if (want ("chrome"))   addChromeTests();
     if (want ("popover"))  addPopoverTests();
     if (want ("winchrome")) addWinChromeTests();
-    if (which == "winedge") addWinEdgeTests();
-    if (which == "fullscreen") addFullscreenTests();   // 실제 창 (windows.yml·mac.yml), all 에 없음   // 윈도우 창 가장자리 (windows.yml, all 에 없음: 바탕 창을 띄운다)
+    if (which == "winedge") addWinEdgeTests();         // 윈도우 창 가장자리 (windows.yml, all 에 없음: 바탕 창을 띄운다)
+    if (which == "fullscreen") addFullscreenTests();   // 실제 창 (windows.yml·mac.yml), all 에 없음
+    if (which == "winstates") addWinStatesTests();     // 윈도우 창 상태별 (windows.yml, all 에 없음: 실제 창을 여러 상태로)
     if (want ("overlay"))  addOverlayTests();
     if (want ("dock"))     addDockTests();
     if (want ("modalanim")) addModalAnimTests();
@@ -1862,7 +1865,8 @@ void UiSelfTest::addWinChromeTests()
         expect (editor->getComponentAt (closeC) == cb, TXT ("설정 팝업 위에서도 닫기 버튼이 맨 위 (눌러진다)"));
         if (sh->real)
         {
-            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == 9, TXT ("설정 팝업 위: 최대화 버튼 HTMAXBUTTON"));
+            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == (meon::winframe::probe (handle()).win11 ? 9 : 1),
+                    TXT ("설정 팝업 위: 최대화 버튼 (윈도우 11 HTMAXBUTTON, 윈도우 10 앱 화면)"));
             const int t = ht (phys (root, emptyTitle()));
             expect (t == 1, TXT ("설정 팝업이 떠 있으면 제목 줄은 앱 화면 (맥과 같다): ") + juce::String (t));
         }
@@ -1870,7 +1874,7 @@ void UiSelfTest::addWinChromeTests()
     }, 600);
     // 홈·방 화면의 모달(모달 층: 창 전체)이 떠 있어도 창 버튼은 맨 위에서 눌러진다 (설정 창과 같다)
     add ([this, sh] { if (sh->on) home().openAddFriend(); }, 500);
-    add ([this, sh, caption, phys, emptyTitle, ht]
+    add ([this, sh, caption, handle, phys, emptyTitle, ht]
     {
         if (! sh->on) return;
         auto* cb = caption();
@@ -1881,7 +1885,8 @@ void UiSelfTest::addWinChromeTests()
         expect (editor->getComponentAt (closeC) == cb, TXT ("친구 추가 모달 위에서도 닫기 버튼이 맨 위 (눌러진다)"));
         if (sh->real)
         {
-            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == 9, TXT ("모달 위: 최대화 버튼 HTMAXBUTTON"));
+            expect (ht (phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre())) == (meon::winframe::probe (handle()).win11 ? 9 : 1),
+                    TXT ("모달 위: 최대화 버튼 (윈도우 11 HTMAXBUTTON, 윈도우 10 앱 화면)"));
             const int t = ht (phys (root, emptyTitle()));
             expect (t == 1, TXT ("모달이 떠 있으면 제목 줄은 앱 화면 (설정 창과 같다): ") + juce::String (t));
         }
@@ -1906,7 +1911,8 @@ void UiSelfTest::addWinChromeTests()
         expect (p.client[1] == p.window[1], TXT ("제목 줄 없음: 내용 위 = 창 위 (") + juce::String (p.client[1]) + " / " + juce::String (p.window[1]) + ")");
         const int left = p.client[0] - p.window[0], right = (p.window[0] + p.window[2]) - (p.client[0] + p.client[2]);
         const int bottom = (p.window[1] + p.window[3]) - (p.client[1] + p.client[3]);
-        expect (left == right && left == bottom && left > 0, TXT ("왼쪽·오른쪽·아래 틀은 운영체제 그대로 (") + juce::String (left) + "/" + juce::String (right) + "/" + juce::String (bottom) + ")");
+        expect (left == right && left == bottom && left == p.insets[0] && p.insets[1] == 0 && left > 0,
+                TXT ("왼쪽·오른쪽·아래 틀 = 크기 조절 자리 (윈도우 10 은 운영체제 1px 테두리 자리까지 내용) (") + juce::String (left) + "/" + juce::String (right) + "/" + juce::String (bottom) + ")");
         auto* cb = caption();
         const int midX = p.window[0] + p.window[2] / 2;
         struct H { const char* name; juce::Point<int> at; int want; };
@@ -1914,7 +1920,8 @@ void UiSelfTest::addWinChromeTests()
             { "위 가장자리 → HTTOP 12", { midX, p.window[1] + 2 }, 12 },
             { "제목 줄 빈 곳 → HTCAPTION 2", phys (root, emptyTitle()), 2 },
             { "사이드바 로고 줄 빈 곳 → HTCAPTION 2", phys (root, { 120, 26 }), 2 },
-            { "최대화 버튼 → HTMAXBUTTON 9 (스냅 레이아웃)", phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre()), 9 },
+            { p.win11 ? "최대화 버튼 → HTMAXBUTTON 9 (윈도우 11 스냅 레이아웃)" : "최대화 버튼 → HTCLIENT 1 (윈도우 10: 운영체제 버튼이 그려지지 않게 앱이 받음)",
+              phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre()), p.win11 ? 9 : 1 },
             { "최소화 버튼 → HTCLIENT 1 (앱이 받음)", phys (*cb, cb->buttonBounds (WinCaptionButtons::minimise).getCentre()), 1 },
             { "닫기 버튼 → HTCLIENT 1 (앱이 받음)", phys (*cb, cb->buttonBounds (WinCaptionButtons::closeButton).getCentre()), 1 },
             { "+ 아이콘 → HTCLIENT 1", phys (root.home->createIcon, root.home->createIcon.getLocalBounds().getCentre()), 1 },
@@ -1922,6 +1929,10 @@ void UiSelfTest::addWinChromeTests()
             { "왼쪽 가장자리 → HTLEFT 10", { p.window[0] + 2, p.window[1] + p.window[3] / 2 }, 10 },
             { "오른쪽 가장자리 → HTRIGHT 11", { p.window[0] + p.window[2] - 2, p.window[1] + p.window[3] / 2 }, 11 },
             { "아래 가장자리 → HTBOTTOM 15", { midX, p.window[1] + p.window[3] - 2 }, 15 },
+            { "내용 왼쪽 끝 줄 → 크기 조절 (윈도우 10) / 앱 (윈도우 11)", { p.client[0], p.client[1] + p.client[3] / 2 }, p.win11 ? 1 : 10 },
+            { "내용 아래 끝 줄 → 크기 조절 (윈도우 10) / 앱 (윈도우 11)", { midX, p.client[1] + p.client[3] - 1 }, p.win11 ? 1 : 15 },
+            { "왼쪽 아래 모서리 → HTBOTTOMLEFT 16", { p.window[0] + 2, p.window[1] + p.window[3] - 2 }, 16 },
+            { "오른쪽 위 모서리 → HTTOPRIGHT 14 (창 버튼 위 2px)", { p.window[0] + p.window[2] - 2, p.window[1] + 1 }, 14 },
         };
         for (auto& c : checks)
         {
@@ -1932,8 +1943,21 @@ void UiSelfTest::addWinChromeTests()
         for (int x : { p.client[0] + 120, midX, p.client[0] + p.client[2] - 200 })
             std::cerr << "UITEST INFO winchrome top pixels x=" << x << " above: " << meon::winframe::devScreenPixels (x, p.client[1] - 1, 1, 1)
                       << "| rows 0-2: " << meon::winframe::devScreenPixels (x, p.client[1], 1, 3) << std::endl;
+        // 창 테두리 #EBEBEB 1px: 윈도우 11 은 운영체제가 (위는 내용 맨 위 줄 위에, 나머지는 내용 바깥), 윈도우 10 은 앱이 내용 네 변 끝 줄에
         const auto row0 = meon::winframe::devScreenPixels (midX, p.client[1], 1, 1).substr (0, 6);
-        expect (row0 == "FFFFFF", TXT ("내용 맨 위 줄이 앱 배경 그대로 (") + juce::String (row0) + TXT (", 색 선 없음)"));
+        expect (row0 == "EBEBEB", TXT ("위 테두리 #EBEBEB 1px (") + juce::String (row0) + ")");
+        const int cy = p.client[1] + p.client[3] / 2;
+        const auto edge = [&] (int x, int y) { return juce::String (meon::winframe::devScreenPixels (x, y, 1, 1).substr (0, 6)); };
+        const auto l = p.win11 ? edge (p.client[0] - 1, cy) : edge (p.client[0], cy);
+        const auto r = p.win11 ? edge (p.client[0] + p.client[2], cy) : edge (p.client[0] + p.client[2] - 1, cy);
+        const auto b = p.win11 ? edge (midX, p.client[1] + p.client[3]) : edge (midX, p.client[1] + p.client[3] - 1);
+        expect (l == "EBEBEB" && r == "EBEBEB" && b == "EBEBEB", TXT ("왼쪽·오른쪽·아래 테두리 #EBEBEB 1px (") + l + " " + r + " " + b + ")");
+        if (! p.win11)
+        {
+            // 윈도우 10: 운영체제 테두리(#707070)는 내용이 덮어 보이지 않는다 → 테두리 바로 안쪽은 앱 화면 (선이 두 줄이 아니다)
+            const auto in1 = edge (p.client[0] + 1, cy);
+            std::cerr << "UITEST INFO winchrome win10 edge: left " << l << " next " << in1 << " outside " << edge (p.client[0] - 1, cy) << std::endl;
+        }
     }, 300);
     // 마우스 올림 색: 최대화(운영체제 영역에서 알려 줌) #F5F5F5, 닫기 #C42B1C
     add ([sh, caption, phys] { if (sh->real) { auto* cb = caption(); const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre()); meon::winframe::devMouse (c.x, c.y, false, false); } }, 600);
@@ -1967,12 +1991,8 @@ void UiSelfTest::addWinChromeTests()
         if (! sh->real) return;
         const auto p = meon::winframe::probe (handle());
         std::cerr << "UITEST INFO winchrome maximised: window " << rectStr (p.window) << " client " << rectStr (p.client) << " work " << rectStr (p.work) << std::endl;
-        // 위 틀은 0 이라 내용 위쪽 hidden 만큼은 화면 밖 (앱이 비워 둔다). 보이는 내용 = 작업 영역
-        const int hidden = meon::winframe::hiddenTop (handle());
-        const int vis[4] = { p.client[0], p.client[1] + hidden, p.client[2], p.client[3] - hidden };
-        const bool fits = std::abs (vis[0] - p.work[0]) <= 1 && std::abs (vis[1] - p.work[1]) <= 1
-                       && std::abs (vis[2] - p.work[2]) <= 1 && std::abs (vis[3] - p.work[3]) <= 1;
-        expect (fits, TXT ("최대화: 보이는 내용이 작업 영역과 같다 (위·오른쪽이 잘리지 않음, 화면 밖 위 ") + juce::String (hidden) + "px)");
+        // 최대화: 내용 = 작업 영역 (위·왼쪽·오른쪽·아래 여백·잘림 0)
+        expect (std::equal (p.client, p.client + 4, p.work), TXT ("최대화: 내용 = 작업 영역 (") + rectStr (p.client) + " / " + rectStr (p.work) + ")");
         auto* cb = caption();
         expect (cb->isMaximised(), TXT ("최대화 버튼이 '이전 크기로' 아이콘 (상태 알림 ") + juce::String (p.notifies) + ")");
         const auto tr = phys (*cb, { cb->getWidth() - 1, 0 });
@@ -2960,6 +2980,23 @@ void UiSelfTest::addWinEdgeTests()
         line ("topEdge", cx, p.client[1] - 2, 1, 5);
         // 틀 자리(내용 밖)에서 가장 어두운 밝기: 흰 바탕 + 운영체제 그림자·1px 테두리만이면 밝다
         std::cerr << "UITEST INFO winedge " << label << " darkest outside content:" << dark << std::endl;
+        if (! p.installed) return;   // 비교용 (운영체제 제목 줄 그대로)
+        // 테두리는 네 변 모두 #EBEBEB 1px 한 줄: 윈도우 11 은 운영체제 (위는 내용 맨 위 줄, 나머지는 내용 바로 바깥), 윈도우 10 은 앱 (내용 끝 줄)
+        const bool w11 = p.win11;
+        auto px = [] (int x, int y) { return juce::String (meon::winframe::devScreenPixels (x, y, 1, 1).substr (0, 6)); };
+        const auto top = px (cx, p.client[1]);
+        const auto lft = w11 ? px (cl - 1, cy) : px (cl, cy);
+        const auto rgt = w11 ? px (cr, cy) : px (cr - 1, cy);
+        const auto bot = w11 ? px (cx, cb) : px (cx, cb - 1);
+        expect (top == "EBEBEB" && (wl - 2 < ml || lft == "EBEBEB") && (wr + 2 > mr || rgt == "EBEBEB") && (wb + 2 > mb || bot == "EBEBEB"),
+                label + TXT (": 네 변 테두리 #EBEBEB (위 ") + top + TXT (" 왼쪽 ") + lft + TXT (" 오른쪽 ") + rgt + TXT (" 아래 ") + bot + ")");
+        // 테두리 바깥 한 줄에 진한 선 없음 (흰 바탕 위: 운영체제 테두리가 보이면 #707070·강조 색)
+        const int o = w11 ? 1 : 0;
+        int worst = 255;
+        if (wl - 2 >= ml) worst = juce::jmin (worst, darkest (meon::winframe::devScreenPixels (cl - 1 - o, cy, 1, 1)));
+        if (wr + 2 <= mr) worst = juce::jmin (worst, darkest (meon::winframe::devScreenPixels (cr + o, cy, 1, 1)));
+        if (wb + 2 <= mb) worst = juce::jmin (worst, darkest (meon::winframe::devScreenPixels (cx, cb + o, 1, 1)));
+        expect (worst >= 200, label + TXT (": 테두리 바깥에 진한 선 없음 (가장 어두운 밝기 ") + juce::String (worst) + ")");
     };
 
     add ([this, sh]
@@ -3056,8 +3093,14 @@ void UiSelfTest::addFullscreenTests()
         sh->room = roomId();
         sh->phase = (int) core.jam()->getPhase();
         sh->sendMuted = core.jam()->isSendMuted();
+        if (mac) meon::chrome::devSetActive (true);   // 창이 앞에 있어야 입력 칸이 포커스를 받는다
+    }, 600);
+    add ([this, mac]
+    {
         jam()->chatInput.focus();   // 채팅 입력 중
         type ("hi");
+        expect (jam()->chatInput.getText() == "hi", TXT ("채팅 입력 칸에 글 넣음 (") + jam()->chatInput.getText()
+                + TXT (", 포커스 ") + juce::String (jam()->chatInput.editor().hasKeyboardFocus (true) ? 1 : 0) + ")");
         if (mac) expect (meon::chrome::devHasFullScreenMenu(), TXT ("메뉴 막대: 보기 > 전체 화면으로 전환 (⌃⌘F)"));
     }, 300);
     add ([shortcut] { shortcut (1 | 2); }, waitMs);
@@ -3065,13 +3108,13 @@ void UiSelfTest::addFullscreenTests()
     {
         expect (isFs(), win ? TXT ("F11 (채팅 입력 중) → 전체 화면") : TXT ("⌃⌘F (채팅 입력 중) → 전체 화면"));
         sameRoom (TXT ("켤 때"));
-        expect (jam()->chatInput.getText() == "hi", TXT ("채팅 입력 중인 글 그대로"));
+        expect (jam()->chatInput.getText() == "hi", TXT ("채팅 입력 중인 글 그대로 (") + jam()->chatInput.getText() + ")");
         expect (root.chromeMode() == Sidebar::Chrome::flat, TXT ("전체 화면 배치 (fullscreen=켜짐)"));
         if (win)
         {
             const auto p = meon::winframe::probe (handle());
-            expect (p.window[0] == p.monitor[0] && p.window[1] == p.monitor[1] && p.window[2] == p.monitor[2] && p.window[3] == p.monitor[3],
-                    TXT ("윈도우 전체 화면: 모니터 전체 (작업 표시줄까지) ") + juce::String (p.window[2]) + "x" + juce::String (p.window[3]));
+            expect (std::equal (p.client, p.client + 4, p.monitor),
+                    TXT ("윈도우 전체 화면: 내용 = 모니터 전체 (작업 표시줄까지) ") + juce::String (p.client[2]) + "x" + juce::String (p.client[3]));
             auto* cb = caption();
             expect (cb == nullptr || ! cb->isVisible(), TXT ("전체 화면: 창 버튼 숨김"));
             expect (root.getTitleRightInset() == metric::padX, TXT ("전체 화면: 제목 줄 오른쪽 여백 18 (창 버튼 없음)"));
@@ -3149,5 +3192,422 @@ void UiSelfTest::addFullscreenTests()
     }
 }
 
-} // namespace meon::ui
+//==============================================================================
+bool UiSelfTest::checkWindowFrame (juce::Component& editor, const juce::String& label, const juce::String& key, juce::String& detail)
+{
+    detail.clear();
+    auto* peer = editor.getPeer();
+    if (peer == nullptr) { detail = TXT ("창 없음"); return false; }
+    void* h = peer->getNativeHandle();
+    peer->performAnyPendingRepaintsNow();
+    const auto p = meon::winframe::probe (h);
+    auto rs = [] (const int r[4]) { return juce::String (r[0]) + "," + juce::String (r[1]) + " " + juce::String (r[2]) + "x" + juce::String (r[3]); };
+    juce::StringArray fails;
+    const juce::String mode = p.fullscreen ? "fullscreen" : p.maximised ? "maximised" : "normal";
 
+    // 1) 상태별 내용 자리
+    if (p.fullscreen && ! std::equal (p.client, p.client + 4, p.monitor))
+        fails.add (TXT ("내용 ≠ 모니터 (") + rs (p.client) + " / " + rs (p.monitor) + ")");
+    if (! p.fullscreen && p.maximised && ! std::equal (p.client, p.client + 4, p.work))
+        fails.add (TXT ("내용 ≠ 작업 영역 (") + rs (p.client) + " / " + rs (p.work) + ")");
+    if (! p.fullscreen && ! p.maximised)
+    {
+        const int l = p.client[0] - p.window[0], t = p.client[1] - p.window[1];
+        const int r = (p.window[0] + p.window[2]) - (p.client[0] + p.client[2]), b = (p.window[1] + p.window[3]) - (p.client[1] + p.client[3]);
+        if (t != 0 || l != p.insets[0] || r != p.insets[2] || b != p.insets[3])
+            fails.add (TXT ("틀 두께 ") + juce::String (l) + "/" + juce::String (t) + "/" + juce::String (r) + "/" + juce::String (b));
+    }
+    // 2) JUCE 가 아는 내용 자리·크기 = 실제 (물리 1px 안)
+    const float s = (float) peer->getPlatformScaleFactor();
+    const int jw = juce::roundToInt ((float) editor.getWidth() * s), jh = juce::roundToInt ((float) editor.getHeight() * s);
+    const auto origin = juce::Desktop::getInstance().getDisplays().logicalToPhysical (editor.getScreenPosition());
+    if (std::abs (jw - p.client[2]) > 1 || std::abs (jh - p.client[3]) > 1 || std::abs (origin.x - p.client[0]) > 1 || std::abs (origin.y - p.client[1]) > 1)
+        fails.add (TXT ("JUCE 내용 ") + origin.toString() + " " + juce::String (jw) + "x" + juce::String (jh) + TXT (" / 창 내용 ") + rs (p.client));
+
+    // 3) 화면 vs 앱 그림 (네 가장자리 줄 · 창 버튼 자리)
+    const int cw = p.client[2], ch = p.client[3];
+    const auto screen = meon::winframe::devCaptureScreen (p.client[0], p.client[1], cw, ch);
+    int edgeTop = 0, edgeBottom = 0, edgeLeft = 0, edgeRight = 0, capDiff = 0, capArea = 0;
+    if (cw <= 0 || ch <= 0 || screen.size() != (size_t) cw * (size_t) ch)
+    {
+        fails.add (TXT ("화면 캡처 실패"));
+    }
+    else
+    {
+        const auto snap = editor.createComponentSnapshot (editor.getLocalBounds(), true, s);
+        juce::Image::BitmapData sd (snap, juce::Image::BitmapData::readOnly);
+        auto differs = [&] (int x, int y)
+        {
+            if (x >= snap.getWidth() || y >= snap.getHeight()) return true;   // 앱 그림이 닿지 않는 자리 = 여백
+            const juce::Colour a (screen[(size_t) y * (size_t) cw + (size_t) x]), b = sd.getPixelColour (x, y);
+            return std::abs ((int) a.getRed() - (int) b.getRed()) > 16 || std::abs ((int) a.getGreen() - (int) b.getGreen()) > 16
+                || std::abs ((int) a.getBlue() - (int) b.getBlue()) > 16;
+        };
+        // 윈도우 11 보통 창: 맨 위 줄은 운영체제 테두리(#EBEBEB)가 덮고, 네 모서리는 둥글다 (모서리 근처는 세지 않는다)
+        const bool w11Normal = p.win11 && ! p.fullscreen && ! p.maximised;
+        const int corner = w11Normal ? juce::roundToInt (10.0f * s) : 0;
+        // 화면에 보이는 자리만 (전체 화면 = 모니터, 그 밖 = 작업 영역: 작업 표시줄이 위에 있다). 큰 배율에서 보통 창이 화면보다 크면 아래가 잘린다
+        const auto* area = p.fullscreen ? p.monitor : p.work;
+        const int vx0 = juce::jmax (0, area[0] - p.client[0]), vy0 = juce::jmax (0, area[1] - p.client[1]);
+        const int vx1 = juce::jmin (cw, area[0] + area[2] - p.client[0]), vy1 = juce::jmin (ch, area[1] + area[3] - p.client[1]);
+        const bool showTop = vy0 == 0, showBottom = vy1 == ch, showLeft = vx0 == 0, showRight = vx1 == cw;
+        for (int x = juce::jmax (corner, vx0); x < juce::jmin (cw - corner, vx1); ++x)
+        {
+            if (showTop && (w11Normal ? (screen[(size_t) x] & 0xFFFFFFu) != 0xEBEBEBu : differs (x, 0))) ++edgeTop;
+            if (showBottom && differs (x, ch - 1)) ++edgeBottom;
+        }
+        for (int y = juce::jmax (corner, vy0); y < juce::jmin (ch - corner, vy1); ++y)
+        {
+            if (showLeft && differs (0, y)) ++edgeLeft;
+            if (showRight && differs (cw - 1, y)) ++edgeRight;
+        }
+        if (! (showTop && showBottom && showLeft && showRight))
+            std::cerr << "UITEST INFO winstates " << label << ": 화면 밖 가장자리는 세지 않음 (위 " << (showTop ? 1 : 0) << " 오른쪽 " << (showRight ? 1 : 0)
+                      << " 아래 " << (showBottom ? 1 : 0) << " 왼쪽 " << (showLeft ? 1 : 0) << ")" << std::endl;
+        // 창 버튼 자리 (보이면): 운영체제 창 버튼이 그려지면 다르다
+        for (auto* c : editor.getChildren())
+            if (auto* cb = dynamic_cast<WinCaptionButtons*> (c); cb != nullptr && cb->isVisible())
+            {
+                const auto r = (cb->getBounds().toFloat() * s).getSmallestIntegerContainer().getIntersection ({ 0, 1, cw, ch - 1 });
+                for (int y = r.getY(); y < r.getBottom(); ++y)
+                    for (int x = r.getX(); x < r.getRight(); ++x) { ++capArea; if (differs (x, y)) ++capDiff; }
+            }
+        const auto pct = [] (int n, int len) { return len > 0 ? (double) n * 100.0 / (double) len : 0.0; };
+        const int lenX = juce::jmax (1, cw - 2 * corner), lenY = juce::jmax (1, ch - 2 * corner);
+        if (pct (edgeTop, lenX) > 2.0 || pct (edgeBottom, lenX) > 2.0 || pct (edgeLeft, lenY) > 2.0 || pct (edgeRight, lenY) > 2.0)
+            fails.add (TXT ("가장자리 줄이 앱 그림과 다름 (위 ") + juce::String (edgeTop) + TXT (" 오른쪽 ") + juce::String (edgeRight)
+                       + TXT (" 아래 ") + juce::String (edgeBottom) + TXT (" 왼쪽 ") + juce::String (edgeLeft) + "px)");
+        if (capArea > 0 && pct (capDiff, capArea) > 2.0)
+            fails.add (TXT ("창 버튼 자리가 앱 그림과 다름 (") + juce::String (capDiff) + "/" + juce::String (capArea) + "px)");
+    }
+    // 4) 캡처 (MEON_WINCAPS 폴더): 창 + 둘레 12px
+    const auto dir = juce::SystemStats::getEnvironmentVariable ("MEON_WINCAPS", {});
+    if (dir.isNotEmpty())
+    {
+        const int m = 12;
+        const int x0 = juce::jmax (p.monitor[0], p.window[0] - m), y0 = juce::jmax (p.monitor[1], p.window[1] - m);
+        const int x1 = juce::jmin (p.monitor[0] + p.monitor[2], p.window[0] + p.window[2] + m);
+        const int y1 = juce::jmin (p.monitor[1] + p.monitor[3], p.window[1] + p.window[3] + m);
+        const auto px = meon::winframe::devCaptureScreen (x0, y0, x1 - x0, y1 - y0);
+        if (! px.empty())
+        {
+            juce::Image img (juce::Image::RGB, x1 - x0, y1 - y0, false);
+            {
+                juce::Image::BitmapData out (img, juce::Image::BitmapData::writeOnly);
+                for (int y = 0; y < y1 - y0; ++y)
+                    for (int x = 0; x < x1 - x0; ++x)
+                        out.setPixelColour (x, y, juce::Colour (px[(size_t) y * (size_t) (x1 - x0) + (size_t) x]));
+            }
+            juce::File folder (dir);
+            folder.createDirectory();
+            auto f = folder.getChildFile ("dpi" + juce::String (p.dpi) + "_" + key + ".png");
+            f.deleteFile();
+            juce::FileOutputStream os (f);
+            if (os.openedOk()) juce::PNGImageFormat().writeImageToStream (img, os);
+        }
+    }
+    detail = fails.joinIntoString ("; ");
+    std::cerr << "UITEST INFO winstates " << label << " [" << mode << " dpi " << p.dpi << (p.active ? " active" : " inactive")
+              << (p.appBorder ? " appBorder" : "") << "] window " << rs (p.window) << " client " << rs (p.client)
+              << " work " << rs (p.work) << " monitor " << rs (p.monitor) << " insets " << p.insets[0] << "/" << p.insets[1] << "/" << p.insets[2] << "/" << p.insets[3]
+              << " edgeDiff T" << edgeTop << " R" << edgeRight << " B" << edgeBottom << " L" << edgeLeft << " caption " << capDiff << "/" << capArea
+              << " blocked " << p.captionPaintsBlocked << (fails.isEmpty() ? "" : " FAIL: ") << detail << std::endl;
+    return fails.isEmpty();
+}
+
+void UiSelfTest::addWinStatesTests()
+{
+    begin (TXT ("윈도우 창 상태별"));
+    if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
+    {
+        add ([] { std::cerr << "UITEST INFO winstates: 윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Plain : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::white); }
+    };
+    struct Shared
+    {
+        std::unique_ptr<Plain> backdrop;
+        std::unique_ptr<juce::DocumentWindow> other;
+        int n = 0, startSteps = INT_MIN;
+        juce::Rectangle<int> normalClient;
+    };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto caption = [this]() -> WinCaptionButtons*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (auto* w = dynamic_cast<WinCaptionButtons*> (c)) return w;
+        return nullptr;
+    };
+    auto phys = [] (juce::Component& c, juce::Point<int> local)
+    {
+        return juce::Desktop::getInstance().getDisplays().logicalToPhysical (c.localPointToGlobal (local));
+    };
+    // 상태 하나 확인 (화면이 다 그려진 뒤)
+    auto check = [this, sh] (const juce::String& label, const juce::String& key)
+    {
+        return std::function<void()> ([this, sh, label, key]
+        {
+            juce::String detail;
+            auto* editor = root.getParentComponent();
+            const bool ok = editor != nullptr && checkWindowFrame (*editor, label, juce::String (++sh->n).paddedLeft ('0', 2) + "_" + key, detail);
+            expect (ok, label + (ok ? juce::String() : ": " + detail));
+        });
+    };
+    auto sysCmd = [handle] (int which)   // 0 최소화, 1 최대화·이전 크기로, 2 복원
+    {
+        if (which == 0) meon::winframe::minimise (handle());
+        else if (which == 1) meon::winframe::toggleMaximise (handle());
+        else meon::winframe::restore (handle());
+    };
+    auto isMax = [handle] { return meon::winframe::isMaximised (handle()); };
+    auto isFs = [handle] { return meon::winframe::isFullscreen (handle()); };
+    auto escape = [this] { if (auto* e = root.getParentComponent()) e->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)); };
+    const int settle = 900;
+
+    // 켠 직후 (온보딩): 에디터가 창이 뜰 때 확인해 둔 결과
+    add ([this]
+    {
+        expect (launchFrameChecks > 0, TXT ("켠 직후(온보딩) 창 확인을 했다"));
+        expect (launchFrameFailures == 0, TXT ("켠 직후(온보딩) 가장자리·창 버튼") + (launchFrameDetail.isEmpty() ? juce::String() : ": " + launchFrameDetail));
+    }, 0);
+    // 흰 바탕 창을 뒤에 (캡처에서 창 둘레가 보이게)
+    add ([this, sh]
+    {
+        auto* top = root.getTopLevelComponent();
+        sh->backdrop = std::make_unique<Plain>();
+        sh->backdrop->setBounds (juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->totalArea);
+        sh->backdrop->addToDesktop (juce::ComponentPeer::windowIgnoresKeyPresses);
+        sh->backdrop->setVisible (true);
+        sh->backdrop->toBehind (top);
+        top->toFront (true);
+        closeToasts();
+    }, 1500);
+    add (check (TXT ("로그인 직후 (공개 방, 보통 창)"), "login"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (true); }, settle);
+    add (check (TXT ("사이드바 접힘"), "sidebar_collapsed"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (false); }, settle);
+    add (check (TXT ("사이드바 펼침"), "sidebar_open"), 0);
+    add ([this] { home().openAddFriend(); }, settle);
+    add (check (TXT ("모달 열림 (친구 추가)"), "modal"), 0);
+    add (escape, settle);
+    // 창 버튼에 마우스: 운영체제 창 버튼이 그려지면 화면이 앱 그림과 다르다
+    for (int b : { 0, 1, 2 })
+    {
+        add ([caption, phys, b]
+        {
+            if (auto* cb = caption())
+            {
+                const auto c = phys (*cb, cb->buttonBounds ((WinCaptionButtons::Which) b).getCentre());
+                meon::winframe::devMouse (c.x, c.y, false, false);
+            }
+        }, 350);
+        add (check (TXT ("창 버튼에 마우스 (") + (b == 0 ? TXT ("최소화") : b == 1 ? TXT ("최대화") : TXT ("닫기")) + ")", "hover" + juce::String (b)), 0);
+    }
+    add ([this, phys] { const auto c = phys (root, { root.getWidth() / 2, 300 }); meon::winframe::devMouse (c.x, c.y, false, false); }, 300);
+    // 비활성
+    add ([sh]
+    {
+        sh->other = std::make_unique<juce::DocumentWindow> ("other", juce::Colours::grey, juce::DocumentWindow::closeButton);
+        sh->other->setUsingNativeTitleBar (true);
+        sh->other->setBounds (40, 40, 200, 120);
+        sh->other->setVisible (true);
+        sh->other->toFront (true);
+    }, settle);
+    add (check (TXT ("비활성 (다른 창이 앞)"), "inactive"), 0);
+    add ([this, sh] { sh->other.reset(); root.getTopLevelComponent()->toFront (true); }, settle);
+    add (check (TXT ("다시 활성"), "active"), 0);
+
+    // 크기 조절: 오른쪽·아래·왼쪽 끝을 잡고 끈다 (윈도우 10 은 내용 끝 1px 도 크기 조절 자리)
+    struct Drag { const char* name; int edge; int dx, dy; };
+    for (auto d : { Drag { "오른쪽", 0, 40, 0 }, Drag { "아래", 1, 0, 30 }, Drag { "왼쪽", 2, -30, 0 } })
+    {
+        auto start = std::make_shared<juce::Point<int>>();
+        auto before = std::make_shared<meon::winframe::Probe>();
+        auto skip = std::make_shared<bool> (false);
+        add ([handle, d, start, before, skip]
+        {
+            const auto p = meon::winframe::probe (handle());
+            *before = p;
+            const int b = p.resizeBorder;
+            if (d.edge == 0) *start = { p.window[0] + p.window[2] - b / 2, p.window[1] + p.window[3] / 2 };
+            else if (d.edge == 1) *start = { p.window[0] + p.window[2] / 2, p.window[1] + p.window[3] - b / 2 };
+            else *start = { p.window[0] + b / 2, p.window[1] + p.window[3] / 2 };
+            // 끌 자리와 끈 뒤 자리가 작업 영역 안이어야 한다 (큰 배율에서 창이 화면보다 크면 아래 끝이 화면 밖)
+            const juce::Rectangle<int> work (p.work[0], p.work[1], p.work[2], p.work[3]);
+            *skip = ! work.contains (*start) || ! work.contains (*start + juce::Point<int> (d.dx, d.dy));
+            if (*skip) { std::cerr << "UITEST INFO winstates resize " << d.edge << " skipped (edge outside work area)" << std::endl; return; }
+            meon::winframe::devMouse (start->x, start->y, true, false);
+        }, 200);
+        add ([d, start, skip] { if (! *skip) meon::winframe::devMouse (start->x + d.dx / 2, start->y + d.dy / 2, false, false); }, 150);
+        add ([d, start, skip] { if (! *skip) meon::winframe::devMouse (start->x + d.dx, start->y + d.dy, false, false); }, 250);
+        add ([d, start, skip] { if (! *skip) meon::winframe::devMouse (start->x + d.dx, start->y + d.dy, false, true); }, settle);
+        add ([this, handle, d, before, skip]
+        {
+            if (*skip) return;
+            const auto p = meon::winframe::probe (handle());
+            const int dw = p.client[2] - before->client[2], dh = p.client[3] - before->client[3];
+            const int wantW = d.edge == 2 ? -d.dx : d.dx, wantH = d.dy;
+            expect (std::abs (dw - wantW) <= 2 && std::abs (dh - wantH) <= 2,
+                    juce::String (juce::CharPointer_UTF8 (d.name)) + TXT (" 끝을 끌어 크기 조절 (") + juce::String (dw) + "x" + juce::String (dh) + ")");
+        }, 0);
+        add (check (juce::String (juce::CharPointer_UTF8 (d.name)) + TXT (" 크기 조절 뒤"), juce::String ("resize") + juce::String (d.edge)), 0);
+    }
+    add ([this, sh] { if (auto* p = peer()) sh->normalClient = p->getBounds(); }, 0);
+
+    // 최대화 · 최소화 후 복원 · 이전 크기로
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("최대화"), isMax, 4000, [this] { expect (false, TXT ("최대화되지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("최대화"), "maximised"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (true); }, settle);
+    add (check (TXT ("최대화 + 사이드바 접힘"), "max_sidebar_collapsed"), 0);
+    add ([this] { root.getSidebar()->setCollapsed (false); home().openAddFriend(); }, settle);
+    add (check (TXT ("최대화 + 모달"), "max_modal"), 0);
+    add (escape, 400);
+    add ([caption, phys]
+    {
+        if (auto* cb = caption())
+        {
+            const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre());
+            meon::winframe::devMouse (c.x, c.y, false, false);
+        }
+    }, 350);
+    add (check (TXT ("최대화: '이전 크기로' 버튼에 마우스"), "max_hover"), 0);
+    add ([this, phys] { const auto c = phys (root, { root.getWidth() / 2, 300 }); meon::winframe::devMouse (c.x, c.y, false, false); }, 200);
+    add ([sysCmd] { sysCmd (0); }, 1200);
+    add ([sysCmd] { sysCmd (2); }, 0);
+    waitUntilOr (TXT ("최소화 뒤 복원 (최대화로)"), isMax, 4000, [this] { expect (false, TXT ("최소화 뒤 복원이 최대화로 돌아오지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("최소화 후 복원 (최대화)"), "max_restored"), 0);
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("이전 크기로"), [isMax] { return ! isMax(); }, 4000, [this] { expect (false, TXT ("이전 크기로 돌아오지 않음")); });
+    add ([] {}, settle);
+    add ([this, sh] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("이전 크기로: 최대화 전 자리·크기 ") + p->getBounds().toString()); }, 0);
+    add (check (TXT ("이전 크기로 (보통)"), "normal_again"), 0);
+    add ([sysCmd] { sysCmd (0); }, 1200);
+    add ([sysCmd] { sysCmd (2); }, settle);
+    add (check (TXT ("최소화 후 복원 (보통)"), "normal_restored"), 0);
+
+    // 전체 화면 (F11): 내용 = 모니터, 창 버튼은 맨 위에 마우스를 댔을 때만 (앱이 그린 것)
+    add ([] { meon::winframe::devKey (0x7A); }, 0);
+    waitUntilOr (TXT ("전체 화면"), isFs, 4000, [this] { expect (false, TXT ("F11 로 전체 화면이 되지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("전체 화면"), "fullscreen"), 0);
+    add ([handle] { const auto p = meon::winframe::probe (handle()); meon::winframe::devMouse (p.monitor[0] + p.monitor[2] / 2, p.monitor[1], false, false); }, 400);
+    add ([this, caption] { auto* cb = caption(); expect (cb != nullptr && cb->isVisible(), TXT ("전체 화면: 맨 위에 마우스 → 창 버튼 (앱이 그린 것)")); }, 0);
+    add ([caption, phys]
+    {
+        if (auto* cb = caption())
+        {
+            const auto c = phys (*cb, cb->buttonBounds (WinCaptionButtons::maximise).getCentre());
+            meon::winframe::devMouse (c.x, c.y, false, false);
+        }
+    }, 400);
+    add ([this, caption] { auto* cb = caption(); expect (cb != nullptr && cb->isVisible(), TXT ("전체 화면: 창 버튼 위로 옮겨도 보인다")); }, 0);
+    add (check (TXT ("전체 화면 + 창 버튼 보임"), "fullscreen_caption"), 0);
+    add ([handle] { const auto p = meon::winframe::probe (handle()); meon::winframe::devMouse (p.monitor[0] + p.monitor[2] / 2, p.monitor[1] + p.monitor[3] / 2, false, false); }, 500);
+    add ([this, caption] { auto* cb = caption(); expect (cb == nullptr || ! cb->isVisible(), TXT ("전체 화면: 아래로 내려가면 창 버튼 숨김")); }, 0);
+    add ([this] { home().openAddFriend(); }, settle);
+    add (check (TXT ("전체 화면 + 모달"), "fullscreen_modal"), 0);
+    add (escape, 400);
+    add ([] { meon::winframe::devKey (0x7A); }, 0);
+    waitUntilOr (TXT ("전체 화면 끝"), [isFs] { return ! isFs(); }, 4000, [this] { expect (false, TXT ("F11 로 전체 화면이 끝나지 않음")); });
+    add ([] {}, settle);
+    add ([this, sh] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("전체 화면 끝: 원래 자리·크기 ") + p->getBounds().toString()); }, 0);
+    add (check (TXT ("전체 화면 끝 (보통)"), "fullscreen_off"), 0);
+
+    // 최대화에서 전체 화면 → 끄면 최대화 → 이전 크기로 = 처음 보통 자리 (JUCE 가 따로 기억한 자리로 가지 않는다)
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("최대화 (전체 화면 전)"), isMax, 4000, [this] { expect (false, TXT ("최대화되지 않음")); });
+    add ([] { meon::winframe::devKey (0x7A); }, settle);
+    waitUntilOr (TXT ("최대화 → 전체 화면"), isFs, 4000, [this] { expect (false, TXT ("최대화에서 전체 화면이 되지 않음")); });
+    add ([] {}, settle);
+    add (check (TXT ("최대화 → 전체 화면"), "max_fullscreen"), 0);
+    add ([] { meon::winframe::devKey (0x7A); }, 0);
+    waitUntilOr (TXT ("전체 화면 → 최대화"), [isFs, isMax] { return ! isFs() && isMax(); }, 4000, [this] { expect (false, TXT ("전체 화면을 끄면 최대화로 돌아와야 함")); });
+    add ([] {}, settle);
+    add (check (TXT ("전체 화면 → 최대화로 돌아옴"), "fullscreen_to_max"), 0);
+    add ([sysCmd] { sysCmd (1); }, 0);
+    waitUntilOr (TXT ("이전 크기로 (전체 화면 뒤)"), [isMax] { return ! isMax(); }, 4000, [this] { expect (false, TXT ("이전 크기로 돌아오지 않음")); });
+    add ([] {}, settle);
+    add ([this, sh] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("전체 화면을 거친 뒤 이전 크기로 = 처음 보통 자리 ") + p->getBounds().toString()); }, 0);
+    add (check (TXT ("전체 화면을 거친 뒤 보통"), "after_fs_normal"), 0);
+
+    // 여러 번 오가기
+    for (int round = 1; round <= 3; ++round)
+    {
+        const auto r = juce::String (round);
+        add ([sysCmd] { sysCmd (1); }, 0);
+        waitUntilOr (TXT ("오가기 최대화 ") + r, isMax, 4000, [this] { expect (false, TXT ("오가기: 최대화되지 않음")); });
+        add ([] { meon::winframe::devKey (0x7A); }, settle);
+        waitUntilOr (TXT ("오가기 전체 화면 ") + r, isFs, 4000, [this] { expect (false, TXT ("오가기: 전체 화면이 되지 않음")); });
+        add ([] {}, 500);
+        add (check (TXT ("오가기 ") + r + TXT (": 전체 화면"), "cycle" + r + "_fs"), 0);
+        add ([] { meon::winframe::devKey (0x7A); }, 0);
+        waitUntilOr (TXT ("오가기 최대화로 ") + r, [isFs, isMax] { return ! isFs() && isMax(); }, 4000, [this] { expect (false, TXT ("오가기: 최대화로 돌아오지 않음")); });
+        add ([] {}, 500);
+        add (check (TXT ("오가기 ") + r + TXT (": 최대화"), "cycle" + r + "_max"), 0);
+        add ([sysCmd] { sysCmd (1); }, 0);
+        waitUntilOr (TXT ("오가기 보통 ") + r, [isMax] { return ! isMax(); }, 4000, [this] { expect (false, TXT ("오가기: 보통으로 돌아오지 않음")); });
+        add ([] {}, 500);
+        add (check (TXT ("오가기 ") + r + TXT (": 보통"), "cycle" + r + "_normal"), 0);
+        add ([] { meon::winframe::devKey (0x7A); }, 500);
+        waitUntilOr (TXT ("오가기 보통→전체 화면 ") + r, isFs, 4000, [this] { expect (false, TXT ("오가기: 보통에서 전체 화면이 되지 않음")); });
+        add ([] { meon::winframe::devKey (0x7A); }, 500);
+        waitUntilOr (TXT ("오가기 전체 화면→보통 ") + r, [isFs, isMax] { return ! isFs() && ! isMax(); }, 4000,
+                     [this] { expect (false, TXT ("오가기: 전체 화면에서 보통으로 돌아오지 않음")); });
+        add ([] {}, 500);
+        add ([this, sh, r] { if (auto* p = peer()) expect (p->getBounds() == sh->normalClient, TXT ("오가기 ") + r + TXT (": 처음 보통 자리 ") + p->getBounds().toString()); }, 0);
+    }
+    add (check (TXT ("오가기 뒤 보통"), "cycles_done"), 0);
+
+    // 배율 바꾸기 (다른 배율 모니터로 옮긴 것과 같은 길: WM_DPICHANGED). 운영체제가 허락하지 않으면 건너뜀
+    for (int steps : { 1, 2 })
+    {
+        auto changed = std::make_shared<bool> (false);
+        add ([sh, steps, handle]
+        {
+            if (sh->startSteps == INT_MIN) sh->startSteps = meon::winframe::devScaleSteps (0, true);
+            if (sh->startSteps != 0) { std::cerr << "UITEST INFO winstates in-run scale change skipped (started at steps " << sh->startSteps << ")" << std::endl; return; }
+            const int before = meon::winframe::probe (handle()).dpi;
+            const int now = meon::winframe::devScaleSteps (steps, false);
+            std::cerr << "UITEST INFO winstates scale steps " << steps << " -> " << now << " (start " << sh->startSteps << ", dpi before " << before << ")" << std::endl;
+        }, 2500);
+        add ([sh, handle, steps, changed]
+        {
+            if (sh->startSteps != 0) return;
+            const int dpi = meon::winframe::probe (handle()).dpi;
+            *changed = dpi != 96;
+            std::cerr << "UITEST INFO winstates dpi after scale steps " << steps << ": " << dpi
+                      << (*changed ? "" : " (scale did not change: CI display does not allow it)") << std::endl;
+        }, 0);
+        const auto tag = "scale" + juce::String (steps);
+        const auto name = TXT ("배율 바꾼 뒤 (") + juce::String (steps) + TXT ("단계) ");
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("보통"), tag + "_normal")(); }, 0);
+        add ([sysCmd, changed] { if (*changed) sysCmd (1); }, settle);
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("최대화"), tag + "_max")(); }, 0);
+        add ([sysCmd, changed] { if (*changed) sysCmd (1); }, settle);
+        add ([changed] { if (*changed) meon::winframe::devKey (0x7A); }, settle);
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("전체 화면"), tag + "_fs")(); }, 0);
+        add ([changed] { if (*changed) meon::winframe::devKey (0x7A); }, settle);
+        add ([check, changed, name, tag] { if (*changed) check (name + TXT ("다시 보통"), tag + "_normal2")(); }, 0);
+    }
+    add ([sh] { if (sh->startSteps == 0) meon::winframe::devScaleSteps (0, false); }, 2500);
+    add (check (TXT ("배율 되돌린 뒤"), "scale_back"), 0);
+
+    add ([this]
+    {
+        auto* ed = dynamic_cast<meon::MeonEditor*> (root.getParentComponent());
+        const int fixes = ed != nullptr ? ed->devJuceFrameFixes() : -1;
+        std::cerr << "UITEST INFO winstates juce frame fixes " << fixes << std::endl;
+        expect (fixes == 0, TXT ("JUCE 창 틀 두께가 한 번도 어긋나지 않음 (맞춤 ") + juce::String (fixes) + TXT ("번)"));
+    }, 0);
+    add ([sh] { sh->backdrop.reset(); }, 0);
+}
+
+} // namespace meon::ui

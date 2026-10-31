@@ -9,12 +9,12 @@ namespace meon::winframe
 bool install (void*, Hooks) { return false; }
 void detach() {}
 bool installedOn (void*) { return false; }
-int hiddenTop (void*) { return 0; }
 bool isMaximised (void*) { return false; }
 bool isActive (void*) { return true; }
 void minimise (void*) {}
 void toggleMaximise (void*) {}
 void close (void*) {}
+void restore (void*) {}
 Probe probe (void*) { return {}; }
 FrameInfo frameInfo (void*) { return {}; }
 int devHitTest (void*, int, int) { return 0; }
@@ -25,6 +25,12 @@ void devEscape() {}
 void setFullscreen (void*, bool) {}
 bool isFullscreen (void*) { return false; }
 void devKey (int) {}
+bool appDrawsBorder (void*) { return false; }
+bool clientPixelSize (void*, int&, int&) { return false; }
+void frameInsets (void*, int out[4]) { out[0] = out[1] = out[2] = out[3] = 0; }
+bool unmaximiseForSave (void*) { return false; }
+std::vector<unsigned> devCaptureScreen (int, int, int, int) { return {}; }
+int devScaleSteps (int, bool) { return 0; }
 
 } // namespace meon::winframe
 

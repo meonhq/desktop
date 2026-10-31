@@ -355,14 +355,15 @@ namespace
     }
 }
 
-void installFullScreenShortcuts()
+namespace
 {
-    static bool done = false;
-    if (done) return;
-    done = true;
-    // 메뉴 막대: 앱 메뉴 다음에 "보기 > 전체 화면으로 전환 ⌃⌘F"
-    if (NSMenu* mainMenu = [NSApp mainMenu])
+    /** 메뉴 막대에 "보기 > 전체 화면으로 전환 ⌃⌘F" 가 없으면 넣는다 (앱 메뉴 다음) */
+    void ensureViewMenu()
     {
+        NSMenu* mainMenu = [NSApp mainMenu];
+        if (mainMenu == nil) return;
+        for (NSMenuItem* top in [mainMenu itemArray])
+            if ([[top title] isEqualToString: @"보기"]) return;
         NSMenu* view = [[NSMenu alloc] initWithTitle: @"보기"];
         NSMenuItem* fs = [[NSMenuItem alloc] initWithTitle: @"전체 화면으로 전환" action: @selector (meonToggleFullScreen:) keyEquivalent: @"f"];
         [fs setKeyEquivalentModifierMask: NSEventModifierFlagControl | NSEventModifierFlagCommand];
@@ -375,6 +376,19 @@ void installFullScreenShortcuts()
         [view release];
         [top release];
     }
+}
+
+void installFullScreenShortcuts()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    // 메뉴 막대: JUCE 는 앱 initialise() 가 끝난 뒤에 메뉴 막대를 새로 만든다 (JUCEApplication::initialiseApp → initialiseMacMainMenu).
+    // 그 전에 넣으면 지워지므로 다음 차례에 넣고, 앱이 앞으로 올 때마다 있는지 다시 본다
+    dispatch_async (dispatch_get_main_queue(), ^{ ensureViewMenu(); });
+    [[NSNotificationCenter defaultCenter] addObserverForName: NSApplicationDidBecomeActiveNotification object: nil
+                                                       queue: [NSOperationQueue mainQueue]
+                                                  usingBlock: ^(NSNotification*) { ensureViewMenu(); }];
     // 앱 이벤트에서 먼저 받는다: 입력 칸이 키를 먹어도, 메뉴가 없어도 (fn+F 는 메뉴 단축키로 걸 수 없다)
     [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskKeyDown handler: ^NSEvent* (NSEvent* e)
     {

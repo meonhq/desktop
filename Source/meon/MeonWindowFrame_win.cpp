@@ -1,4 +1,5 @@
-// MEON - 윈도우 독립 앱 창의 윗부분: 운영체제 창 틀은 두고 제목 줄 자리만 앱 내용으로 덮는다. 설명은 MeonWindowFrame.h
+// MEON - 윈도우 독립 앱 창 틀: 운영체제 창은 두고 제목 줄 자리만 앱 내용으로 덮는다. 설명은 MeonWindowFrame.h
+// 창 틀 계산(틀 두께·상태별 내용 자리·크기 조절 판정)은 이 파일 맨 위 "창 틀 계산" 한 곳에만 있다.
 #include "MeonWindowFrame.h"
 
 #if defined (_WIN32)
@@ -11,6 +12,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <cstdio>
+#include <climits>
 #include <algorithm>
 #include <JuceHeader.h>
 
@@ -18,10 +20,14 @@
 #ifndef ABM_GETAUTOHIDEBAREX
  #define ABM_GETAUTOHIDEBAREX 0x0000000b
 #endif
+#ifndef WM_DPICHANGED
+ #define WM_DPICHANGED 0x02E0
+#endif
 
 #if defined (_MSC_VER)
  #pragma comment (lib, "comctl32.lib")
  #pragma comment (lib, "shell32.lib")
+ #pragma comment (lib, "ole32.lib")
 #endif
 
 namespace meon::winframe
@@ -30,14 +36,16 @@ namespace meon::winframe
 namespace
 {
     constexpr UINT_PTR subclassId = 0x4D454F4E;   // 'MEON'
+    // 테마(uxtheme)가 제목 줄·틀을 직접 그리는 숨은 메시지. 제목 줄 자리가 내용이므로 그리면 내용 위에 운영체제 제목 줄·창 버튼이 나타난다
+    constexpr UINT wmNcUahDrawCaption = 0x00AE, wmNcUahDrawFrame = 0x00AF;
 
     struct State
     {
         HWND hwnd = nullptr;
         Hooks hooks;
-        int maxState = 0;              // 최대화 버튼 표시 (0 보통, 1 올림, 2 누름)
+        int maxState = 0;              // 최대화 버튼 표시 (0 보통, 1 올림, 2 누름). 윈도우 11 (HTMAXBUTTON) 에서만
         bool maxPressed = false, trackingNc = false, notifyPending = false;
-        int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0, notifies = 0;
+        int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0, notifies = 0, captionPaintsBlocked = 0;
         long borderColourResult = 1;
         bool fullscreen = false;            // F11 전체 화면
         WINDOWPLACEMENT savedPlacement {};  // 켜기 전 자리·크기·최대화
@@ -63,32 +71,210 @@ namespace
         return fn != nullptr ? fn (index, dpi) : MulDiv (GetSystemMetrics (index), (int) dpi, 96);
     }
 
-    /** 크기 조절 틀 두께 (물리 px): 운영체제가 쓰는 값 그대로 (100% 에서 4 + 4 = 8) */
+    int windowsBuild()
+    {
+        static const int build = []
+        {
+            wchar_t text[32] {};
+            DWORD size = sizeof (text);
+            if (RegGetValueW (HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"CurrentBuildNumber",
+                              RRF_RT_REG_SZ, nullptr, text, &size) != ERROR_SUCCESS)
+                return 0;
+            return _wtoi (text);
+        }();
+        return build;
+    }
+
+    bool isWin11() { return windowsBuild() >= 22000; }
+
+    bool zoomed (HWND h) { return IsZoomed (h) != FALSE; }
+
+    MONITORINFO monitorInfo (HMONITOR mon)
+    {
+        MONITORINFO mi {};
+        mi.cbSize = sizeof (mi);
+        GetMonitorInfoW (mon, &mi);
+        return mi;
+    }
+
+    //==============================================================================
+    // 창 틀 계산 (여기 한 곳)
+
+    /** 크기 조절 두께 (물리 px): 운영체제가 쓰는 값 (100% 에서 4 + 4 = 8, 배율에 비례) */
     int resizeBorder (HWND h)
     {
         const UINT dpi = dpiOf (h);
         return metricForDpi (SM_CYSIZEFRAME, dpi) + metricForDpi (SM_CXPADDEDBORDER, dpi);
     }
 
-    bool zoomed (HWND h) { return IsZoomed (h) != FALSE; }
+    /** 틀 두께 (물리 px). 상태(보통·최대화·전체 화면·최소화)와 상관없이 같다: 배율에만 따른다.
+        JUCE 는 이 두께를 논리 px(정수)로 기억하고 다시 배율을 곱해 쓰므로, 논리 정수 × 배율로 정확히 돌아오는 값만 쓴다 */
+    RECT insetsFor (HWND h)
+    {
+        const double scale = dpiOf (h) / 96.0;
+        int side = resizeBorder (h);   // 윈도우 11: 크기 조절 두께 그대로 (운영체제 1px 테두리는 틀 안쪽 끝, 색은 #EBEBEB)
+        if (! isWin11())
+        {
+            // 윈도우 10: 운영체제 1px 테두리(틀 안쪽 끝) 자리까지 내용이 덮는다 (100% 7, 125% 9, 150% 11, 175% 12, 200% 14)
+            const int logical = std::max (0, juce::roundToInt (side / scale) - 1);
+            side = juce::roundToInt (logical * scale);
+        }
+        return { side, 0, side, side };
+    }
 
+    RECT shrink (RECT r, const RECT& in)
+    {
+        r.left += in.left; r.top += in.top; r.right -= in.right; r.bottom -= in.bottom;
+        r.right = std::max (r.right, r.left);     // 최소화한 작은 창에서도 음수 크기가 되지 않게
+        r.bottom = std::max (r.bottom, r.top);
+        return r;
+    }
+    RECT grow (RECT r, const RECT& in)   { r.left -= in.left; r.top -= in.top; r.right += in.right; r.bottom += in.bottom; return r; }
+
+    /** 창 사각형 → 내용 사각형 (WM_NCCALCSIZE). 모든 상태가 같은 식 */
+    RECT clientFromWindow (HWND h, const RECT& window) { return shrink (window, insetsFor (h)); }
+    /** 내용 사각형 → 창 사각형 */
+    RECT windowForClient (HWND h, const RECT& client)  { return grow (client, insetsFor (h)); }
+
+    /** 작업 표시줄이 자동 숨김이면 그 쪽 가장자리를 1px 비운다 (꽉 채우면 작업 표시줄이 다시 나오지 않는다) */
+    void leaveRoomForAutoHideTaskbar (const MONITORINFO& mi, RECT& r)
+    {
+        APPBARDATA abd {};
+        abd.cbSize = sizeof (abd);
+        if ((SHAppBarMessage (ABM_GETSTATE, &abd) & ABS_AUTOHIDE) == 0) return;
+        const UINT edges[] = { ABE_BOTTOM, ABE_TOP, ABE_LEFT, ABE_RIGHT };
+        for (UINT e : edges)
+        {
+            APPBARDATA q {};
+            q.cbSize = sizeof (q);
+            q.uEdge = e;
+            q.rc = mi.rcMonitor;
+            if (SHAppBarMessage (ABM_GETAUTOHIDEBAREX, &q) == 0) continue;
+            if (e == ABE_BOTTOM) r.bottom -= 1;
+            else if (e == ABE_TOP) r.top += 1;
+            else if (e == ABE_LEFT) r.left += 1;
+            else r.right -= 1;
+            return;
+        }
+    }
+
+    /** 최대화한 내용 자리 = 작업 영역 (여백·잘림 0) */
+    RECT maximisedClient (HMONITOR mon)
+    {
+        const auto mi = monitorInfo (mon);
+        RECT r = mi.rcWork;
+        leaveRoomForAutoHideTaskbar (mi, r);
+        return r;
+    }
+
+    /** 전체 화면 내용 자리 = 모니터 전체 (작업 표시줄 자리까지) */
+    RECT fullscreenClient (HMONITOR mon) { return monitorInfo (mon).rcMonitor; }
+
+    /** 크기 조절 판정 (화면 물리 좌표). 창 바깥 끝에서 크기 조절 두께 안쪽: 윈도우 11 은 틀 자리, 윈도우 10 은 틀 + 내용 끝 1px. 위는 내용 맨 위 줄 */
+    LRESULT resizeHit (HWND h, int x, int y)
+    {
+        if (st.fullscreen || zoomed (h) || IsIconic (h)) return HTNOWHERE;
+        RECT wr;
+        GetWindowRect (h, &wr);
+        const int b = resizeBorder (h), corner = b * 2;
+        const bool left = x < wr.left + b, right = x >= wr.right - b, top = y < wr.top + b, bottom = y >= wr.bottom - b;
+        const bool nearLeft = x < wr.left + corner, nearRight = x >= wr.right - corner;
+        const bool nearTop = y < wr.top + corner, nearBottom = y >= wr.bottom - corner;
+        if (top)    return nearLeft ? HTTOPLEFT : nearRight ? HTTOPRIGHT : HTTOP;
+        if (bottom) return nearLeft ? HTBOTTOMLEFT : nearRight ? HTBOTTOMRIGHT : HTBOTTOM;
+        if (left)   return nearTop ? HTTOPLEFT : nearBottom ? HTBOTTOMLEFT : HTLEFT;
+        if (right)  return nearTop ? HTTOPRIGHT : nearBottom ? HTBOTTOMRIGHT : HTRIGHT;
+        return HTNOWHERE;
+    }
+
+    //==============================================================================
     // DWM (dwmapi.dll 은 직접 링크하지 않고 불러 쓴다: 빌드 기준이 윈도우 7)
     template <typename Fn> Fn dwmapi (const char* name)
     {
         static HMODULE lib = LoadLibraryW (L"dwmapi.dll");
         return lib != nullptr ? reinterpret_cast<Fn> (reinterpret_cast<void*> (GetProcAddress (lib, name))) : nullptr;
     }
-    constexpr DWORD dwmNcRenderingEnabled = 1, dwmExtendedFrameBounds = 9, dwmBorderColor = 34;   // DWMWA_*
+    constexpr DWORD dwmNcRenderingEnabled = 1, dwmExtendedFrameBounds = 9, dwmCornerPreference = 33, dwmBorderColor = 34;   // DWMWA_*
+    constexpr DWORD dwmColourNone = 0xFFFFFFFE;                    // DWMWA_COLOR_NONE
+    constexpr DWORD dwmCornerDefault = 0, dwmCornerSquare = 1;    // DWMWCP_DEFAULT, DWMWCP_DONOTROUND
 
-    /** 윈도우 11: 창 테두리 색을 #EBEBEB 로 (강조 색 설정과 상관없이). 윈도우 10 은 이 속성이 없어 실패하고 운영체제 테두리 그대로 */
-    long applyBorderColour (HWND h)
+    long dwmSet (HWND h, DWORD attr, DWORD value)
     {
         static auto set = dwmapi<HRESULT (WINAPI*) (HWND, DWORD, LPCVOID, DWORD)> ("DwmSetWindowAttribute");
         if (set == nullptr) return -1;
-        const COLORREF c = RGB ((borderColourRGB >> 16) & 0xFF, (borderColourRGB >> 8) & 0xFF, borderColourRGB & 0xFF);
-        return (long) set (h, dwmBorderColor, &c, sizeof (c));
+        return (long) set (h, attr, &value, sizeof (value));
     }
 
+    /** 윈도우 11: 창 테두리 색 #EBEBEB (강조 색 설정과 상관없이). 전체 화면은 테두리 없음·모서리 각지게.
+        윈도우 10 은 이 속성이 없어 실패한다 (테두리는 앱이 그린다) */
+    long applyBorderColour (HWND h)
+    {
+        if (st.fullscreen)
+        {
+            dwmSet (h, dwmCornerPreference, dwmCornerSquare);
+            return dwmSet (h, dwmBorderColor, dwmColourNone);
+        }
+        dwmSet (h, dwmCornerPreference, dwmCornerDefault);
+        return dwmSet (h, dwmBorderColor, (DWORD) RGB ((borderColourRGB >> 16) & 0xFF, (borderColourRGB >> 8) & 0xFF, borderColourRGB & 0xFF));
+    }
+
+    /** 작업 표시줄에 전체 화면 창이라고 알린다 (모니터를 덮은 앞 창이면 작업 표시줄이 알아서 내려가지만, 놓치는 경우가 있다) */
+    void markFullscreen (HWND h, bool on)
+    {
+        static const CLSID clsidTaskbarList = { 0x56FDF344, 0xFD6D, 0x11D0, { 0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90 } };
+        static const IID iidTaskbarList2 = { 0x602D4995, 0xB13A, 0x429B, { 0xA6, 0x6E, 0x19, 0x35, 0xE4, 0x4F, 0x43, 0x17 } };
+        struct TaskbarList2 : IUnknown   // ITaskbarList2 (shobjidl.h 없이: 빌드 기준이 윈도우 7)
+        {
+            virtual HRESULT STDMETHODCALLTYPE HrInit() = 0;
+            virtual HRESULT STDMETHODCALLTYPE AddTab (HWND) = 0;
+            virtual HRESULT STDMETHODCALLTYPE DeleteTab (HWND) = 0;
+            virtual HRESULT STDMETHODCALLTYPE ActivateTab (HWND) = 0;
+            virtual HRESULT STDMETHODCALLTYPE SetActiveAlt (HWND) = 0;
+            virtual HRESULT STDMETHODCALLTYPE MarkFullscreenWindow (HWND, BOOL) = 0;
+        };
+        TaskbarList2* tb = nullptr;
+        if (FAILED (CoCreateInstance (clsidTaskbarList, nullptr, CLSCTX_INPROC_SERVER, iidTaskbarList2, reinterpret_cast<void**> (&tb))) || tb == nullptr)
+            return;
+        if (SUCCEEDED (tb->HrInit())) tb->MarkFullscreenWindow (h, on ? TRUE : FALSE);
+        tb->Release();
+    }
+
+    /** 전체 화면: 모니터 밖으로 나간 틀 자리는 잘라서 옆 모니터에 보이지 않게 (창 좌표) */
+    void clipToClient (HWND h)
+    {
+        RECT wr;
+        GetWindowRect (h, &wr);
+        const RECT in = insetsFor (h);
+        SetWindowRgn (h, CreateRectRgn (in.left, in.top, (wr.right - wr.left) - in.right, (wr.bottom - wr.top) - in.bottom), TRUE);   // 영역은 운영체제가 가진다
+    }
+
+    /** 최대화·전체 화면이면 창 자리를 상태의 내용 자리에 맞춘다 (운영체제·JUCE 가 어떤 자리를 주든) */
+    void enforceStateRect (HWND h, WINDOWPOS& wp)
+    {
+        if (IsIconic (h) || (! st.fullscreen && ! zoomed (h))) return;
+        RECT cur;
+        GetWindowRect (h, &cur);
+        RECT proposed = cur;
+        if ((wp.flags & SWP_NOMOVE) == 0) OffsetRect (&proposed, wp.x - cur.left, wp.y - cur.top);
+        if ((wp.flags & SWP_NOSIZE) == 0) { proposed.right = proposed.left + wp.cx; proposed.bottom = proposed.top + wp.cy; }
+        if (proposed.left <= -32000 || proposed.top <= -32000) return;   // 최소화 자리
+        const HMONITOR mon = MonitorFromRect (&proposed, MONITOR_DEFAULTTONEAREST);
+        const RECT want = windowForClient (h, st.fullscreen ? fullscreenClient (mon) : maximisedClient (mon));
+        if (EqualRect (&want, &proposed)) return;
+        wp.x = want.left;
+        wp.y = want.top;
+        wp.cx = want.right - want.left;
+        wp.cy = want.bottom - want.top;
+        wp.flags &= ~(UINT) (SWP_NOMOVE | SWP_NOSIZE);
+    }
+
+    /** 틀을 다시 계산하게 한다 (자리·크기는 그대로, 최대화·전체 화면이면 상태 자리로) */
+    void refreshFrame (HWND h)
+    {
+        SetWindowPos (h, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+    }
+
+    //==============================================================================
     void setMaxState (int s)
     {
         if (st.maxState == s) return;
@@ -109,58 +295,20 @@ namespace
         });
     }
 
-    /** 최대화했을 때 작업 표시줄이 자동 숨김이면 그 쪽 가장자리를 1px 비운다 (꽉 채우면 작업 표시줄이 다시 나오지 않는다) */
-    void leaveRoomForAutoHideTaskbar (HWND h, RECT& r)
+    LRESULT hitTest (HWND h, LPARAM lParam)
     {
-        APPBARDATA abd {};
-        abd.cbSize = sizeof (abd);
-        if ((SHAppBarMessage (ABM_GETSTATE, &abd) & ABS_AUTOHIDE) == 0) return;
-        HMONITOR mon = MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi {};
-        mi.cbSize = sizeof (mi);
-        if (! GetMonitorInfoW (mon, &mi)) return;
-        const UINT edges[] = { ABE_BOTTOM, ABE_TOP, ABE_LEFT, ABE_RIGHT };
-        for (UINT e : edges)
-        {
-            APPBARDATA q {};
-            q.cbSize = sizeof (q);
-            q.uEdge = e;
-            q.rc = mi.rcMonitor;
-            if (SHAppBarMessage (ABM_GETAUTOHIDEBAREX, &q) == 0) continue;
-            if (e == ABE_BOTTOM) r.bottom -= 1;
-            else if (e == ABE_TOP) r.top += 1;
-            else if (e == ABE_LEFT) r.left += 1;
-            else r.right -= 1;
-            return;
-        }
-    }
-
-    LRESULT hitTest (HWND h, WPARAM wParam, LPARAM lParam)
-    {
-        // 왼쪽·오른쪽·아래 틀은 운영체제 판정 그대로 (HTLEFT·HTBOTTOMRIGHT …)
-        const LRESULT def = DefSubclassProc (h, WM_NCHITTEST, wParam, lParam);
-        if (def != HTCLIENT) return def;
         const int x = GET_X_LPARAM (lParam), y = GET_Y_LPARAM (lParam);
         RECT wr;
         GetWindowRect (h, &wr);
+        if (x < wr.left || x >= wr.right || y < wr.top || y >= wr.bottom) return HTNOWHERE;
         if (st.fullscreen) return HTCLIENT;   // 전체 화면: 끌기·크기 조절 없음. 맨 위에 나타나는 창 버튼은 앱이 받는다
-        // 맨 위 틀 두께: 위쪽 크기 조절 (최대화하면 없음). 양 끝은 모서리
-        if (! zoomed (h))
-        {
-            const int b = resizeBorder (h);
-            if (y < wr.top + b)
-            {
-                if (x < wr.left + b * 2) return HTTOPLEFT;
-                if (x >= wr.right - b * 2) return HTTOPRIGHT;
-                return HTTOP;
-            }
-        }
+        if (const LRESULT r = resizeHit (h, x, y); r != HTNOWHERE) return r;
         if (st.hooks.hitTest)
         {
             switch (st.hooks.hitTest (x, y))
             {
                 case Region::caption:   return HTCAPTION;
-                case Region::maxButton: return HTMAXBUTTON;
+                case Region::maxButton: return isWin11() ? HTMAXBUTTON : HTCLIENT;   // 윈도우 10 에서 HTMAXBUTTON 이면 운영체제 최대화 버튼이 그려진다
                 case Region::client:    break;
             }
         }
@@ -182,25 +330,49 @@ namespace
         switch (msg)
         {
             case WM_NCCALCSIZE:
+            {
+                // 내용 자리는 늘 같은 식 (운영체제 계산을 쓰지 않는다: 스타일·상태마다 다른 틀이 나오지 않게)
+                ++st.ncCalc;
                 if (wParam == TRUE)
                 {
                     auto* p = reinterpret_cast<NCCALCSIZE_PARAMS*> (lParam);
-                    const LONG top = p->rgrc[0].top;
-                    // 운영체제가 표준 틀을 계산하게 두고 (왼쪽·오른쪽·아래), 위(제목 줄 + 위 틀)만 내용으로 쓴다.
-                    // 위 틀은 최대화해도 0 으로 둔다: JUCE 는 틀 두께를 한 번 읽어 두고 좌표 계산에 계속 쓰므로 상태마다 달라지면 마우스가 어긋난다.
-                    // 최대화하면 창 위가 화면 밖으로 틀 두께만큼 나가므로 그만큼은 앱이 비워 둔다 (hiddenTop)
-                    const LRESULT r = DefSubclassProc (h, msg, wParam, lParam);
-                    p->rgrc[0].top = top;
-                    if (zoomed (h)) leaveRoomForAutoHideTaskbar (h, p->rgrc[0]);
-                    ++st.ncCalc;
-                    return r;
+                    p->rgrc[0] = clientFromWindow (h, p->rgrc[0]);
                 }
-                break;
+                else
+                {
+                    auto* r = reinterpret_cast<RECT*> (lParam);
+                    *r = clientFromWindow (h, *r);
+                }
+                return 0;
+            }
 
             case WM_NCHITTEST:
-                return hitTest (h, wParam, lParam);
+                return hitTest (h, lParam);
 
-            // 최대화 버튼 (HTMAXBUTTON): 운영체제가 그리지 않게 누름·뗌은 여기서 끝내고, 표시는 앱이 그린다
+            case WM_WINDOWPOSCHANGING:
+                enforceStateRect (h, *reinterpret_cast<WINDOWPOS*> (lParam));   // 최대화 = 작업 영역, 전체 화면 = 모니터 (JUCE 보다 먼저)
+                break;
+            case WM_WINDOWPOSCHANGED:
+                if (st.fullscreen && (reinterpret_cast<WINDOWPOS*> (lParam)->flags & SWP_NOSIZE) == 0) clipToClient (h);
+                break;
+
+            // 운영체제 제목 줄·창 버튼 그리기 막기
+            case wmNcUahDrawCaption:
+            case wmNcUahDrawFrame:
+                ++st.captionPaintsBlocked;
+                return 0;
+            case WM_SETTEXT:
+            case WM_SETICON:
+            {
+                // 제목·아이콘을 바꿀 때 운영체제가 제목 줄(지금은 내용 자리)에 직접 그리지 않게, 처리하는 동안만 보이지 않는 창으로 둔다
+                const LONG_PTR style = GetWindowLongPtrW (h, GWL_STYLE);
+                if ((style & WS_VISIBLE) != 0) SetWindowLongPtrW (h, GWL_STYLE, style & ~(LONG_PTR) WS_VISIBLE);
+                const LRESULT r = DefSubclassProc (h, msg, wParam, lParam);
+                if ((style & WS_VISIBLE) != 0) SetWindowLongPtrW (h, GWL_STYLE, style);
+                return r;
+            }
+
+            // 최대화 버튼 (윈도우 11 HTMAXBUTTON): 누름·뗌은 여기서 끝내고, 표시는 앱이 그린다
             case WM_NCMOUSEMOVE:
                 if (wParam == HTMAXBUTTON) { setMaxState (st.maxPressed ? 2 : 1); trackNcLeave (h); }
                 else if (st.maxState != 0) { st.maxPressed = false; setMaxState (0); }
@@ -253,10 +425,24 @@ namespace
                 break;
 
             case WM_SYSCOMMAND:
+            {
+                const auto cmd = wParam & 0xFFF0;
                 // Alt+Space (시스템 메뉴): JUCE 는 키보드로 연 창 메뉴를 막는다 (Alt 를 수정 키로 쓰는 앱 때문). 스페이스만 운영체제에 넘긴다
-                if ((wParam & 0xFFF0) == SC_KEYMENU && LOWORD (lParam) == VK_SPACE)
+                if (cmd == SC_KEYMENU && LOWORD (lParam) == VK_SPACE)
                     return DefWindowProcW (h, msg, wParam, lParam);
+                // 최대화·이전 크기로: 운영체제 기본 동작만. JUCE 는 이것을 자기 '전체 화면'으로 바꾸고 이전 자리를 따로 기억해 되돌릴 때
+                // 한 번 더 옮긴다 (F11 중에 기억한 자리로 돌아가는 버그). 전체 화면(F11) 중이면 먼저 빠져나온다
+                if (cmd == SC_MAXIMIZE || cmd == SC_RESTORE)
+                {
+                    if (st.fullscreen && ! IsIconic (h))   // 최소화한 전체 화면을 되살리면 전체 화면 그대로
+                    {
+                        setFullscreen (h, false);
+                        if (cmd == SC_RESTORE) return 0;
+                    }
+                    return DefWindowProcW (h, msg, wParam, lParam);
+                }
                 break;
+            }
             case WM_INITMENUPOPUP:
                 if (HIWORD (lParam) != 0) ++st.sysMenuOpened;   // 창 메뉴 (개발용 확인)
                 break;
@@ -267,6 +453,17 @@ namespace
             case WM_SIZE:
                 notifyLater();
                 break;
+
+            case WM_DPICHANGED:
+            case WM_DISPLAYCHANGE:
+            {
+                // 배율·해상도가 바뀌면 틀 두께·모니터 크기도 바뀐다: JUCE 가 새 자리를 정한 뒤 틀을 다시 계산하고 상태 자리에 맞춘다
+                const LRESULT r = DefSubclassProc (h, msg, wParam, lParam);
+                refreshFrame (h);
+                if (st.fullscreen) clipToClient (h);
+                notifyLater();
+                return r;
+            }
 
             case WM_DWMCOLORIZATIONCOLORCHANGED:
             case WM_DWMCOMPOSITIONCHANGED:
@@ -313,13 +510,10 @@ bool install (void* handle, Hooks hooks)
     if (st.hwnd == h) { st.hooks = std::move (hooks); return true; }
     if (st.hwnd != nullptr) detach();
 
-    // 내용 자리를 그대로 두고 틀만 바꾼다: 위 틀(제목 줄 포함) 높이만큼 창 위를 내린다 (창 크기·위치를 저장해 다시 열 때 늘거나 밀리지 않게)
-    RECT wr {}, cr {};
-    GetWindowRect (h, &wr);
+    // 내용 자리를 그대로 두고 틀만 바꾼다 (창 크기·위치를 저장해 다시 열 때 늘거나 밀리지 않게)
+    RECT cr {};
     GetClientRect (h, &cr);
-    POINT tl { cr.left, cr.top };
-    ClientToScreen (h, &tl);
-    const int topFrame = tl.y - wr.top;
+    MapWindowPoints (h, nullptr, reinterpret_cast<POINT*> (&cr), 2);
 
     st = State();
     st.hwnd = h;
@@ -328,10 +522,14 @@ bool install (void* handle, Hooks hooks)
     st.borderColourResult = applyBorderColour (h);
 
     if (zoomed (h) || IsIconic (h))
-        SetWindowPos (h, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    {
+        refreshFrame (h);
+    }
     else
-        SetWindowPos (h, nullptr, wr.left, wr.top + topFrame, wr.right - wr.left, (wr.bottom - wr.top) - topFrame,
-                      SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+    {
+        const RECT w = windowForClient (h, cr);
+        SetWindowPos (h, nullptr, w.left, w.top, w.right - w.left, w.bottom - w.top, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     return true;
 }
 
@@ -345,7 +543,7 @@ void detach()
     if (IsWindow (h))
     {
         RemoveWindowSubclass (h, proc, subclassId);
-        SetWindowPos (h, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        refreshFrame (h);
     }
 }
 
@@ -361,39 +559,75 @@ void setFullscreen (void* handle, bool on)
         st.savedPlacement.length = sizeof (WINDOWPLACEMENT);
         GetWindowPlacement (h, &st.savedPlacement);
         st.savedStyle = GetWindowLongW (h, GWL_STYLE);
-        if (zoomed (h)) ShowWindow (h, SW_RESTORE);   // 최대화 상태에서는 자리를 바꿀 수 없다 (끌 때 placement 가 다시 최대화한다)
-        MONITORINFO mi {};
-        mi.cbSize = sizeof (mi);
-        GetMonitorInfoW (MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST), &mi);
+        if (zoomed (h) || IsIconic (h)) ShowWindow (h, SW_RESTORE);   // 최대화 상태에서는 자리를 바꿀 수 없다 (끌 때 placement 가 다시 최대화한다)
+        const HMONITOR mon = MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST);
         st.fullscreen = true;
-        // 창 틀·제목 줄 없이 모니터 전체 (작업 표시줄 위까지): 앞 창이 모니터를 덮으면 윈도우가 작업 표시줄을 내린다
+        applyBorderColour (h);   // 테두리 없음·모서리 각지게
+        // 창 틀·제목 줄 없는 창 모양, 내용 = 모니터 전체 (작업 표시줄 자리까지). 틀 두께는 그대로라 창은 그만큼 모니터 밖으로 크다
         SetWindowLongW (h, GWL_STYLE, st.savedStyle & ~(WS_CAPTION | WS_THICKFRAME));
-        SetWindowPos (h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
-                      SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        const RECT w = windowForClient (h, fullscreenClient (mon));
+        SetWindowPos (h, HWND_TOP, w.left, w.top, w.right - w.left, w.bottom - w.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        clipToClient (h);
+        markFullscreen (h, true);
     }
     else
     {
         st.fullscreen = false;
+        markFullscreen (h, false);
+        SetWindowRgn (h, nullptr, FALSE);
         SetWindowLongW (h, GWL_STYLE, st.savedStyle);
-        SetWindowPlacement (h, &st.savedPlacement);   // 켜기 전 자리·크기 (최대화였으면 최대화)
-        SetWindowPos (h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        applyBorderColour (h);   // #EBEBEB·기본 모서리
+        SetWindowPlacement (h, &st.savedPlacement);   // 켜기 전 자리·크기 (최대화였으면 최대화: 내용 = 작업 영역)
+        refreshFrame (h);
+        RedrawWindow (h, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
     }
     notifyLater();
 }
 
 bool isFullscreen (void* handle) { return handle != nullptr && st.hwnd == static_cast<HWND> (handle) && st.fullscreen; }
 
-int hiddenTop (void* handle)
+bool appDrawsBorder (void* handle)
 {
     auto h = static_cast<HWND> (handle);
-    if (h == nullptr || ! zoomed (h)) return 0;
-    MONITORINFO mi {};
-    mi.cbSize = sizeof (mi);
-    if (! GetMonitorInfoW (MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST), &mi)) return 0;
-    POINT tl { 0, 0 };
-    ClientToScreen (h, &tl);
-    return std::max (0, (int) (mi.rcWork.top - tl.y));
+    return installedOn (handle) && ! isWin11() && ! st.fullscreen && ! zoomed (h) && ! IsIconic (h);
 }
+
+bool clientPixelSize (void* handle, int& w, int& h)
+{
+    RECT r {};
+    if (handle == nullptr || ! GetClientRect (static_cast<HWND> (handle), &r)) return false;
+    w = r.right - r.left;
+    h = r.bottom - r.top;
+    return true;
+}
+
+void frameInsets (void* handle, int out[4])
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+    auto h = static_cast<HWND> (handle);
+    if (h == nullptr || ! installedOn (handle)) return;
+    const RECT in = insetsFor (h);
+    out[0] = in.left; out[1] = in.top; out[2] = in.right; out[3] = in.bottom;
+}
+
+bool unmaximiseForSave (void* handle)
+{
+    auto h = static_cast<HWND> (handle);
+    if (h == nullptr || ! zoomed (h)) return false;
+    WINDOWPLACEMENT wp {};
+    wp.length = sizeof (wp);
+    GetWindowPlacement (h, &wp);
+    // 보이지 않게 한 뒤 최대화를 풀고 보통 자리로 옮긴다. 창 크기는 창이 사라질 때 이 자리로 저장된다
+    ShowWindow (h, SW_HIDE);
+    SetWindowLongW (h, GWL_STYLE, GetWindowLongW (h, GWL_STYLE) & ~WS_MAXIMIZE);
+    // rcNormalPosition 은 작업 영역 좌표 (주 모니터 작업 영역 왼쪽 위 기준)
+    const auto primary = monitorInfo (MonitorFromPoint ({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
+    RECT r = wp.rcNormalPosition;
+    OffsetRect (&r, primary.rcWork.left - primary.rcMonitor.left, primary.rcWork.top - primary.rcMonitor.top);
+    SetWindowPos (h, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    return true;
+}
+
 bool isMaximised (void* handle) { return handle != nullptr && zoomed (static_cast<HWND> (handle)); }
 
 bool isActive (void* handle)
@@ -416,6 +650,7 @@ void toggleMaximise (void* handle)
     if (h != nullptr) PostMessageW (h, WM_SYSCOMMAND, zoomed (h) ? SC_RESTORE : SC_MAXIMIZE, 0);
 }
 void close (void* handle)          { if (handle != nullptr) PostMessageW (static_cast<HWND> (handle), WM_SYSCOMMAND, SC_CLOSE, 0); }
+void restore (void* handle)        { if (handle != nullptr) PostMessageW (static_cast<HWND> (handle), WM_SYSCOMMAND, SC_RESTORE, 0); }
 
 Probe probe (void* handle)
 {
@@ -432,16 +667,20 @@ Probe probe (void* handle)
     ClientToScreen (h, &tl);
     rectToInts (wr, p.window);
     p.client[0] = tl.x; p.client[1] = tl.y; p.client[2] = cr.right; p.client[3] = cr.bottom;
-    MONITORINFO mi {};
-    mi.cbSize = sizeof (mi);
-    if (GetMonitorInfoW (MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST), &mi)) { rectToInts (mi.rcMonitor, p.monitor); rectToInts (mi.rcWork, p.work); }
+    const auto mi = monitorInfo (MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST));
+    rectToInts (mi.rcMonitor, p.monitor);
+    rectToInts (mi.rcWork, p.work);
     p.dpi = (int) dpiOf (h);
     p.resizeBorder = resizeBorder (h);
     p.ncCalc = st.ncCalc;
     p.sysMenuOpened = st.sysMenuOpened;
     p.maxClicks = st.maxClicks;
     p.notifies = st.notifies;
+    p.captionPaintsBlocked = st.captionPaintsBlocked;
+    frameInsets (handle, p.insets);
     p.fullscreen = st.fullscreen;
+    p.win11 = isWin11();
+    p.appBorder = appDrawsBorder (handle);
     p.os = juce::SystemStats::getOperatingSystemName().toStdString();
     return p;
 }
@@ -463,10 +702,7 @@ FrameInfo frameInfo (void* handle)
     DWORD v = 0, size = sizeof (v);
     if (RegGetValueW (HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"ColorPrevalence", RRF_RT_REG_DWORD, nullptr, &v, &size) == ERROR_SUCCESS)
         f.colorPrevalence = (int) v;
-    wchar_t buildText[32] {};
-    DWORD bsize = sizeof (buildText);
-    if (RegGetValueW (HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"CurrentBuildNumber", RRF_RT_REG_SZ, nullptr, buildText, &bsize) == ERROR_SUCCESS)
-        f.build = _wtoi (buildText);
+    f.build = windowsBuild();
     f.style = (unsigned) GetWindowLongW (h, GWL_STYLE);
     f.exStyle = (unsigned) GetWindowLongW (h, GWL_EXSTYLE);
     f.classStyle = (unsigned) GetClassLongW (h, GCL_STYLE);
@@ -480,21 +716,60 @@ int devHitTest (void* handle, int x, int y)
     return h != nullptr ? (int) SendMessageW (h, WM_NCHITTEST, 0, MAKELPARAM ((short) x, (short) y)) : 0;
 }
 
+std::vector<unsigned> devCaptureScreen (int x, int y, int w, int h)
+{
+    std::vector<unsigned> out;
+    if (w <= 0 || h <= 0) return out;
+    HDC screen = GetDC (nullptr);
+    if (screen == nullptr) return out;
+    HDC mem = CreateCompatibleDC (screen);
+    BITMAPINFO bi {};
+    bi.bmiHeader.biSize = sizeof (BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;   // 위에서 아래로
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bmp = CreateDIBSection (screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (bmp != nullptr && mem != nullptr && bits != nullptr)
+    {
+        auto old = SelectObject (mem, bmp);
+        if (BitBlt (mem, 0, 0, w, h, screen, x, y, SRCCOPY | CAPTUREBLT))
+        {
+            GdiFlush();
+            const auto* src = static_cast<const unsigned*> (bits);
+            out.assign (src, src + (size_t) w * (size_t) h);
+            for (auto& c : out) c = 0xFF000000u | (c & 0x00FFFFFFu);
+        }
+        SelectObject (mem, old);
+    }
+    if (bmp != nullptr) DeleteObject (bmp);
+    if (mem != nullptr) DeleteDC (mem);
+    ReleaseDC (nullptr, screen);
+    return out;
+}
+
 std::string devScreenPixels (int x, int y, int w, int h)
 {
     std::string out;
-    HDC dc = GetDC (nullptr);
-    if (dc == nullptr) return out;
     char buf[16];
-    for (int j = 0; j < h; ++j)
-        for (int i = 0; i < w; ++i)
-        {
-            const COLORREF c = GetPixel (dc, x + i, y + j);
-            std::snprintf (buf, sizeof (buf), "%02X%02X%02X ", GetRValue (c), GetGValue (c), GetBValue (c));
-            out += buf;
-        }
-    ReleaseDC (nullptr, dc);
+    for (auto c : devCaptureScreen (x, y, w, h))
+    {
+        std::snprintf (buf, sizeof (buf), "%02X%02X%02X ", (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+        out += buf;
+    }
     return out;
+}
+
+int devScaleSteps (int steps, bool query)
+{
+    // SPI_GETLOGICALDPIOVERRIDE / SPI_SETLOGICALDPIOVERRIDE (설정 앱의 배율 목록과 같은 길, 문서에 없음): 권장 배율 기준 단계
+    constexpr UINT spiGet = 0x009E, spiSet = 0x009F;
+    if (! query) SystemParametersInfoW (spiSet, (UINT) steps, nullptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+    int now = INT_MIN;
+    SystemParametersInfoW (spiGet, 0, &now, 0);
+    return now;
 }
 
 void devMouse (int x, int y, bool down, bool up)

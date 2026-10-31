@@ -44,6 +44,8 @@ public:
     ui::SettingsModal::UpdateHooks settingsUpdateHooks();
     void closeSettings();
     bool isSettingsOpen() const { return settingsOverlay != nullptr; }
+    /** 개발용 (자가 테스트): JUCE 창 틀 두께를 다시 맞춘 횟수 (0 이어야 정상) */
+    int devJuceFrameFixes() const { return juceFrameFixes; }
 
     /** Windows 독립 앱 업데이트. 받기가 끝나면(합주 중이 아니면) 바로 설치 프로그램을 실행하고 앱을 끈다. */
     MeonUpdater& getUpdater()               { return *updater; }
@@ -116,10 +118,11 @@ private:
     /** 윈도우 창 영역 판정 (화면 물리 좌표): 창 버튼(최대화는 운영체제 영역) · 제목 줄 빈 곳 · 그 밖 */
     winframe::Region windowRegionAt (int screenX, int screenY);
     void childrenChanged() override;
-    /** 화면 배치 자리: 윈도우 최대화 때 화면 밖으로 나간 위쪽(hiddenTop)을 뺀 나머지. 그 밖에는 에디터 전체 */
-    juce::Rectangle<int> contentBounds() const;
-    int hiddenTopLogical() const;
-    int lastHiddenTop = 0;
+    /** 화면 배치 자리 = 에디터 전체 (윈도우 창 틀이 상태마다 내용 자리를 정확히 맞춘다: 최대화 = 작업 영역, 전체 화면 = 모니터) */
+    juce::Rectangle<int> contentBounds() const { return getLocalBounds(); }
+    /** 윈도우: JUCE 가 기억한 창 틀 두께가 지금 틀과 같은지 확인하고, 다르면 다시 읽게 한다 (내용이 작게 그려지거나 마우스가 어긋나지 않게) */
+    void checkJuceFrame();
+    int juceFrameFixes = 0;
     /** 맨 위 창 버튼 줄 높이: 맥 창 모드·윈도우 독립 앱이면 52, 아니면(플러그인·맥 전체 화면) 0 */
     int titleBarInset() const;
     void titleBarMouseDown();

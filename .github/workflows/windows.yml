@@ -155,6 +155,26 @@ jobs:
           timeout 180 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=fullscreen --window=100,60,1024,680 > uitest-fullscreen.log 2>&1 || true
           echo "── fullscreen"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-fullscreen.log || { echo "결과 없음"; tail -20 uitest-fullscreen.log; }
 
+      - name: 윈도우 창 상태별 확인 (화면 자가 테스트, 배율 100·125·150%)
+        # 보통·최대화·전체 화면·최소화 후 복원·활성/비활성·사이드바 펼침/접힘·모달·온보딩·로그인 직후·여러 번 오가기·배율 바꾸기에서
+        # 화면에 보이는 창을 앱이 그린 그림과 비교 (네 가장자리 줄·창 버튼 자리), 상태별 내용 자리, 크기 조절 끌기. 캡처는 아티팩트 wincaps-<번호>
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: bash scripts/win_uitest_states.sh build/MEON_artefacts/Release/Standalone/Meon.exe win10
+
+      - name: 배율 되돌리기
+        if: always() && env.RELEASE != 'true'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win_set_scale.ps1 -Steps 0
+
+      - uses: actions/upload-artifact@v4
+        if: always() && env.RELEASE != 'true'
+        with:
+          name: wincaps-${{ github.run_number }}
+          path: wincaps-win10/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
         if: env.RELEASE != 'true'
@@ -216,6 +236,9 @@ jobs:
       run:
         shell: bash
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
       - uses: actions/download-artifact@v4
         with:
           name: uitest-exe-${{ github.run_number }}
@@ -235,6 +258,15 @@ jobs:
           # 전체 화면 단축키 (F11, 채팅 입력 중): 모니터 전체, 창 버튼 숨김·맨 위에 대면 보임, 이전 크기로, 끌 때 원래 창 (--uitest=fullscreen)
           timeout 180 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=fullscreen --window=100,60,1024,680 > uitest-fullscreen.log 2>&1 || true
           echo "── fullscreen"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-fullscreen.log || { echo "결과 없음"; tail -20 uitest-fullscreen.log; }
+      - name: 창 상태별 (윈도우 11 계열, 배율 100·125·150%)
+        run: bash scripts/win_uitest_states.sh exe/Meon.exe win11
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wincaps-win11-${{ github.run_number }}
+          path: wincaps-win11/
+          retention-days: 7
+          if-no-files-found: ignore
 
   publish-dl:
     # dl.meon.co.kr 에 올린다 (배포 설계 3.6·3.9, scripts/dl_publish.sh): 빌드 파일 → CDN 으로 sha256 확인 → release.json → 채널 매니페스트 마지막.
