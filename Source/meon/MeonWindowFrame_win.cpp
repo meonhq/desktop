@@ -38,6 +38,10 @@ namespace
         int maxState = 0;              // 최대화 버튼 표시 (0 보통, 1 올림, 2 누름)
         bool maxPressed = false, trackingNc = false, notifyPending = false;
         int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0, notifies = 0;
+        long borderColourResult = 1;
+        bool fullscreen = false;            // F11 전체 화면
+        WINDOWPLACEMENT savedPlacement {};  // 켜기 전 자리·크기·최대화
+        LONG savedStyle = 0;
     };
     State st;
 
@@ -67,6 +71,23 @@ namespace
     }
 
     bool zoomed (HWND h) { return IsZoomed (h) != FALSE; }
+
+    // DWM (dwmapi.dll 은 직접 링크하지 않고 불러 쓴다: 빌드 기준이 윈도우 7)
+    template <typename Fn> Fn dwmapi (const char* name)
+    {
+        static HMODULE lib = LoadLibraryW (L"dwmapi.dll");
+        return lib != nullptr ? reinterpret_cast<Fn> (reinterpret_cast<void*> (GetProcAddress (lib, name))) : nullptr;
+    }
+    constexpr DWORD dwmNcRenderingEnabled = 1, dwmExtendedFrameBounds = 9, dwmBorderColor = 34;   // DWMWA_*
+
+    /** 윈도우 11: 창 테두리 색을 #EBEBEB 로 (강조 색 설정과 상관없이). 윈도우 10 은 이 속성이 없어 실패하고 운영체제 테두리 그대로 */
+    long applyBorderColour (HWND h)
+    {
+        static auto set = dwmapi<HRESULT (WINAPI*) (HWND, DWORD, LPCVOID, DWORD)> ("DwmSetWindowAttribute");
+        if (set == nullptr) return -1;
+        const COLORREF c = RGB ((borderColourRGB >> 16) & 0xFF, (borderColourRGB >> 8) & 0xFF, borderColourRGB & 0xFF);
+        return (long) set (h, dwmBorderColor, &c, sizeof (c));
+    }
 
     void setMaxState (int s)
     {
@@ -122,6 +143,7 @@ namespace
         const int x = GET_X_LPARAM (lParam), y = GET_Y_LPARAM (lParam);
         RECT wr;
         GetWindowRect (h, &wr);
+        if (st.fullscreen) return HTCLIENT;   // 전체 화면: 끌기·크기 조절 없음. 맨 위에 나타나는 창 버튼은 앱이 받는다
         // 맨 위 틀 두께: 위쪽 크기 조절 (최대화하면 없음). 양 끝은 모서리
         if (! zoomed (h))
         {
@@ -216,6 +238,20 @@ namespace
                 if (st.maxState != 0 && ! st.maxPressed) setMaxState (0);
                 break;
 
+            case WM_KEYDOWN:
+            case WM_SYSKEYDOWN:
+                // F11: 전체 화면 켜기·끄기. 창이 키를 먼저 받으므로 글자 입력 중에도 된다 (JUCE 로 넘기지 않는다). Alt+F4 등 다른 키는 그대로
+                if (wParam == VK_F11)
+                {
+                    if ((lParam & (1 << 30)) == 0) setFullscreen (h, ! st.fullscreen);   // 누르고 있을 때 되풀이는 무시
+                    return 0;
+                }
+                break;
+            case WM_KEYUP:
+            case WM_SYSKEYUP:
+                if (wParam == VK_F11) return 0;
+                break;
+
             case WM_SYSCOMMAND:
                 // Alt+Space (시스템 메뉴): JUCE 는 키보드로 연 창 메뉴를 막는다 (Alt 를 수정 키로 쓰는 앱 때문). 스페이스만 운영체제에 넘긴다
                 if ((wParam & 0xFFF0) == SC_KEYMENU && LOWORD (lParam) == VK_SPACE)
@@ -230,6 +266,12 @@ namespace
             case WM_NCACTIVATE:
             case WM_SIZE:
                 notifyLater();
+                break;
+
+            case WM_DWMCOLORIZATIONCOLORCHANGED:
+            case WM_DWMCOMPOSITIONCHANGED:
+            case WM_THEMECHANGED:
+                applyBorderColour (h);   // 강조 색·테마를 바꿔도 #EBEBEB 그대로
                 break;
 
             case WM_NCDESTROY:
@@ -283,6 +325,7 @@ bool install (void* handle, Hooks hooks)
     st.hwnd = h;
     st.hooks = std::move (hooks);
     if (! SetWindowSubclass (h, proc, subclassId, 0)) { st.hwnd = nullptr; return false; }
+    st.borderColourResult = applyBorderColour (h);
 
     if (zoomed (h) || IsIconic (h))
         SetWindowPos (h, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -297,6 +340,7 @@ void detach()
     if (st.hwnd == nullptr) return;
     HWND h = st.hwnd;
     st.hooks = {};
+    if (st.fullscreen && IsWindow (h)) setFullscreen (h, false);   // 창 모양을 되돌린 뒤 뗀다
     st.hwnd = nullptr;
     if (IsWindow (h))
     {
@@ -306,6 +350,38 @@ void detach()
 }
 
 bool installedOn (void* handle) { return handle != nullptr && st.hwnd == static_cast<HWND> (handle); }
+
+void setFullscreen (void* handle, bool on)
+{
+    auto h = static_cast<HWND> (handle);
+    if (h == nullptr || st.hwnd != h || on == st.fullscreen) return;
+    if (on)
+    {
+        st.savedPlacement = {};
+        st.savedPlacement.length = sizeof (WINDOWPLACEMENT);
+        GetWindowPlacement (h, &st.savedPlacement);
+        st.savedStyle = GetWindowLongW (h, GWL_STYLE);
+        if (zoomed (h)) ShowWindow (h, SW_RESTORE);   // 최대화 상태에서는 자리를 바꿀 수 없다 (끌 때 placement 가 다시 최대화한다)
+        MONITORINFO mi {};
+        mi.cbSize = sizeof (mi);
+        GetMonitorInfoW (MonitorFromWindow (h, MONITOR_DEFAULTTONEAREST), &mi);
+        st.fullscreen = true;
+        // 창 틀·제목 줄 없이 모니터 전체 (작업 표시줄 위까지): 앞 창이 모니터를 덮으면 윈도우가 작업 표시줄을 내린다
+        SetWindowLongW (h, GWL_STYLE, st.savedStyle & ~(WS_CAPTION | WS_THICKFRAME));
+        SetWindowPos (h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                      SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    else
+    {
+        st.fullscreen = false;
+        SetWindowLongW (h, GWL_STYLE, st.savedStyle);
+        SetWindowPlacement (h, &st.savedPlacement);   // 켜기 전 자리·크기 (최대화였으면 최대화)
+        SetWindowPos (h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    notifyLater();
+}
+
+bool isFullscreen (void* handle) { return handle != nullptr && st.hwnd == static_cast<HWND> (handle) && st.fullscreen; }
 
 int hiddenTop (void* handle)
 {
@@ -365,8 +441,37 @@ Probe probe (void* handle)
     p.sysMenuOpened = st.sysMenuOpened;
     p.maxClicks = st.maxClicks;
     p.notifies = st.notifies;
+    p.fullscreen = st.fullscreen;
     p.os = juce::SystemStats::getOperatingSystemName().toStdString();
     return p;
+}
+
+FrameInfo frameInfo (void* handle)
+{
+    FrameInfo f;
+    auto h = static_cast<HWND> (handle);
+    if (h == nullptr) return f;
+    if (auto fn = dwmapi<HRESULT (WINAPI*) (BOOL*)> ("DwmIsCompositionEnabled")) { BOOL b = FALSE; if (SUCCEEDED (fn (&b))) f.composition = b != FALSE; }
+    if (auto fn = dwmapi<HRESULT (WINAPI*) (HWND, DWORD, PVOID, DWORD)> ("DwmGetWindowAttribute"))
+    {
+        BOOL nc = FALSE;
+        if (SUCCEEDED (fn (h, dwmNcRenderingEnabled, &nc, sizeof (nc)))) f.ncRendering = nc != FALSE;
+        RECT r {};
+        if (SUCCEEDED (fn (h, dwmExtendedFrameBounds, &r, sizeof (r)))) rectToInts (r, f.frameBounds);
+    }
+    if (auto fn = dwmapi<HRESULT (WINAPI*) (DWORD*, BOOL*)> ("DwmGetColorizationColor")) { DWORD c = 0; BOOL op = FALSE; if (SUCCEEDED (fn (&c, &op))) f.colorization = c; }
+    DWORD v = 0, size = sizeof (v);
+    if (RegGetValueW (HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"ColorPrevalence", RRF_RT_REG_DWORD, nullptr, &v, &size) == ERROR_SUCCESS)
+        f.colorPrevalence = (int) v;
+    wchar_t buildText[32] {};
+    DWORD bsize = sizeof (buildText);
+    if (RegGetValueW (HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"CurrentBuildNumber", RRF_RT_REG_SZ, nullptr, buildText, &bsize) == ERROR_SUCCESS)
+        f.build = _wtoi (buildText);
+    f.style = (unsigned) GetWindowLongW (h, GWL_STYLE);
+    f.exStyle = (unsigned) GetWindowLongW (h, GWL_EXSTYLE);
+    f.classStyle = (unsigned) GetClassLongW (h, GCL_STYLE);
+    f.borderColourResult = st.hwnd == h ? st.borderColourResult : 1;
+    return f;
 }
 
 int devHitTest (void* handle, int x, int y)
@@ -407,6 +512,12 @@ void devAltSpace()
 {
     INPUT ins[4] = { keyInput (VK_MENU, false), keyInput (VK_SPACE, false), keyInput (VK_SPACE, true), keyInput (VK_MENU, true) };
     SendInput (4, ins, sizeof (INPUT));
+}
+
+void devKey (int vk)
+{
+    INPUT ins[2] = { keyInput ((WORD) vk, false), keyInput ((WORD) vk, true) };
+    SendInput (2, ins, sizeof (INPUT));
 }
 
 void devEscape()

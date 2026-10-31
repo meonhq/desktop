@@ -261,8 +261,56 @@ void MeonEditor::closeSettings()
 }
 
 //==============================================================================
+bool MeonEditor::winFullscreen() const
+{
+    auto* peer = getPeer();
+    return winFrameInstalled && peer != nullptr && winframe::isFullscreen (peer->getNativeHandle());
+}
+
+void MeonEditor::toggleFullscreen()
+{
+    if (pluginMode) return;
+    auto* peer = getPeer();
+    if (peer == nullptr) return;
+    if (winFrameInstalled) { winframe::setFullscreen (peer->getNativeHandle(), ! winframe::isFullscreen (peer->getNativeHandle())); return; }
+   #if JUCE_MAC
+    chrome::toggleFullScreen (peer->getNativeHandle());
+   #endif
+}
+
+void MeonEditor::updateCaptionReveal()
+{
+    // 윈도우 전체 화면: 마우스를 화면 맨 위(2px)에 대면 창 버튼이 나타나고, 버튼 둘레를 벗어나면 숨는다
+    if (chromeView == nullptr || ! winFullscreen()) { revealTimer.stopTimer(); return; }
+    const auto pos = getMouseXYRelative();
+    const bool inside = getLocalBounds().contains (pos.withY (juce::jmax (0, pos.y)));
+    bool want = captionRevealed;
+    if (! captionRevealed) want = inside && pos.y <= 1;
+    else want = chromeView->getBounds().expanded (16, 16).contains (pos);
+    if (want == captionRevealed) return;
+    captionRevealed = want;
+    chromeView->setVisible (want);
+    if (want) childrenChanged();   // 맨 위로
+}
+
 bool MeonEditor::requestedQuit()
 {
+    // 전체 화면에서 끄면 원래 창으로 되돌린 뒤 끈다 (다음에 켤 때 전체 화면 크기로 열리지 않게: 창 크기는 창이 사라질 때 저장된다)
+    if (auto* peer = getPeer(); peer != nullptr && ! pluginMode)
+    {
+        if (winFullscreen()) winframe::setFullscreen (peer->getNativeHandle(), false);   // 바로 되돌아온다
+       #if JUCE_MAC
+        if (chrome::isFullScreen (peer->getNativeHandle()) && ! quittingFromFullscreen)
+        {
+            // macOS 전체 화면은 애니메이션 뒤에 나온다: 나온 다음에 다시 끄기 (2초 안에 안 나오면 그냥 끈다)
+            quittingFromFullscreen = true;
+            auto again = [] { if (auto* app = juce::JUCEApplicationBase::getInstance()) app->systemRequestedQuit(); };
+            chrome::exitFullScreenThen (peer->getNativeHandle(), again);
+            juce::Timer::callAfterDelay (2000, again);
+            return false;
+        }
+       #endif
+    }
     // 끄면 방에서 나간다: MeonCore 가 없어질 때 서버에 나가기를 보내고 응답을 기다린다 (플러그인 제거와 같은 길)
     saveAll();
     return true;
@@ -902,6 +950,7 @@ void MeonEditor::ensureWindowChrome()
     if (peer == nullptr) return;
     chromeTried = true;
     juce::Component::SafePointer<MeonEditor> safe (this);
+    chrome::installFullScreenShortcuts();   // 맥: 보기 > 전체 화면으로 전환 (⌃⌘F), fn+F (독립 앱. macOS 11 미만도)
     chromeInstalled = chrome::install (peer->getNativeHandle(), [safe] { if (safe != nullptr) safe->windowChromeChanged(); });
    #if JUCE_WINDOWS
     {
@@ -914,7 +963,11 @@ void MeonEditor::ensureWindowChrome()
                 if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (safe->chromeView.get())) cb->setMaxButtonState (st);
         };
         const auto clientBefore = peer->getBounds();   // JUCE 가 아는 내용 자리 (창 틀을 바꾸기 전, 맞는 값)
-        winFrameInstalled = winframe::install (peer->getNativeHandle(), std::move (hooks));
+        bool frameOff = false;
+       #if MEON_DEV_OPTIONS
+        frameOff = meon::devOptions().containsKey ("no-winframe");   // 개발용 비교 (창 가장자리 조사): 운영체제 제목 줄 그대로
+       #endif
+        winFrameInstalled = ! frameOff && winframe::install (peer->getNativeHandle(), std::move (hooks));
         if (winFrameInstalled && ! winframe::isMaximised (peer->getNativeHandle()))
         {
             // JUCE 는 창 틀 두께를 크기가 바뀔 때만 다시 읽는다 (HWNDComponentPeer::updateBorderSize). 옛 두께(제목 줄 포함)를 쓰면
@@ -973,7 +1026,8 @@ void MeonEditor::windowChromeChanged()
     if (onboarding != nullptr) onboarding->setTitleBarInset (titleBarInset());
     if (appRoot != nullptr)
     {
-        appRoot->setTitleRightInset (chromeView != nullptr ? juce::jmax (ui::metric::padX, chromeView->titleRightInset()) : ui::metric::padX);
+        // 제목 줄 오른쪽 여백: 창 버튼이 있으면 그 폭 + 12 (윈도우 150), 윈도우 전체 화면은 창 버튼이 없으므로 18 (디자인 hdPR)
+        appRoot->setTitleRightInset (chromeView != nullptr && ! winFullscreen() ? juce::jmax (ui::metric::padX, chromeView->titleRightInset()) : ui::metric::padX);
         appRoot->windowChromeChanged();
     }
     repaint();
@@ -1004,7 +1058,8 @@ void MeonEditor::syncChromeView()
             cb->onToggleMaximise = [safe, handle]
             {
                 if (safe == nullptr) return;
-                if (safe->winFrameInstalled) winframe::toggleMaximise (handle());
+                if (safe->winFullscreen()) winframe::setFullscreen (handle(), false);   // 전체 화면: "이전 크기로" = 빠져나가기
+                else if (safe->winFrameInstalled) winframe::toggleMaximise (handle());
                 else if (auto* p = safe->getPeer()) p->setFullScreen (! p->isFullScreen());
             };
             cb->onClose = [safe, handle]
@@ -1020,7 +1075,12 @@ void MeonEditor::syncChromeView()
     if (chromeView->kind() == Kind::windows)
     {
         updateWindowState();
-        chromeView->setVisible (true);   // 윈도우는 전체 화면 기능이 없다 (JUCE 의 전체 화면 = 최대화): 늘 보인다
+        // F11 전체 화면에서는 숨긴다 (디자인 fullscreen=켜짐). 마우스를 화면 맨 위에 대면 보인다 (updateCaptionReveal)
+        const bool fs = winFullscreen();
+        if (! fs) captionRevealed = false;
+        chromeView->setVisible (! fs || captionRevealed);
+        if (fs) { revealTimer.tick = [this] { updateCaptionReveal(); }; revealTimer.startTimerHz (20); }
+        else revealTimer.stopTimer();
     }
     else
     {
@@ -1035,7 +1095,7 @@ void MeonEditor::updateWindowState()
     if (chromeView == nullptr || chromeView->kind() != ui::WindowChromeView::Kind::windows) return;
     auto* peer = getPeer();
     void* h = peer != nullptr ? peer->getNativeHandle() : nullptr;
-    bool maxed = winFrameInstalled && winframe::isMaximised (h), active = ! winFrameInstalled || winframe::isActive (h);
+    bool maxed = winFrameInstalled && (winframe::isMaximised (h) || winframe::isFullscreen (h)), active = ! winFrameInstalled || winframe::isActive (h);   // 전체 화면: "이전 크기로" 아이콘
    #if MEON_DEV_OPTIONS
     if (devMockWin)   // 미리 보기: --winstate=max|inactive|max+inactive (디자인 winState·winActive)
     {

@@ -13,6 +13,8 @@
 //   - 끌기는 지금 처리 중인 마우스 누름으로 performWindowDragWithEvent (macOS 가 옮긴다: 화면 가장자리 붙이기 등 그대로).
 //     두 번 누름은 시스템 설정 "제목 막대를 이중 클릭할 때" (AppleActionOnDoubleClick) 를 따른다.
 #import <AppKit/AppKit.h>
+#include <objc/runtime.h>
+#include <algorithm>
 #include "MeonWindowChrome.h"
 #include <cmath>
 #include <vector>
@@ -309,6 +311,128 @@ void devPostClick (void* nsView, int x, int y, int clickCount)
                                  windowNumber: [w windowNumber] context: nil eventNumber: 0 clickCount: clickCount pressure: 0.0f];
     [NSApp postEvent: down atStart: NO];
     [NSApp postEvent: up atStart: NO];
+}
+
+namespace
+{
+    NSWindow* fullScreenTargetWindow()
+    {
+        if (NSWindow* w = [NSApp keyWindow]) return w;
+        if (NSWindow* w = [NSApp mainWindow]) return w;
+        for (NSWindow* w in [NSApp windows])
+            if ([w isVisible] && ([w collectionBehavior] & NSWindowCollectionBehaviorFullScreenPrimary) != 0) return w;
+        return nil;
+    }
+
+    void toggleFrontWindow()
+    {
+        if (NSWindow* w = fullScreenTargetWindow()) [w toggleFullScreen: nil];
+    }
+
+    void toggleAction (id, SEL, id) { toggleFrontWindow(); }
+
+    /** 메뉴 항목의 대상: 이름이 겹치지 않게 실행 중에 만든다 (같은 프로세스에 다른 빌드가 있어도) */
+    id menuTarget()
+    {
+        static id target = nil;
+        if (target != nil) return target;
+        NSString* name = [NSString stringWithFormat: @"MeonFullScreenTarget_%p", (void*) &menuTarget];
+        Class cls = objc_allocateClassPair ([NSObject class], [name UTF8String], 0);
+        if (cls == nil) return nil;
+        class_addMethod (cls, @selector (meonToggleFullScreen:), (IMP) toggleAction, "v@:@");
+        objc_registerClassPair (cls);
+        target = [[cls alloc] init];
+        return target;
+    }
+
+    /** ⌃⌘F · fn+F (다른 수정 키 없이) */
+    bool isFullScreenShortcut (NSEvent* e)
+    {
+        if ([e type] != NSEventTypeKeyDown || [e isARepeat]) return false;
+        if (! [[[e charactersIgnoringModifiers] lowercaseString] isEqualToString: @"f"]) return false;
+        const NSEventModifierFlags m = [e modifierFlags] & (NSEventModifierFlagControl | NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagShift | NSEventModifierFlagFunction);
+        return m == (NSEventModifierFlagControl | NSEventModifierFlagCommand) || m == NSEventModifierFlagFunction;
+    }
+}
+
+void installFullScreenShortcuts()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    // 메뉴 막대: 앱 메뉴 다음에 "보기 > 전체 화면으로 전환 ⌃⌘F"
+    if (NSMenu* mainMenu = [NSApp mainMenu])
+    {
+        NSMenu* view = [[NSMenu alloc] initWithTitle: @"보기"];
+        NSMenuItem* fs = [[NSMenuItem alloc] initWithTitle: @"전체 화면으로 전환" action: @selector (meonToggleFullScreen:) keyEquivalent: @"f"];
+        [fs setKeyEquivalentModifierMask: NSEventModifierFlagControl | NSEventModifierFlagCommand];
+        [fs setTarget: menuTarget()];
+        [view addItem: fs];
+        NSMenuItem* top = [[NSMenuItem alloc] initWithTitle: @"보기" action: nil keyEquivalent: @""];
+        [top setSubmenu: view];
+        [mainMenu insertItem: top atIndex: std::min<NSInteger> (1, [mainMenu numberOfItems])];
+        [fs release];
+        [view release];
+        [top release];
+    }
+    // 앱 이벤트에서 먼저 받는다: 입력 칸이 키를 먹어도, 메뉴가 없어도 (fn+F 는 메뉴 단축키로 걸 수 없다)
+    [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskKeyDown handler: ^NSEvent* (NSEvent* e)
+    {
+        if (! isFullScreenShortcut (e)) return e;
+        toggleFrontWindow();
+        return nil;
+    }];
+}
+
+bool isFullScreen (void* nsView) { return isFullScreen (windowFor (nsView)); }
+
+void toggleFullScreen (void* nsView)
+{
+    if (NSWindow* w = windowFor (nsView)) [w toggleFullScreen: nil];
+}
+
+void exitFullScreenThen (void* nsView, std::function<void()> done)
+{
+    NSWindow* w = windowFor (nsView);
+    if (! isFullScreen (w)) { if (done) done(); return; }
+    __block id obs = nil;
+    std::function<void()> fn = std::move (done);
+    obs = [[NSNotificationCenter defaultCenter] addObserverForName: NSWindowDidExitFullScreenNotification object: w
+                                                             queue: [NSOperationQueue mainQueue]
+                                                        usingBlock: ^(NSNotification*)
+    {
+        [[NSNotificationCenter defaultCenter] removeObserver: obs];
+        if (fn) fn();
+    }];
+    [w toggleFullScreen: nil];
+}
+
+void devPostKey (void* nsView, const char* chars, int modifiers)
+{
+    NSWindow* w = windowFor (nsView);
+    if (w == nil) return;
+    NSEventModifierFlags m = 0;
+    if (modifiers & 1) m |= NSEventModifierFlagControl;
+    if (modifiers & 2) m |= NSEventModifierFlagCommand;
+    if (modifiers & 4) m |= NSEventModifierFlagFunction;
+    NSString* s = [NSString stringWithUTF8String: chars];
+    NSEvent* e = [NSEvent keyEventWithType: NSEventTypeKeyDown location: NSZeroPoint modifierFlags: m timestamp: [[NSProcessInfo processInfo] systemUptime]
+                                windowNumber: [w windowNumber] context: nil characters: s charactersIgnoringModifiers: s isARepeat: NO keyCode: 3];
+    [NSApp postEvent: e atStart: NO];
+    NSEvent* up = [NSEvent keyEventWithType: NSEventTypeKeyUp location: NSZeroPoint modifierFlags: m timestamp: [[NSProcessInfo processInfo] systemUptime]
+                                 windowNumber: [w windowNumber] context: nil characters: s charactersIgnoringModifiers: s isARepeat: NO keyCode: 3];
+    [NSApp postEvent: up atStart: NO];
+}
+
+bool devHasFullScreenMenu()
+{
+    for (NSMenuItem* top in [[NSApp mainMenu] itemArray])
+        if ([[top title] isEqualToString: @"보기"])
+            for (NSMenuItem* it in [[top submenu] itemArray])
+                if ([[it title] isEqualToString: @"전체 화면으로 전환"] && [[it keyEquivalent] isEqualToString: @"f"]
+                    && ([it keyEquivalentModifierMask] & (NSEventModifierFlagControl | NSEventModifierFlagCommand)) == (NSEventModifierFlagControl | NSEventModifierFlagCommand))
+                    return true;
+    return false;
 }
 
 void devSetActive (bool active)

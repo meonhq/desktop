@@ -16,11 +16,15 @@ void minimise (void*) {}
 void toggleMaximise (void*) {}
 void close (void*) {}
 Probe probe (void*) { return {}; }
+FrameInfo frameInfo (void*) { return {}; }
 int devHitTest (void*, int, int) { return 0; }
 std::string devScreenPixels (int, int, int, int) { return {}; }
 void devMouse (int, int, bool, bool) {}
 void devAltSpace() {}
 void devEscape() {}
+void setFullscreen (void*, bool) {}
+bool isFullscreen (void*) { return false; }
+void devKey (int) {}
 
 } // namespace meon::winframe
 

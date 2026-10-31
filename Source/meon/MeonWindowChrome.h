@@ -28,6 +28,18 @@ void titleBarMouseDown (void* nsView);
 int lightsRight (void* nsView);
 constexpr int barHeight = 52;   // 신호등이 세로 가운데 오는 윗줄 높이 (사이드바 머리말·본문 제목 줄과 같다)
 
+/** 전체 화면 단축키 (독립 앱, 한 번): 메뉴 막대에 "보기 > 전체 화면으로 전환" (⌃⌘F) 을 넣고, ⌃⌘F 와 fn+F(지구본+F) 를
+    앱 이벤트에서 먼저 받는다 (글자 입력 중에도). 모두 macOS 기본 전체 화면 (초록 버튼과 같은 toggleFullScreen) */
+void installFullScreenShortcuts();
+bool isFullScreen (void* nsView);
+void toggleFullScreen (void* nsView);
+/** 전체 화면이면 나온 뒤 done, 아니면 바로 done (앱을 끌 때: 다시 켜면 원래 창으로 열리게) */
+void exitFullScreenThen (void* nsView, std::function<void()> done);
+/** 개발용 (화면 자가 테스트): 키를 누른 것처럼 AppKit 이벤트 줄에 넣는다. modifiers: 1 control, 2 command, 4 fn */
+void devPostKey (void* nsView, const char* chars, int modifiers);
+/** 개발용: 메뉴 막대에 "보기 > 전체 화면으로 전환" (⌃⌘F) 이 있는지 */
+bool devHasFullScreenMenu();
+
 /** 개발용 (화면 자가 테스트 --uitest=chrome): 지금 창의 제목 줄 상태. 좌표는 창 왼쪽 위 기준 pt */
 struct Probe
 {

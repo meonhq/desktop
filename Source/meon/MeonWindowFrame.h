@@ -38,6 +38,14 @@ int hiddenTop (void* hwnd);
 bool isMaximised (void* hwnd);
 /** 창이 활성인지 (우리 앱의 메뉴·툴팁 같은 임시 창이 앞에 있어도 활성) */
 bool isActive (void* hwnd);
+/** F11 전체 화면 (독립 앱): 창 틀·작업 표시줄까지 덮는다 (모니터 전체, 창 틀 없음). 끌 때 켜기 전 자리·크기·최대화로 되돌린다.
+    F11 은 창 프로시저에서 받는다 (글자 입력 중에도). 상태가 바뀌면 onStateChange */
+void setFullscreen (void* hwnd, bool);
+bool isFullscreen (void* hwnd);
+
+/** 윈도우 11 창 테두리 색 (DWMWA_BORDER_COLOR): 디자인 #EBEBEB 로 늘 (강조 색 설정과 상관없이, 사용자 결정 2026-10-31).
+    윈도우 10 은 이 속성이 없어 운영체제 테두리 그대로 */
+constexpr unsigned borderColourRGB = 0xEBEBEB;
 /** 창 버튼: 운영체제 창 버튼과 같은 길 (WM_SYSCOMMAND) */
 void minimise (void* hwnd);
 void toggleMaximise (void* hwnd);
@@ -50,17 +58,31 @@ struct Probe
     int window[4] {}, client[4] {}, monitor[4] {}, work[4] {};   // x, y, w, h
     int dpi = 0, resizeBorder = 0;
     int ncCalc = 0, sysMenuOpened = 0, maxClicks = 0, notifies = 0;   // WM_NCCALCSIZE 처리 횟수, 창 메뉴가 열린 횟수, 최대화 버튼 누름, 상태 알림 횟수
+    bool fullscreen = false;
     std::string os;
 };
 Probe probe (void* hwnd);
+/** 개발용 (창 가장자리 조사 --uitest=winedge): 창 틀·DWM 상태 */
+struct FrameInfo
+{
+    bool composition = false, ncRendering = false;
+    int frameBounds[4] {};            // DWMWA_EXTENDED_FRAME_BOUNDS (보이는 틀, 화면 물리 px)
+    unsigned style = 0, exStyle = 0, classStyle = 0;
+    unsigned colorization = 0;        // DwmGetColorizationColor (0xAARRGGBB)
+    int colorPrevalence = -1;         // HKCU\...\DWM ColorPrevalence (제목 표시줄·창 테두리에 강조 색 표시)
+    int build = 0;                    // 윈도우 빌드 번호 (22000 이상 = 윈도우 11)
+    long borderColourResult = 1;      // DWMWA_BORDER_COLOR 를 넣은 결과 (0 = 됨, 윈도우 10 은 실패)
+};
+FrameInfo frameInfo (void* hwnd);
 /** 개발용: 화면 물리 좌표의 WM_NCHITTEST 결과 (HTCLIENT 1, HTCAPTION 2, HTMAXBUTTON 9, HTTOP 12 …) */
 int devHitTest (void* hwnd, int screenX, int screenY);
 /** 개발용: 화면 물리 좌표 사각형의 픽셀 (0xRRGGBB, 위→아래·왼→오른, 최대 w*h 개) */
 std::string devScreenPixels (int x, int y, int w, int h);
 /** 개발용: 마우스를 (x, y) 로 옮기고 왼쪽 버튼 누름(down)·뗌(up) 을 보낸다 (SendInput: 실제 입력과 같은 길) */
 void devMouse (int screenX, int screenY, bool down, bool up);
-/** 개발용: Alt+Space 를 누른 것처럼 (SendInput), Esc */
+/** 개발용: Alt+Space 를 누른 것처럼 (SendInput), Esc, F11, Alt+F4 는 보내지 않는다 (창을 닫는다) */
 void devAltSpace();
+void devKey (int virtualKey);
 void devEscape();
 
 } // namespace meon::winframe

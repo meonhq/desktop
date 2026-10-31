@@ -13,6 +13,7 @@
 #include "../overlays/SettingsModal.h"
 #include "../../MeonReduceMotion.h"
 #include "RepaintProbe.h"
+#include "../../shell/ShellHooks.h"
 
 namespace meon::ui
 {
@@ -39,6 +40,8 @@ void UiSelfTest::start()
     if (want ("chrome"))   addChromeTests();
     if (want ("popover"))  addPopoverTests();
     if (want ("winchrome")) addWinChromeTests();
+    if (which == "winedge") addWinEdgeTests();
+    if (which == "fullscreen") addFullscreenTests();   // 실제 창 (windows.yml·mac.yml), all 에 없음   // 윈도우 창 가장자리 (windows.yml, all 에 없음: 바탕 창을 띄운다)
     if (want ("overlay"))  addOverlayTests();
     if (want ("dock"))     addDockTests();
     if (want ("modalanim")) addModalAnimTests();
@@ -2866,6 +2869,284 @@ void UiSelfTest::addReducedMotionTests()
         expect (d != nullptr && j != nullptr && d->getCardsBounds() == j->dockSlot() + j->getPosition() && d->getShadow() == 0.0f,
                 TXT ("카드 전환: 바로 방 화면 자리"));
     }, 0);
+}
+
+//==============================================================================
+// 윈도우 창 가장자리 (왼쪽·오른쪽·아래 진한 선 조사·확인): 흰 바탕 창을 뒤에 깔고(투명한 크기 조절 틀 자리가 흰색으로 보이게)
+// 가장자리 픽셀 줄을 읽는다. --no-winframe 이면 운영체제 제목 줄 그대로인 창(비교 기준). windows.yml (윈도우 10·11 러너)
+void UiSelfTest::addWinEdgeTests()
+{
+    begin (TXT ("윈도우 창 가장자리"));
+    if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
+    {
+        add ([] { std::cerr << "UITEST INFO winedge: 윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Plain : juce::Component
+    {
+        explicit Plain (juce::Colour c) : colour (c) {}
+        void paint (juce::Graphics& g) override { g.fillAll (colour); }
+        juce::Colour colour;
+    };
+    struct Shared { std::unique_ptr<Plain> backdrop, other; };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto rect = [] (const int r[4]) { return juce::String (r[0]) + "," + juce::String (r[1]) + " " + juce::String (r[2]) + "x" + juce::String (r[3]); };
+    // 픽셀 문자열 "RRGGBB RRGGBB …" 에서 가장 어두운 밝기 (0~255)
+    auto darkest = [] (const std::string& px)
+    {
+        int best = 255;
+        juce::StringArray t;
+        t.addTokens (juce::String (px), " ", "");
+        t.removeEmptyStrings();
+        for (auto& s : t)
+        {
+            const auto v = (unsigned) s.getHexValue32();
+            const int r = (int) ((v >> 16) & 0xFF), g = (int) ((v >> 8) & 0xFF), b = (int) (v & 0xFF);
+            best = juce::jmin (best, (r * 299 + g * 587 + b * 114) / 1000);
+        }
+        return best;
+    };
+    auto sample = [this, handle, rect, darkest] (const juce::String& label)
+    {
+        const auto p = meon::winframe::probe (handle());
+        const auto f = meon::winframe::frameInfo (handle());
+        std::cerr << "UITEST INFO winedge " << label << ": os " << p.os << " build " << f.build << " installed " << (p.installed ? 1 : 0)
+                  << " max " << (p.maximised ? 1 : 0) << " active " << (p.active ? 1 : 0) << " dpi " << p.dpi
+                  << " window " << rect (p.window) << " client " << rect (p.client) << " visibleFrame " << rect (f.frameBounds)
+                  << " composition " << (f.composition ? 1 : 0) << " ncRendering " << (f.ncRendering ? 1 : 0)
+                  << " style " << juce::String::toHexString ((int) f.style) << " exStyle " << juce::String::toHexString ((int) f.exStyle)
+                  << " classStyle " << juce::String::toHexString ((int) f.classStyle)
+                  << " colorization " << juce::String::toHexString ((int) f.colorization) << " accentOnBorders " << f.colorPrevalence
+                  << " borderColour(DWMWA_BORDER_COLOR) " << f.borderColourResult << std::endl;
+        const int cx = p.client[0] + p.client[2] / 2, cy = p.client[1] + p.client[3] / 2;
+        const int cl = p.client[0], cr = p.client[0] + p.client[2], cb = p.client[1] + p.client[3];
+        const int wl = p.window[0], wr = p.window[0] + p.window[2], wb = p.window[1] + p.window[3];
+        auto line = [&] (const char* name, int x, int y, int w, int h)
+        {
+            const auto px = meon::winframe::devScreenPixels (x, y, w, h);
+            std::cerr << "UITEST INFO winedge " << label << " " << name << " @" << x << "," << y << " " << w << "x" << h << ": " << px << std::endl;
+            return px;
+        };
+        if (p.maximised)
+        {
+            // 최대화: 틀은 화면 밖. 작업 영역 가장자리(내용 끝)에 선이 없는지
+            const int ml = p.work[0], mr = p.work[0] + p.work[2], mb = p.work[1] + p.work[3];
+            const auto a = line ("workLeft", ml, cy, 4, 1), b = line ("workRight", mr - 4, cy, 4, 1), c = line ("workBottom", cx, mb - 4, 1, 4);
+            const int d = juce::jmin (darkest (a), darkest (b), darkest (c));
+            std::cerr << "UITEST INFO winedge " << label << " darkest at work-area edges " << d << std::endl;
+            expect (d >= 200, label + TXT (": 최대화한 내용 가장자리에 진한 선 없음 (가장 어두운 밝기 ") + juce::String (d) + ")");
+            return;
+        }
+        // 보통: 창 틀(내용 밖) 줄과 내용 안쪽 3px. 화면(모니터) 밖으로 나간 쪽은 건너뛴다
+        const int ml = p.monitor[0], mr = p.monitor[0] + p.monitor[2], mb = p.monitor[1] + p.monitor[3];
+        juce::String dark;
+        if (wl - 2 >= ml)
+        {
+            const auto left = line ("left", wl - 2, cy, (cl + 3) - (wl - 2), 1);
+            line ("bottomLeftCorner", cl - 9, cb - 2, 12, 1);
+            dark << " left " << darkest (left.substr (0, (size_t) (cl - (wl - 2)) * 7));
+        }
+        if (wr + 2 <= mr)
+        {
+            const auto right = line ("right", cr - 3, cy, (wr + 2) - (cr - 3), 1);
+            dark << " right " << darkest (right.substr ((size_t) 3 * 7));
+        }
+        if (wb + 2 <= mb)
+        {
+            const auto bottom = line ("bottom", cx, cb - 3, 1, (wb + 2) - (cb - 3));
+            dark << " bottom " << darkest (bottom.substr ((size_t) 3 * 7));
+        }
+        line ("topEdge", cx, p.client[1] - 2, 1, 5);
+        // 틀 자리(내용 밖)에서 가장 어두운 밝기: 흰 바탕 + 운영체제 그림자·1px 테두리만이면 밝다
+        std::cerr << "UITEST INFO winedge " << label << " darkest outside content:" << dark << std::endl;
+    };
+
+    add ([this, sh]
+    {
+        auto* top = root.getTopLevelComponent();
+        sh->backdrop = std::make_unique<Plain> (juce::Colours::white);
+        sh->backdrop->setBounds (juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->totalArea);
+        sh->backdrop->addToDesktop (juce::ComponentPeer::windowIgnoresKeyPresses);
+        sh->backdrop->setVisible (true);
+        sh->backdrop->toBehind (top);
+        top->toFront (true);
+    }, 1500);
+    add ([sample] { sample (TXT ("보통·활성")); }, 0);
+    // 화면이 좁아(러너 1024) 오른쪽 틀이 화면 밖이면 창을 왼쪽으로 옮겨 오른쪽을 본다
+    add ([this, handle]
+    {
+        const auto p = meon::winframe::probe (handle());
+        if (p.window[0] + p.window[2] + 2 <= p.monitor[0] + p.monitor[2]) return;
+        if (auto* pr = peer())
+        {
+            const float scale = (float) p.dpi / 96.0f;
+            const auto b = pr->getBounds();
+            const int targetRight = juce::roundToInt ((float) (p.monitor[0] + p.monitor[2] - 40) / scale);
+            pr->setBounds (b.withX (targetRight - b.getWidth()), false);
+        }
+    }, 900);
+    add ([sample] { sample (TXT ("보통·활성 (오른쪽 보기)")); }, 0);
+    add ([this]
+    {
+        if (auto* pr = peer()) pr->setBounds (pr->getBounds().withX (100), false);
+    }, 900);
+    add ([this, sh]
+    {
+        // 다른 창을 앞으로 (비활성)
+        sh->other = std::make_unique<Plain> (juce::Colours::lightgrey);
+        const auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+        sh->other->setBounds (area.getRight() - 40, area.getBottom() - 40, 30, 30);
+        sh->other->addToDesktop (juce::ComponentPeer::windowHasDropShadow);
+        sh->other->setVisible (true);
+        sh->other->toFront (true);
+    }, 1000);
+    add ([sample] { sample (TXT ("보통·비활성")); }, 0);
+    add ([this, sh] { sh->other.reset(); root.getTopLevelComponent()->toFront (true); }, 800);
+    add ([handle] { meon::winframe::toggleMaximise (handle()); }, 1200);
+    add ([sample] { sample (TXT ("최대화")); }, 0);
+    add ([handle] { meon::winframe::toggleMaximise (handle()); }, 1200);
+    add ([sample] { sample (TXT ("다시 보통")); }, 0);
+    add ([sh] { sh->backdrop.reset(); }, 0);
+}
+
+//==============================================================================
+// 전체 화면 단축키 (독립 앱): 맥 ⌃⌘F·fn+F·보기 메뉴 (macOS 기본 전체 화면), 윈도우 F11 (창 틀·작업 표시줄까지).
+// 방 안에서 채팅 입력 중에 켜고 끈다 (합주 소리·방 상태 그대로). 윈도우는 창 버튼이 숨고 맨 위에 대면 나타난다.
+// 끌 때(requestedQuit) 원래 창으로 되돌아오는지. 실제 창이 필요하다 (windows.yml·mac.yml)
+void UiSelfTest::addFullscreenTests()
+{
+    begin (TXT ("전체 화면 단축키"));
+    const auto os = juce::SystemStats::getOperatingSystemName();
+    const bool win = os.startsWithIgnoreCase ("Windows"), mac = os.startsWithIgnoreCase ("Mac");
+    if (! win && ! mac)
+    {
+        add ([] { std::cerr << "UITEST INFO fullscreen: 맥·윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Shared { juce::Rectangle<int> before; int phase = 0; bool sendMuted = false; juce::String room; };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto isFs = [win, handle] { return win ? meon::winframe::isFullscreen (handle()) : meon::chrome::isFullScreen (handle()); };
+    auto shortcut = [win, handle] (int macMods)
+    {
+        if (win) meon::winframe::devKey (0x7A);   // VK_F11
+        else meon::chrome::devPostKey (handle(), "f", macMods);
+    };
+    auto caption = [this]() -> WinCaptionButtons*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren())
+                if (auto* w = dynamic_cast<WinCaptionButtons*> (c)) return w;
+        return nullptr;
+    };
+    auto sameRoom = [this, sh] (const juce::String& what)
+    {
+        auto* s = core.jam();
+        expect (inRoom() && roomId() == sh->room && s != nullptr && (int) s->getPhase() == sh->phase && s->isSendMuted() == sh->sendMuted,
+                what + TXT (": 방·연결·송출 그대로"));
+    };
+    const int waitMs = mac ? 2200 : 900;   // 맥 전체 화면은 애니메이션
+
+    enterNewRoom();
+    closeToasts();
+    add ([this, sh, mac]
+    {
+        if (auto* p = peer()) sh->before = p->getBounds();
+        sh->room = roomId();
+        sh->phase = (int) core.jam()->getPhase();
+        sh->sendMuted = core.jam()->isSendMuted();
+        jam()->chatInput.focus();   // 채팅 입력 중
+        type ("hi");
+        if (mac) expect (meon::chrome::devHasFullScreenMenu(), TXT ("메뉴 막대: 보기 > 전체 화면으로 전환 (⌃⌘F)"));
+    }, 300);
+    add ([shortcut] { shortcut (1 | 2); }, waitMs);
+    add ([this, sh, win, isFs, caption, sameRoom, handle]
+    {
+        expect (isFs(), win ? TXT ("F11 (채팅 입력 중) → 전체 화면") : TXT ("⌃⌘F (채팅 입력 중) → 전체 화면"));
+        sameRoom (TXT ("켤 때"));
+        expect (jam()->chatInput.getText() == "hi", TXT ("채팅 입력 중인 글 그대로"));
+        expect (root.chromeMode() == Sidebar::Chrome::flat, TXT ("전체 화면 배치 (fullscreen=켜짐)"));
+        if (win)
+        {
+            const auto p = meon::winframe::probe (handle());
+            expect (p.window[0] == p.monitor[0] && p.window[1] == p.monitor[1] && p.window[2] == p.monitor[2] && p.window[3] == p.monitor[3],
+                    TXT ("윈도우 전체 화면: 모니터 전체 (작업 표시줄까지) ") + juce::String (p.window[2]) + "x" + juce::String (p.window[3]));
+            auto* cb = caption();
+            expect (cb == nullptr || ! cb->isVisible(), TXT ("전체 화면: 창 버튼 숨김"));
+            expect (root.getTitleRightInset() == metric::padX, TXT ("전체 화면: 제목 줄 오른쪽 여백 18 (창 버튼 없음)"));
+        }
+    }, 0);
+    if (win)
+    {
+        // 마우스를 화면 맨 위에 대면 창 버튼이 나타나고, "이전 크기로" 로 빠져나간다
+        add ([handle]
+        {
+            const auto p = meon::winframe::probe (handle());
+            meon::winframe::devMouse (p.monitor[0] + p.monitor[2] / 2, p.monitor[1], false, false);
+        }, 500);
+        add ([this, caption]
+        {
+            auto* cb = caption();
+            expect (cb != nullptr && cb->isVisible(), TXT ("맨 위에 마우스 → 창 버튼이 보인다"));
+        }, 0);
+        add ([caption]
+        {
+            if (auto* cb = caption())
+            {
+                const auto c = juce::Desktop::getInstance().getDisplays().logicalToPhysical (cb->localPointToGlobal (cb->buttonBounds (WinCaptionButtons::maximise).getCentre()));
+                meon::winframe::devMouse (c.x, c.y, false, false);
+            }
+        }, 300);
+        add ([caption]
+        {
+            if (auto* cb = caption())
+            {
+                const auto c = juce::Desktop::getInstance().getDisplays().logicalToPhysical (cb->localPointToGlobal (cb->buttonBounds (WinCaptionButtons::maximise).getCentre()));
+                meon::winframe::devMouse (c.x, c.y, true, true);
+            }
+        }, waitMs);
+        add ([this, sh, isFs, sameRoom]
+        {
+            expect (! isFs(), TXT ("창 버튼 '이전 크기로' → 전체 화면 끝"));
+            if (auto* p = peer()) expect (p->getBounds() == sh->before, TXT ("원래 창 자리·크기 ") + p->getBounds().toString());
+            sameRoom (TXT ("끌 때"));
+            jam()->chatInput.focus();
+        }, 300);
+    }
+    else
+    {
+        add ([shortcut] { shortcut (1 | 2); }, waitMs);
+        add ([this, sh, isFs, sameRoom]
+        {
+            expect (! isFs(), TXT ("⌃⌘F 다시 → 전체 화면 끝"));
+            sameRoom (TXT ("끌 때"));
+            jam()->chatInput.focus();
+        }, 300);
+        add ([shortcut] { shortcut (4); }, waitMs);   // fn+F (지구본+F)
+        add ([isFs] { if (! isFs()) std::cerr << "UITEST INFO fullscreen: fn+F 로 전체 화면이 되지 않음 (가짜 키 이벤트)" << std::endl; }, 0);
+        add ([this, isFs, handle]
+        {
+            expect (isFs(), TXT ("fn+F → 전체 화면"));
+            if (isFs()) meon::chrome::toggleFullScreen (handle());
+        }, waitMs);
+    }
+    // 단축키로 다시 켠 채 앱을 끄면 원래 창으로 (끄는 길: requestedQuit). 맥은 나온 뒤 끄므로 여기서는 윈도우만
+    if (win)
+    {
+        add ([shortcut] { shortcut (0); }, waitMs);
+        add ([this, sh, isFs]
+        {
+            expect (isFs(), TXT ("F11 다시 → 전체 화면"));
+            if (auto* hooks = dynamic_cast<meon::ShellHooks*> (root.getParentComponent()))
+                expect (hooks->requestedQuit(), TXT ("끄기 요청"));
+        }, 600);
+        add ([this, sh, isFs]
+        {
+            expect (! isFs(), TXT ("끌 때: 전체 화면을 풀고 끈다 (다음에 켜면 원래 창)"));
+            if (auto* p = peer()) expect (p->getBounds() == sh->before, TXT ("끌 때 저장될 창 크기 = 원래 창 ") + p->getBounds().toString());
+        }, 0);
+    }
 }
 
 } // namespace meon::ui

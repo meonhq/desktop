@@ -105,6 +105,8 @@ private:
     void addDockTests();          // 내 오디오·모니터 카드 묶음: 자리·틈 누름·목록 여백·다시 그리기·방 화면 ↔ 공개 방 (--uitest=dock)
     void addModalAnimTests();     // 모달 열고 닫는 애니메이션 (--uitest=modalanim)
     void addReducedMotionTests(); // 동작 줄이기 (--uitest=reducedmotion, MEON_REDUCE_MOTION=1)
+    void addWinEdgeTests();       // 윈도우 창 왼쪽·오른쪽·아래 가장자리 픽셀 (--uitest=winedge, windows.yml)
+    void addFullscreenTests();    // 전체 화면 단축키 (--uitest=fullscreen, 실제 창: windows.yml·mac.yml)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

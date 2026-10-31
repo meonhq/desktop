@@ -105,6 +105,14 @@ private:
     void windowChromeChanged();   // 붙은 뒤·전체 화면에 들어가고 나온 뒤·최대화·활성 바뀜
     void syncChromeView();        // 운영체제별 창 윗부분 구성 요소: 만들기·자리·상태·맨 위로
     void updateWindowState();     // 창 버튼 표시 (최대화·활성)
+    // 전체 화면 (독립 앱): 맥 ⌃⌘F·fn+F·보기 메뉴 (macOS 기본 전체 화면), 윈도우 F11 (창 틀·작업 표시줄까지 덮는다).
+    // 윈도우 전체 화면에서는 창 버튼을 숨기고, 마우스를 화면 맨 위에 대면 보인다 (빠져나갈 수 있게)
+    bool winFullscreen() const;
+    void toggleFullscreen();
+    bool captionRevealed = false;
+    struct RevealTimer : juce::Timer { std::function<void()> tick; void timerCallback() override { if (tick) tick(); } } revealTimer;
+    void updateCaptionReveal();
+    bool quittingFromFullscreen = false;
     /** 윈도우 창 영역 판정 (화면 물리 좌표): 창 버튼(최대화는 운영체제 영역) · 제목 줄 빈 곳 · 그 밖 */
     winframe::Region windowRegionAt (int screenX, int screenY);
     void childrenChanged() override;

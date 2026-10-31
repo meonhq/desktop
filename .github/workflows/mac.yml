@@ -127,6 +127,12 @@ jobs:
           for i in $(seq 1 300); do kill -0 $pid 2>/dev/null || break; sleep 1; done
           kill $pid 2>/dev/null || true
           grep -E "^UITEST (INFO chrome|PASS|FAIL|DONE)" uitest-chrome.log || { echo "결과 없음"; tail -30 uitest-chrome.log; }
+          # 전체 화면 단축키: 보기 메뉴, ⌃⌘F·fn+F (채팅 입력 중), 방·소리 그대로 (--uitest=fullscreen)
+          "$EXE" --allow-multi --no-input --fake-script=0 --uitest=fullscreen --window=0,0,1280,800 > uitest-fullscreen.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 180); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+          kill $pid 2>/dev/null || true
+          echo "── fullscreen"; grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-fullscreen.log || { echo "결과 없음"; tail -30 uitest-fullscreen.log; }
 
       - name: macOS 26 아이콘 (Icon Composer)
         # images/icons/AppIcon.icon 을 Xcode 26 의 actool 로 Assets.car 로 만들어 앱에 넣고 CFBundleIconName 을 적는다.

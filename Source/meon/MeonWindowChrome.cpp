@@ -14,6 +14,12 @@ int lightsRight (void*) { return 0; }
 Probe probe (void*, int, int, int, int) { return {}; }
 void devPostClick (void*, int, int, int) {}
 void devSetActive (bool) {}
+void installFullScreenShortcuts() {}
+bool isFullScreen (void*) { return false; }
+void toggleFullScreen (void*) {}
+void exitFullScreenThen (void*, std::function<void()> done) { if (done) done(); }
+void devPostKey (void*, const char*, int) {}
+bool devHasFullScreenMenu() { return false; }
 
 } // namespace meon::chrome
 
