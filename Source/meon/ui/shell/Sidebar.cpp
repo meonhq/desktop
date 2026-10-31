@@ -706,7 +706,9 @@ juce::Rectangle<int> Sidebar::toggleArea() const
     switch (chrome)
     {
         case Chrome::macWindow: return { macToggleX, 10, 32, 32 };   // 신호등 오른쪽 12 (디자인 toggleL 84, 펼침·접힘 같음)
-        case Chrome::flat:      return { 12, 10, 32, 32 };   // 디자인 fullscreen 켜짐: toggleL 12
+        case Chrome::flat:      // 디자인 fullscreen 켜짐: 펼침 toggleL 196 (오른쪽 끝), 접힘 12. 접는 동안 같이 움직인다 (transition left).
+                                // 12 → 196 과 폭 56 → 240 은 같은 거리·같은 곡선이라 늘 폭 - 44 (같은 프레임의 폭을 따른다)
+            return { juce::jlimit (12, openW - 44, getWidth() - 44), 10, 32, 32 };
         case Chrome::legacy:    break;
     }
     return shut() ? juce::Rectangle<int> (12, 10, 32, 32) : juce::Rectangle<int> (getWidth() - 1 - 12 - 32, 10, 32, 32);   // 오른쪽 선 1 안쪽에서 12
@@ -719,6 +721,12 @@ int Sidebar::headerInset() const
     if (chrome != Chrome::macWindow) return metric::padX;
     const float shutInset = (float) (macToggleX - 12);
     return juce::roundToInt (18.0f + (shutInset - 18.0f) * (1.0f - openProgress()));
+}
+
+int Sidebar::topRowH() const
+{
+    // 디자인 topRowH: 신호등이 없을 때 펼치면 42 (로고 줄을 따로 두지 않아 로고와 메뉴 사이가 창 모드와 같은 16), 접으면 52
+    return chrome == Chrome::flat ? juce::roundToInt (52.0f - 10.0f * openProgress()) : headerH;
 }
 
 int Sidebar::logoRowH() const
@@ -735,7 +743,7 @@ juce::Rectangle<int> Sidebar::profileBounds() const
 void Sidebar::resized()
 {
     auto area = getLocalBounds().withTrimmedRight (1);
-    area.removeFromTop (headerH + logoRowH());
+    area.removeFromTop (topRowH() + logoRowH());
     area.removeFromBottom (profileH);
     viewport.setBounds (area);
     body->setSize (area.getWidth(), 10);
@@ -752,7 +760,7 @@ void Sidebar::paint (juce::Graphics& g)
     g.fillRect (getWidth() - 1, divTop, 1, getHeight() - divTop);
     // 맨 윗줄 아래 선: 플러그인은 늘, 그 밖은 접혔을 때만 (펼치면 로고·메뉴와 이어진다, 디자인 topLine)
     if (chrome == Chrome::legacy || shut())
-        g.fillRect (0, headerH - 1, divTop > 0 ? getWidth() : getWidth() - 1, 1);
+        g.fillRect (0, topRowH() - 1, divTop > 0 ? getWidth() : getWidth() - 1, 1);
     g.fillRect (0, getHeight() - profileH, getWidth() - 1, 1);
 
     // 내 프로필 줄
@@ -790,14 +798,14 @@ void Sidebar::paint (juce::Graphics& g)
 
 void Sidebar::paintOverChildren (juce::Graphics& g)
 {
-    // 로고 (높이 24). 디자인 A안: 맥 창 모드 (18, 56) 신호등 아래 줄, 신호등 없음 (56, 14) 접기 버튼 오른쪽. 접는 동안 흐려진다 (labelOp).
+    // 로고 (높이 24). 디자인 A안: 맥 창 모드 (18, 56) 신호등 아래 줄, 신호등 없음 (18, 14) 맨 윗줄 왼쪽 (v2.1 최신). 접는 동안 흐려진다 (labelOp).
     // 디자인처럼 메뉴 위에 그린다 (접는 동안 메뉴가 로고 줄로 올라온다)
     juce::Point<float> at { 18.0f, 14.0f };
     float alpha = labelAlpha();
     switch (chrome)
     {
         case Chrome::macWindow: at = { 18.0f, 56.0f }; break;
-        case Chrome::flat:      at = { 56.0f, 14.0f }; break;
+        case Chrome::flat:      at = { 18.0f, 14.0f }; break;
         case Chrome::legacy:    alpha = shut() ? 0.0f : 1.0f; break;   // 플러그인: 예전대로 펼쳤을 때만 바로
     }
     if (alpha <= 0.001f) return;

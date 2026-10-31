@@ -123,7 +123,9 @@ private:
 class IconButton : public juce::Button
 {
 public:
-    enum class Style { plain24, bordered32, bare19 };
+    /** ghost32: 헤더 아이콘 (홈·사이드바 디자인 v2.1 최신: 방 만들기·입장 요청). 테두리·면 없이 아이콘만, 누르는 영역 32×32 모서리 6,
+                 아이콘 #767676 → 마우스를 올리면 면 #F5F5F5·아이콘 #1A1A1A. 알림 점 테두리도 면 색을 따른다 (흰색 → #F5F5F5) */
+    enum class Style { plain24, bordered32, bare19, ghost32 };
     IconButton (int iconId, Style, float iconPx);
     void setDot (bool);
     void setInk (juce::Colour normal, juce::Colour hover) { ink = normal; inkHover = hover; repaint(); }
@@ -135,6 +137,37 @@ private:
     float iconPx;
     bool dot = false;
     juce::Colour ink, inkHover;
+};
+
+/** 아이콘만 있는 두 번 눌러 확정 버튼 (방 나가기, 합주 헤더. 홈·사이드바 디자인 v2.1 최신).
+    누르는 영역 32×32 모서리 6, 아이콘 18. 평소: 면 없음·아이콘 #767676. 첫 클릭(확인 상태): 면 #FDECEA·아이콘 #D92D20.
+    마우스를 올리면 지금 면 위에 검정 4% 를 덧칠한다 (두 상태 모두, 아이콘 색은 그대로).
+    다른 곳을 누르거나 3초가 지나면 되돌아간다 (Button::setConfirm 과 같은 규칙). 확인 상태에서 다시 누르면 onConfirm */
+class ConfirmIconButton : public juce::Button, private juce::Timer
+{
+public:
+    explicit ConfirmIconButton (int iconId);
+    ~ConfirmIconButton() override;
+    std::function<void()> onConfirm;
+    std::function<void()> onStateChange;   // 확인 상태가 바뀔 때
+    bool isArmed() const { return armed; }
+    void disarm();
+    /** 평소 툴팁 (확인 상태에서는 말풍선이 대신하므로 비운다) */
+    void setNormalTooltip (const juce::String& t) { normalTip = t; if (! armed) setTooltip (t); }
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    void clicked() override;
+
+private:
+    int icon;
+    bool armed = false;
+    juce::String normalTip;
+    void timerCallback() override { disarm(); }
+    struct Outside : juce::MouseListener
+    {
+        explicit Outside (ConfirmIconButton& o) : owner (o) {}
+        void mouseDown (const juce::MouseEvent&) override;
+        ConfirmIconButton& owner;
+    } outside { *this };
 };
 
 } // namespace meon::ui

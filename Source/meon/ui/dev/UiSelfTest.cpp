@@ -281,8 +281,11 @@ void UiSelfTest::addLeaveTests()
     {
         auto* j = jam();
         expect (j->leave.isArmed() && inRoom(), TXT ("첫 클릭: 나가지 않고 확인 상태"));
-        expect (j->leave.getButtonText() == TXT ("한 번 더 누르면 나가요"), TXT ("확인 문구"));
-        expect (j->tip.isVisible() && j->tip.getTarget() == &j->leave, TXT ("방장: 확인 상태에서 툴팁"));
+        expect (j->leave.getWidth() == 32 && j->leave.getHeight() == 32, TXT ("방 나가기: 아이콘 버튼 32×32"));
+        expect (j->tip.isVisible() && j->tip.getTarget() == &j->leave, TXT ("방장: 확인 상태에서 말풍선"));
+        expect (j->tip.getText() == TXT ("한 번 더 누르면 나가요") && j->tip.getSubText() == TXT ("돌아올 때까지 방장 자리가 비어요"),
+                TXT ("말풍선: 첫 줄 + 방장 둘째 줄"));
+        expect (j->leave.getTooltip().isEmpty(), TXT ("확인 상태: 툴팁 대신 말풍선"));
         if (j->tip.isVisible())
             expect (j->tip.getY() == j->leave.getBottom() + 6 && j->tip.getRight() == j->leave.getRight(), TXT ("툴팁: 버튼 아래 6, 오른쪽 끝 맞춤"));
         click (j->membersCard, { 40, 120 });   // 바깥
@@ -291,10 +294,11 @@ void UiSelfTest::addLeaveTests()
     {
         auto* j = jam();
         expect (! j->leave.isArmed() && inRoom(), TXT ("바깥 클릭: 원래대로"));
-        expect (! j->tip.isVisible(), TXT ("바깥 클릭: 툴팁 사라짐"));
+        expect (! j->tip.isVisible(), TXT ("바깥 클릭: 말풍선 사라짐"));
+        expect (j->leave.getTooltip() == TXT ("방 나가기"), TXT ("평소 툴팁 \"방 나가기\""));
         click (j->leave);
     }, 3300);
-    add ([this] { expect (! jam()->leave.isArmed() && inRoom(), TXT ("3초가 지나면 원래대로")); });
+    add ([this] { expect (! jam()->leave.isArmed() && ! jam()->tip.isVisible() && inRoom(), TXT ("3초가 지나면 원래대로 (말풍선도 사라짐)")); });
     add ([this] { click (jam()->leave); });
     add ([this] { click (jam()->leave); }, 0);
     waitUntil (TXT ("두 번째 클릭으로 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
@@ -488,21 +492,29 @@ void UiSelfTest::addMinimizeTests()
     }, 300);
     add ([this] { expect (home().modal == nullptr && inRoom() && root.isMinimized(), TXT ("한 번 더 Esc: 코드 창 닫힘, 방 그대로")); });
 
-    begin (TXT ("5 최소화: 새 방 확인 모달"));
+    // v2.1 최신: 공개 방 머리말의 방 만들기(+ 아이콘)는 방에 있으면 숨는다 (사이드바 방 만들기와 같은 규칙)
+    begin (TXT ("5 최소화: 머리말 방 만들기 숨김"));
     minimize();
-    clickSidebar (TXT ("공개 방"));   // 방 만들기는 공개 방 쪽 머리말에
-    add ([this] { click (home().createRoom); }, 300);
+    clickSidebar (TXT ("공개 방"));
     add ([this]
     {
-        expect (home().confirm != nullptr && findButton (home(), TXT ("나가고 만들기")) != nullptr, TXT ("'방 만들기' → [취소] [나가고 만들기]"));
-        if (auto* ok = findButton (home(), TXT ("나가고 만들기"))) click (*ok);
-    }, 0);
-    waitUntil (TXT ("나간 뒤 방 만들기 모달"), [this] { return ! inRoom() && dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr; }, 6000);
+        expect (inRoom() && root.isMinimized() && ! home().createIcon.isVisible(), TXT ("방에 있으면 머리말 방 만들기 없음"));
+        core.home().leaveRoom();
+    }, 300);
+    waitUntil (TXT ("방에서 나감"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
     add ([this]
     {
-        expect (! home().hasRoomBar() && home().confirm == nullptr, TXT ("막대·확인 모달 닫힘, 방 만들기 모달 열림"));
+        auto& c = home().createIcon;
+        expect (c.isVisible() && c.getTooltip() == TXT ("방 만들기") && c.getWidth() == 32 && c.getHeight() == 32
+                    && c.getRight() == home().getWidth() - metric::padX,
+                TXT ("방 밖: 머리말 방 만들기 아이콘 32×32, 오른쪽 18, 툴팁 (") + c.getBounds().toString() + ")");
+        click (c);
+    }, 300);
+    add ([this]
+    {
+        expect (dynamic_cast<CreateRoomModal*> (home().modal.get()) != nullptr, TXT ("+ 아이콘 → 방 만들기 창"));
         home().closeOverlays();
-    });
+    }, 0);
 
     begin (TXT ("5 최소화: 내보내짐·방 닫힘"));
     auto joinFakeRoom = [this, target]
@@ -1120,7 +1132,7 @@ void UiSelfTest::addSidebarTests()
 
     // v2.1 최신: 창 윗부분 배치 (chromeVals A안). 맥 창 모드 = 신호등 오른쪽 접기 버튼(신호등 끝 + 12, 디자인 84)·로고 아래 줄(32)·
     // 접히면 제목 줄 왼쪽 = 접기 버튼 - 12 (디자인 72). 미리 보기(--chrome=mac)의 신호등은 macOS 26 자리라 91·79,
-    // 신호등 없음(맥 전체 화면·윈도우·리눅스) = 접기 버튼 12·로고 줄 없음·제목 줄 왼쪽 18. 접는 동안 같이 움직인다
+    // 신호등 없음(맥 전체 화면·윈도우·리눅스) = 펼침 접기 버튼 196·맨 윗줄 42, 접힘 12·52, 제목 줄 왼쪽 18. 접는 동안 같이 움직인다
     begin (TXT ("사이드바: 창 배치 (v2.1 최신)"));
     add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
     waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
@@ -1167,10 +1179,20 @@ void UiSelfTest::addSidebarTests()
         chromeCheck (TXT ("신호등 없음 접힘"), 12, 52, 18);
         root.sidebar->setCollapsed (false);
     }, 0);
+    add ([this]
+    {
+        // 펼치는 중 (신호등 없음): 접기 버튼 12 → 196, 맨 윗줄 52 → 42 가 폭과 같은 진행값으로 움직인다
+        auto* sb = root.sidebar.get();
+        const float e = (float) (sb->getWidth() - Sidebar::closedW) / (float) (Sidebar::openW - Sidebar::closedW);
+        const int tx = root.toggle->getX(), top = sb->viewport.getY();
+        expect (e > 0.02f && e < 0.98f, TXT ("펼치는 중 (진행값 ") + juce::String (e, 2) + ")");
+        expect (std::abs (tx - juce::roundToInt (12.0f + 184.0f * e)) <= 1 && std::abs (top - juce::roundToInt (52.0f - 10.0f * e)) <= 1,
+                TXT ("펼치는 중: 폭 ") + juce::String (sb->getWidth()) + TXT (", 접기 버튼 x ") + juce::String (tx) + TXT (", 맨 윗줄 ") + juce::String (top));
+    }, 60);
     waitUntil (TXT ("펼침 (240)"), [this] { return root.sidebar->currentWidth() == Sidebar::openW; });
     add ([this, chromeCheck]
     {
-        chromeCheck (TXT ("신호등 없음 펼침"), 12, 52, 18);
+        chromeCheck (TXT ("신호등 없음 펼침"), 196, 42, 18);
         root.devResetChrome();
     }, 0);
 

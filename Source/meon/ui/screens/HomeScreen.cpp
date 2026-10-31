@@ -806,7 +806,9 @@ void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePa
         // 공개 방 쪽 (디자인): 카드 없이 쪽 머리말에 필터·방 만들기, 그 아래 방 목록. 코드로 입장은 사이드바 메뉴에 있다
         addChildComponent (roomViewport);
         addChildComponent (*filterButton);
-        addChildComponent (createRoom);
+        addChildComponent (createIcon);
+        createIcon.setTooltip (TXT ("방 만들기"));
+        createIcon.onClick = [this] { openCreateRoom(); };
         roomsCard.setVisible (false);
         audioCard.setVisible (false);   // 내 오디오는 방 안에만 (사용자 결정 2026-10-29). 홈은 "내 준비 상태"
         auto page = std::make_unique<HomePage> (core);
@@ -1146,6 +1148,7 @@ void HomeScreen::stateChanged (core::StateKey k)
             break;
         case K::currentRoom: case K::joinRequests:
             if (roomBar != nullptr) { roomBar->resized(); roomBar->repaint(); }
+            if (k == K::currentRoom && shell) resized();   // 머리말 방 만들기: 방에 있으면 숨김
             break;
         case K::link:
             refreshHeader();
@@ -1289,15 +1292,15 @@ void HomeScreen::resized()
         homePage->setVisible (shellHome);
         roomViewport.setVisible (! shellHome);
         filterButton->setVisible (! shellHome);
-        createRoom.setVisible (! shellHome);
+        createRoom.setVisible (false);
+        createIcon.setVisible (! shellHome && ! core.store().state().currentRoom.has_value());   // 방에 있으면 숨김
         if (shellHome)
             homePage->setBounds (area.expanded (metric::padX));   // HomePage 가 디자인 여백 18 을 직접 둔다
         else
         {
             const int titleW = (int) std::ceil (textWidth (font (600, 16.0f), pageTitle));
             filterButton->setBounds (shellInset + titleInset + titleW + 6, (headerLine() - 24) / 2, 24, 24);
-            const int cw = createRoom.getIdealWidth();
-            createRoom.setBounds (getWidth() - metric::padX - cw, (headerLine() - metric::buttonH) / 2, cw, metric::buttonH);
+            createIcon.setBounds (getWidth() - metric::padX - 32, (headerLine() - 32) / 2, 32, 32);
             roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작
             if (! fold.isMoving (foldFriends)) layoutRooms();
         }

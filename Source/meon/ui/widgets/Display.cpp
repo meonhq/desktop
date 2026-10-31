@@ -308,17 +308,34 @@ Tip::Tip() { setInterceptsMouseClicks (false, false); setAlwaysOnTop (true); }
 
 int Tip::widthFor (const juce::String& t) { return (int) std::ceil (textWidth (font (500, 12.0f), t)) + 14; }
 
-void Tip::show (juce::Component& host, juce::Component& t, const juce::String& s, Place place)
+void Tip::show (juce::Component& host, juce::Component& t, const juce::String& s, Place where)
 {
     text = s;
+    sub = {};
+    note = false;
+    place (host, t, widthFor (text), height, where);
+}
+
+void Tip::showNote (juce::Component& host, juce::Component& t, const juce::String& title, const juce::String& subText, Place where)
+{
+    // 디자인: padding 6px 8px, font 500 12px/1.4 (줄 17), gap 2, 첫 줄 600
+    text = title;
+    sub = subText;
+    note = true;
+    int w = (int) std::ceil (textWidth (font (600, 12.0f), title));
+    if (sub.isNotEmpty()) w = juce::jmax (w, (int) std::ceil (textWidth (font (500, 12.0f), sub)));
+    place (host, t, w + 16, 6 + 17 + (sub.isNotEmpty() ? 2 + 17 : 0) + 6, where);
+}
+
+void Tip::place (juce::Component& host, juce::Component& t, int w, int h, Place where)
+{
     target = &t;
     if (getParentComponent() != &host) host.addChildComponent (this);
     const auto b = host.getLocalArea (t.getParentComponent(), t.getBounds());
-    const int w = widthFor (text);
-    int x = place == Place::belowCentre ? b.getCentreX() - w / 2 : b.getRight() - w;
+    int x = where == Place::belowCentre ? b.getCentreX() - w / 2 : b.getRight() - w;
     x = juce::jlimit (0, juce::jmax (0, host.getWidth() - w), x);
-    const int y = place == Place::aboveRight ? b.getY() - 6 - height : b.getBottom() + 6;
-    setBounds (x, y, w, height);
+    const int y = where == Place::aboveRight ? b.getY() - 6 - h : b.getBottom() + 6;
+    setBounds (x, y, w, h);
     setVisible (true);
     toFront (false);
     repaint();
@@ -335,8 +352,18 @@ void Tip::paint (juce::Graphics& g)
     g.setColour (col::ink);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
     g.setColour (col::white);
+    if (! note)
+    {
+        g.setFont (font (500, 12.0f));
+        g.drawText (text, getLocalBounds(), juce::Justification::centred, false);
+        return;
+    }
+    g.setFont (font (600, 12.0f));
+    g.drawText (text, juce::Rectangle<int> (8, 6, getWidth() - 16, 17), juce::Justification::centredLeft, false);
+    if (sub.isEmpty()) return;
+    g.setColour (juce::Colour (0xFFD5D5D5u));
     g.setFont (font (500, 12.0f));
-    g.drawText (text, getLocalBounds(), juce::Justification::centred, false);
+    g.drawText (sub, juce::Rectangle<int> (8, 6 + 17 + 2, getWidth() - 16, 17), juce::Justification::centredLeft, false);
 }
 
 TipOnHover::TipOnHover (Tip& t, juce::Component& h, juce::Component& c, const juce::String& s, Tip::Place p)

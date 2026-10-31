@@ -39,6 +39,8 @@ namespace
             case Id::chevronUpDown: return { "0 0 24 24", R"(<g fill="none" stroke="{C}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m7 9 5-5 5 5"/><path d="m7 15 5 5 5-5"/></g>)" };
             case Id::chevronLeft: return { "0 0 24 24", R"(<g fill="none" stroke="{C}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></g>)" };
             case Id::chevronRight: return { "0 0 24 24", R"(<g fill="none" stroke="{C}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></g>)" };
+            case Id::plusHeader:  return { "0 0 24 24", R"(<path d="M12 5v14M5 12h14" fill="none" stroke="{C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>)" };
+            case Id::logout:      return { "0 0 24 24", R"(<g fill="none" stroke="{C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/><path d="M16 16l4-4-4-4"/><path d="M20 12H9"/></g>)" };
             case Id::lobby:       return { "0 0 24 24", R"(<g fill="none" stroke="{C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8.5l5 5 5-5"/><path d="M5 18.5h14"/></g>)" };
         }
         return { "0 0 12 12", "" };

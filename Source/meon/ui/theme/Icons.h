@@ -34,7 +34,10 @@ enum class Id
     chevronDown24,  // 사이드바 머리말 접기 화살표 (24 그리드 선 1.6, 14px)
     chevronUpDown,  // 내 프로필 줄 (위아래 화살표)
     chevronLeft,    // 달력 이전 달 (선 2)
-    chevronRight    // 달력 다음 달 (선 2)
+    chevronRight,   // 달력 다음 달 (선 2)
+    // 헤더 아이콘 (홈·사이드바 디자인 v2.1 최신: 24 그리드 선 1.8, 18px)
+    plusHeader,     // 공개 방 머리말 방 만들기 (+)
+    logout          // 방 나가기 (문 + 오른쪽 화살표)
 };
 
 /** area 안에 비율을 지켜 그린다. angleRad 만큼 가운데 기준 회전 */

@@ -126,6 +126,8 @@ private:
     struct FilterButton;
     std::unique_ptr<FilterButton> filterButton;
     Button joinCode { Button::Kind::secondary, TXT ("코드로 입장") }, createRoom { Button::Kind::primary, TXT ("방 만들기") };
+    // 공개 방 쪽 머리말의 방 만들기 (홈·사이드바 디자인 v2.1 최신): + 아이콘만, 툴팁 "방 만들기". 방에 있으면 숨긴다 (사이드바 방 만들기와 같은 규칙)
+    IconButton createIcon { (int) icons::Id::plusHeader, IconButton::Style::ghost32, 18.0f };
     struct RoomCard;
     struct RoomList;
     std::unique_ptr<RoomList> roomList;

@@ -282,7 +282,7 @@ IconButton::IconButton (int id, Style s, float px)
     : juce::Button ({}), icon (id), style (s), iconPx (px)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    if (style == Style::bordered32) { ink = col::inkSub; inkHover = col::ink; }
+    if (style == Style::bordered32 || style == Style::ghost32) { ink = col::inkSub; inkHover = col::ink; }
     else { ink = col::inkFaint; inkHover = col::ink; }
 }
 
@@ -310,6 +310,26 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool)
         }
         return;
     }
+    if (style == Style::ghost32)
+    {
+        auto r = b.withSizeKeepingCentre (32.0f, 32.0f);
+        if (highlighted)
+        {
+            g.setColour (col::hoverBg);
+            g.fillRoundedRectangle (r, 6.0f);
+        }
+        icons::draw (g, (icons::Id) icon, r.withSizeKeepingCentre (iconPx, iconPx), highlighted ? inkHover : ink);
+        if (dot)
+        {
+            // 자리·크기는 bordered32 와 같다 (top 6, right 7, 8×8). 테두리 1.5 는 면 색: 평소 흰색, 마우스를 올리면 #F5F5F5 (디자인 --dot-ring)
+            juce::Rectangle<float> d (r.getRight() - 7.0f - 8.0f, r.getY() + 6.0f, 8.0f, 8.0f);
+            g.setColour (col::notify);
+            g.fillEllipse (d);
+            g.setColour (highlighted ? col::hoverBg : col::white);
+            g.drawEllipse (d.reduced (0.75f), 1.5f);
+        }
+        return;
+    }
     const float side = style == Style::plain24 ? 24.0f : 19.0f;
     auto r = b.withSizeKeepingCentre (side, side);
     if (highlighted && style == Style::plain24)
@@ -318,6 +338,67 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool)
         g.fillRoundedRectangle (r, 5.0f);
     }
     icons::draw (g, (icons::Id) icon, r.withSizeKeepingCentre (iconPx, iconPx), highlighted ? inkHover : ink);
+}
+
+//==============================================================================
+ConfirmIconButton::ConfirmIconButton (int id) : juce::Button ({}), icon (id)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setWantsKeyboardFocus (false);
+}
+
+ConfirmIconButton::~ConfirmIconButton()
+{
+    if (armed) juce::Desktop::getInstance().removeGlobalMouseListener (&outside);
+}
+
+void ConfirmIconButton::disarm()
+{
+    if (! armed) return;
+    armed = false;
+    stopTimer();
+    juce::Desktop::getInstance().removeGlobalMouseListener (&outside);
+    setTooltip (normalTip);
+    repaint();
+    if (onStateChange) onStateChange();
+}
+
+void ConfirmIconButton::clicked()
+{
+    if (! armed)
+    {
+        armed = true;
+        setTooltip ({});   // 확인 상태의 안내는 말풍선이 한다
+        startTimer (3000);
+        juce::Desktop::getInstance().addGlobalMouseListener (&outside);
+        repaint();
+        if (onStateChange) onStateChange();
+        return;
+    }
+    disarm();
+    if (onConfirm) onConfirm();
+}
+
+void ConfirmIconButton::paintButton (juce::Graphics& g, bool highlighted, bool)
+{
+    const auto r = getLocalBounds().toFloat().withSizeKeepingCentre (32.0f, 32.0f);
+    if (armed)
+    {
+        g.setColour (juce::Colour (0xFFFDECEAu));   // 연한 빨강 면 (디자인 leaveBg)
+        g.fillRoundedRectangle (r, 6.0f);
+    }
+    if (highlighted)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.04f));   // 디자인: inset box-shadow rgba(0,0,0,0.04)
+        g.fillRoundedRectangle (r, 6.0f);
+    }
+    icons::draw (g, (icons::Id) icon, r.withSizeKeepingCentre (18.0f, 18.0f), armed ? col::danger : col::inkSub);
+}
+
+void ConfirmIconButton::Outside::mouseDown (const juce::MouseEvent& e)
+{
+    if (owner.armed && e.eventComponent != &owner && ! owner.isParentOf (e.eventComponent))
+        owner.disarm();
 }
 
 } // namespace meon::ui

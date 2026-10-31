@@ -152,14 +152,21 @@ public:
     Tip();
     /** target 은 host 의 자손이어야 한다 */
     void show (juce::Component& host, juce::Component& target, const juce::String& text, Place);
+    /** 두 줄 말풍선 (방 나가기 확인, 홈·사이드바 디자인 v2.1 최신): 안쪽 6·8, 줄 높이 1.4, 줄 사이 2.
+        첫 줄 600 흰색, 둘째 줄 500 #D5D5D5. sub 가 비면 첫 줄만 */
+    void showNote (juce::Component& host, juce::Component& target, const juce::String& title, const juce::String& sub, Place);
+    juce::String getText() const { return text; }
+    juce::String getSubText() const { return sub; }
     void hide();
     juce::Component* getTarget() const { return target.getComponent(); }
     void paint (juce::Graphics&) override;
     static int widthFor (const juce::String& text);
     static constexpr int height = 20;
 private:
-    juce::String text;
+    juce::String text, sub;
+    bool note = false;
     juce::Component::SafePointer<juce::Component> target;
+    void place (juce::Component& host, juce::Component& target, int w, int h, Place);
 };
 
 /** target 에 마우스를 올리면 tip 을 띄우고 내리거나 누르면 감춘다 */

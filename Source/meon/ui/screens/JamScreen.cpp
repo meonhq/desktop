@@ -1018,18 +1018,20 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     bell.onClick = [this] { toggleNotifications(); };
     settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
     lobby.onClick = [this] { tip.hide(); closePopover(); if (onMinimize) onMinimize(); };
-    // 방 나가기: 두 번 눌러 확정 (팝업 없음). 바깥을 누르거나 3초가 지나면 원래대로 (다른 확인 버튼과 같은 Button::setConfirm).
-    // 방장이면 확인 상태일 때 버튼 아래에 "돌아올 때까지 방장 자리가 비어요"
-    leave.setConfirm (TXT ("한 번 더 누르면 나가요"));
+    // 방 나가기 (홈·사이드바 디자인 v2.1 최신): 로그아웃 아이콘, 두 번 눌러 확정 (팝업 없음). 마우스를 올리면 "방 나가기".
+    // 첫 클릭: 연한 빨강 면 + 버튼 아래 말풍선 "한 번 더 누르면 나가요" (방장이면 둘째 줄 "돌아올 때까지 방장 자리가 비어요").
+    // 바깥을 누르거나 3초가 지나면 원래대로 (디자인에 없는 규칙, 사용자 결정. 다른 확인 버튼과 같다)
+    // 서버: 방장이 나가도 권한은 그대로 남고 방장 자리 하나가 예약된다 (host_present false, 자동 위임 없음. API 5.5·5.6)
+    leave.setNormalTooltip (TXT ("방 나가기"));
     leave.onStateChange = [this]
     {
-        resized();
-        if (leave.isArmed() && core.store().state().amHost())
-            tip.show (*this, leave, TXT ("돌아올 때까지 방장 자리가 비어요"), Tip::Place::belowRight);
+        if (leave.isArmed())
+            tip.showNote (*this, leave, TXT ("한 번 더 누르면 나가요"),
+                          core.store().state().amHost() ? TXT ("돌아올 때까지 방장 자리가 비어요") : juce::String(), Tip::Place::belowRight);
         else if (tip.getTarget() == &leave)
             tip.hide();
     };
-    leave.onPress = [this]
+    leave.onConfirm = [this]
     {
         juce::Component::SafePointer<JamScreen> safe (this);
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->core.home().leaveRoom(); });   // 이 화면이 지워진다
@@ -1343,8 +1345,7 @@ void JamScreen::resized()
         const float logoW = meon::logoWidth (metric::logoDrawH);
         auto h = area.withHeight (headerLine()).reduced (metric::padX, 0);
         // 오른쪽부터: 방 나가기 · 로비 · 설정 · 알림 · 입장 요청(방장) · 입장 코드(비공개), 간격 9. 버튼은 줄지 않고 방 이름이 먼저 줄어든다
-        const int lw = leave.getIdealWidth();
-        leave.setBounds (h.removeFromRight (lw).withSizeKeepingCentre (lw, metric::buttonH));
+        leave.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         for (auto* b : { &lobby, &settings, &bell })
         {
             if (! b->isVisible()) continue;   // 사이드바가 있으면 숨김 (setSidebarShown)

@@ -96,9 +96,9 @@ private:
     std::unique_ptr<Tag> privateTag;
     struct CodeBox;
     std::unique_ptr<CodeBox> codeBox;
-    Button leave { Button::Kind::secondary, TXT ("방 나가기") };
+    ConfirmIconButton leave { (int) icons::Id::logout };   // 방 나가기 (두 번 눌러 확정, v2.1 최신: 아이콘만)
     IconButton gear { (int) icons::Id::gear, IconButton::Style::plain24, 14.0f };              // 방장: 방 설정
-    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::bordered32, 16.0f }; // 방장: 입장 요청 (요청이 없어도 보임)
+    IconButton requests { (int) icons::Id::personPlus, IconButton::Style::ghost32, 18.0f };    // 방장: 입장 요청 (요청이 없어도 보임. v2.1 최신: 테두리 없음)
     IconButton bell { (int) icons::Id::bell, IconButton::Style::bordered32, 16.0f };           // 알림 (받은 친구 요청, 홈과 같은 목록)
     IconButton settings { (int) icons::Id::gearHeader, IconButton::Style::bordered32, 16.0f }; // 설정
     IconButton lobby { (int) icons::Id::lobby, IconButton::Style::bordered32, 16.0f };         // 로비 보기 (방 최소화)
