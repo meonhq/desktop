@@ -10,6 +10,8 @@
 //     JUCE 는 전체 화면에서 나올 때 창 모양(styleMask)을 처음 값으로 되돌린다 (resetWindowPresentation): 그 뒤에 다시 붙인다.
 //   - 맨 윗줄 누름: 앱 화면(JUCE)이 받아서 빈 곳이면 titleBarMouseDown 을 부른다 (사이드바 접기 버튼·제목 줄 버튼은 각자 눌린다).
 //     그 줄에서 툴바·제목 줄이 누름을 가로채면(앱 화면이 아닌 뷰가 받으면) 그 누름을 앱 화면으로 넘긴다 (신호등은 그대로 신호등이 받는다).
+//   - 창 틀 뷰(NSThemeFrame) 자신이 받는 자리 = macOS 의 크기 조절 자리 (위 가장자리·위 모서리, 폭은 시스템 기본): 넘기지 않고 macOS 에 맡긴다.
+//     (예전 버그: 이 누름도 앱 화면으로 넘겨 끌기가 되어, 크기 조절 커서인데 창이 옮겨졌다) 확대(zoom)한 창·전체 화면은 크기 조절 없이 예전대로
 //   - 끌기는 지금 처리 중인 마우스 누름으로 performWindowDragWithEvent (macOS 가 옮긴다: 화면 가장자리 붙이기 등 그대로).
 //     두 번 누름은 시스템 설정 "제목 막대를 이중 클릭할 때" (AppleActionOnDoubleClick) 를 따른다.
 #import <AppKit/AppKit.h>
@@ -34,6 +36,7 @@ namespace
         bool forwarding = false;         // 넘긴 누름이 떼어질 때까지 끌기·뗌도 넘긴다
         NSEvent* forwardingDown = nil;   // 넘기는 중인 누름 (titleBarMouseDown 이 쓴다. 감시 안에서는 currentEvent 가 다를 수 있다)
         int forwarded = 0, titleBarPresses = 0;
+        int edgePasses = 0;              // 크기 조절 자리 누름을 macOS 에 맡긴 횟수
     };
 
     State& state()
@@ -104,7 +107,14 @@ namespace
         return [frameView hitTest: above != nil ? [above convertPoint: windowPoint fromView: nil] : windowPoint];
     }
 
-    /** 맨 윗줄에서 앱 화면이 아닌 뷰(툴바·제목 줄)가 받을 누름을 앱 화면으로 넘긴다. 그 밖은 그대로 */
+    /** 위 가장자리에서 크기를 바꿀 수 있는 창인지: 크기 조절 가능, 전체 화면·확대(zoom) 아님 */
+    bool resizeFromTopAllowed (NSWindow* w)
+    {
+        return w != nil && ([w styleMask] & NSWindowStyleMaskResizable) != 0 && ! isFullScreen (w) && ! [w isZoomed];
+    }
+
+    /** 맨 윗줄에서 앱 화면이 아닌 뷰(툴바·제목 줄)가 받을 누름을 앱 화면으로 넘긴다. 그 밖은 그대로.
+        창 틀 뷰 자신이 받는 누름(크기 조절 자리)은 넘기지 않는다: macOS 가 크기를 바꾼다 */
     NSEvent* route (NSEvent* ev)
     {
         auto& s = state();
@@ -120,6 +130,11 @@ namespace
             if (p.y < NSHeight ([s.window frame]) - (CGFloat) barHeight) return ev;   // 맨 윗줄(52)만
             NSView* hit = hitAt (s.window, p);
             if (hit == nil || hit == content || [hit isDescendantOf: content] || isWindowButton (s.window, hit)) return ev;
+            if (hit == [content superview] && type == NSEventTypeLeftMouseDown && resizeFromTopAllowed (s.window))
+            {
+                ++s.edgePasses;   // 위 가장자리·모서리 크기 조절 (macOS 가 처리)
+                return ev;
+            }
             s.forwarding = true;
             ++s.forwarded;
             s.forwardingDown = ev;
@@ -296,6 +311,15 @@ Probe probe (void* nsView, int toggleX, int toggleY, int emptyX, int emptyY)
     p.hitToggle = at (toggleX, toggleY);
     p.hitEmpty = at (emptyX, emptyY);
     p.hitClose = at (p.lights[0][0] + p.lights[0][2] * 0.5, p.lights[0][1] + p.lights[0][3] * 0.5);
+    // 위 가장자리·모서리·옆 끝(윗줄 안)을 누르면 받는 곳 (y 는 위에서 pt)
+    const CGFloat W = NSWidth ([w frame]);
+    std::string edges;
+    for (double y : { 0.5, 1.5, 2.5, 3.5, 5.0, 8.0 })
+        edges += "top" + std::to_string ((int) (y * 10)) + "=" + at (emptyX, y) + " ";
+    edges += "tl=" + at (1.5, 1.5) + " tr=" + at (W - 1.5, 1.5) + " l20=" + at (1.5, 20) + " r20=" + at (W - 1.5, 20);
+    p.hitEdges = edges;
+    p.edgePasses = s.edgePasses;
+    p.zoomed = [w isZoomed];
     return p;
 }
 
@@ -311,6 +335,34 @@ void devPostClick (void* nsView, int x, int y, int clickCount)
                                  windowNumber: [w windowNumber] context: nil eventNumber: 0 clickCount: clickCount pressure: 0.0f];
     [NSApp postEvent: down atStart: NO];
     [NSApp postEvent: up atStart: NO];
+}
+
+void devPostDrag (void* nsView, int x, int y, int dx, int dy)
+{
+    NSWindow* w = windowFor (nsView);
+    if (w == nil) return;
+    const CGFloat H = NSHeight ([w frame]);
+    const NSTimeInterval t = [[NSProcessInfo processInfo] systemUptime];
+    auto post = [&] (NSEventType type, double fx, double fy, double dt, float pressure)
+    {
+        // 창 좌표 (AppKit: 왼쪽 아래 기준). 끄는 동안 창이 바뀌어도 같은 기준 (누른 때의 창 높이)
+        NSEvent* e = [NSEvent mouseEventWithType: type location: NSMakePoint ((CGFloat) fx, H - (CGFloat) fy) modifierFlags: 0 timestamp: t + dt
+                                    windowNumber: [w windowNumber] context: nil eventNumber: 0 clickCount: 1 pressure: pressure];
+        [NSApp postEvent: e atStart: NO];
+    };
+    post (NSEventTypeLeftMouseDown, x, y, 0.0, 1.0f);
+    post (NSEventTypeLeftMouseDragged, x + dx * 0.5, y + dy * 0.5, 0.05, 1.0f);
+    post (NSEventTypeLeftMouseDragged, x + dx, y + dy, 0.10, 1.0f);
+    post (NSEventTypeLeftMouseUp, x + dx, y + dy, 0.15, 0.0f);
+}
+
+void devWindowFrame (void* nsView, double out[4])
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+    NSWindow* w = windowFor (nsView);
+    if (w == nil) return;
+    const NSRect f = [w frame];
+    out[0] = NSMinX (f); out[1] = NSMinY (f); out[2] = NSWidth (f); out[3] = NSHeight (f);
 }
 
 namespace

@@ -55,6 +55,7 @@ void UiSelfTest::start()
     if (want ("codeinput")) addCodeInputTests();
     if (want ("friendadd")) addFriendAddTests();
     if (want ("photo"))     addPhotoTests();
+    if (want ("modallines")) addModalLineTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -1448,7 +1449,8 @@ juce::String UiSelfTest::describe (const meon::chrome::Probe& p)
          + " bar=" + juce::String (p.barH, 1)
          + " close=" + box (p.lights[0]) + " mini=" + box (p.lights[1]) + " zoom=" + box (p.lights[2])
          + " hit[toggle]=" + juce::String (p.hitToggle) + " hit[empty]=" + juce::String (p.hitEmpty) + " hit[close]=" + juce::String (p.hitClose)
-         + " forwarded=" + juce::String (p.forwarded) + " presses=" + juce::String (p.titleBarPresses);
+         + " forwarded=" + juce::String (p.forwarded) + " presses=" + juce::String (p.titleBarPresses)
+         + " edgePasses=" + juce::String (p.edgePasses) + " zoomed=" + juce::String ((int) p.zoomed) + " edges[" + juce::String (p.hitEdges) + "]";
 }
 
 void UiSelfTest::addChromeTests()
@@ -1468,7 +1470,8 @@ void UiSelfTest::addChromeTests()
     }, 0);
    #else
     if (core.isPlugin()) { add ([] { std::cerr << "UITEST INFO chrome: 플러그인이라 건너뜀" << std::endl; }, 0); return; }
-    struct Shared { meon::chrome::Probe first; juce::Rectangle<int> bounds; int presses = 0; bool wasCollapsed = false, fullScreen = false; };
+    struct Shared { meon::chrome::Probe first; juce::Rectangle<int> bounds; int presses = 0, edgePasses = 0; bool wasCollapsed = false, fullScreen = false;
+                    double frame[4] {}; juce::Rectangle<int> beforeZoom, zoomBounds; bool zoomed = false; };
     auto sh = std::make_shared<Shared>();
     auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
     // 창 왼쪽 위 기준 점 (peer 좌표 = 창 좌표: 내용이 창 맨 위까지)
@@ -1592,10 +1595,60 @@ void UiSelfTest::addChromeTests()
         std::cerr << "UITEST INFO chrome 빈 곳 누른 뒤 창 " << sh->bounds.toString() << " → " << peer()->getBounds().toString() << std::endl;
         same (TXT ("빈 곳 누른 뒤"), p);
     }, 0);
+    // 위 가장자리·위 모서리: macOS 의 크기 조절 자리 (창 틀 뷰가 받는 자리)는 앱이 끌지 않고 macOS 에 맡긴다.
+    // 예전 버그: 이 누름도 앱 화면으로 넘겨 창 끌기가 되어, 크기 조절 커서인데 창이 옮겨졌다
+    auto edgeDrag = [this, sh, handle, probeNow] (int x, int y, int dx, int dy)
+    {
+        const auto p = probeNow();
+        sh->presses = p.titleBarPresses;
+        sh->edgePasses = p.edgePasses;
+        sh->bounds = peer()->getBounds();
+        meon::chrome::devWindowFrame (handle(), sh->frame);
+        meon::chrome::devPostDrag (handle(), x, y, dx, dy);
+    };
+    auto edgeResult = [this, sh, handle, probeNow] (const juce::String& name, bool expectResize)
+    {
+        const auto p = probeNow();
+        double f[4] {};
+        meon::chrome::devWindowFrame (handle(), f);
+        const int drags = p.titleBarPresses - sh->presses, passes = p.edgePasses - sh->edgePasses;
+        std::cerr << "UITEST INFO chrome " << name << ": 창 " << sh->frame[0] << "," << sh->frame[1] << " " << sh->frame[2] << "x" << sh->frame[3]
+                  << " → " << f[0] << "," << f[1] << " " << f[2] << "x" << f[3] << " (macOS 에 맡김 " << passes << ", 앱 끌기 " << drags << ")" << std::endl;
+        if (expectResize)
+        {
+            expect (drags == 0, name + TXT (": 앱이 창을 끌지 않음 (끌기 ") + juce::String (drags) + TXT ("번)"));
+            expect (passes > 0, name + TXT (": 크기 조절 자리 누름을 macOS 에 맡김 (") + juce::String (passes) + TXT ("번)"));
+            if (std::abs (f[3] - sh->frame[3]) >= 1.0)
+                expect (std::abs (f[1] - sh->frame[1]) < 1.0, name + TXT (": 높이가 바뀌고 아래 끝은 그대로"));
+            else
+                std::cerr << "UITEST INFO chrome " << name << ": 합성 이벤트로는 크기가 바뀌지 않음 (macOS 가 실제 마우스로 크기 조절을 따라가는 경우). 앱이 가로채지 않은 것만 확인" << std::endl;
+        }
+        else
+        {
+            expect (passes == 0, name + TXT (": 크기 조절 없음 (macOS 에 맡김 ") + juce::String (passes) + TXT ("번)"));
+        }
+        if (peer()->getBounds() != sh->bounds) peer()->setBounds (sh->bounds, false);   // 다음 확인을 위해 원래 자리로
+    };
+    add ([this, probeNow] { std::cerr << "UITEST INFO chrome 위 가장자리 누름 자리: " << probeNow().hitEdges << std::endl; }, 0);
+    add ([edgeDrag, emptyPoint] { edgeDrag (emptyPoint().x, 1, 0, -40); }, 0);
+    add ([edgeResult] { edgeResult (TXT ("위 가장자리 끌기"), true); }, 1200);
+    add ([edgeDrag] { edgeDrag (1, 1, -30, -30); }, 400);
+    add ([edgeResult] { edgeResult (TXT ("왼쪽 위 모서리 끌기"), true); }, 1200);
+    add ([this, edgeDrag] { edgeDrag (root.getPeer()->getComponent().getWidth() - 2, 1, 30, -30); }, 400);
+    add ([edgeResult] { edgeResult (TXT ("오른쪽 위 모서리 끌기"), true); }, 1200);
+    add ([this, togglePoint, probeNow]
+    {
+        // 위 가장자리 바로 아래의 빈 곳·접기 버튼·신호등은 그대로
+        const auto p = probeNow();
+        expect (p.hitEmpty == "content" && p.hitToggle == "content" && p.hitClose == "button",
+                TXT ("가장자리 아래: 빈 곳·접기 버튼은 앱, 신호등은 신호등 (") + juce::String (p.hitEmpty) + "/" + juce::String (p.hitToggle) + "/" + juce::String (p.hitClose) + ")");
+    }, 400);
+
     // 더블클릭 → 시스템 설정(기본: 확대)
     add ([this, sh, handle, emptyPoint]
     {
         sh->bounds = peer()->getBounds();
+        sh->beforeZoom = sh->bounds;
         const auto e = emptyPoint();
         meon::chrome::devPostClick (handle(), e.x, e.y, 1);
         meon::chrome::devPostClick (handle(), e.x, e.y, 2);
@@ -1607,13 +1660,31 @@ void UiSelfTest::addChromeTests()
     {
         std::cerr << "UITEST INFO chrome 더블클릭 뒤 창 " << sh->bounds.toString() << " → " << peer()->getBounds().toString() << std::endl;
         same (TXT ("더블클릭 확대 뒤"), probeNow());
+        sh->zoomBounds = peer()->getBounds();
+    }, 0);
+    // 확대(zoom) 상태: 위 가장자리는 크기 조절 없이 예전처럼 끌기
+    add ([this, sh, edgeDrag, emptyPoint, probeNow]
+    {
+        sh->zoomed = probeNow().zoomed;
+        if (sh->zoomed) edgeDrag (emptyPoint().x, 1, 0, 40);
+        else std::cerr << "UITEST INFO chrome 확대 상태가 아님 (isZoomed 0): 확대 상태 위 가장자리 확인 건너뜀" << std::endl;
+    }, 0);
+    add ([this, sh, edgeResult]
+    {
+        if (! sh->zoomed) return;
+        edgeResult (TXT ("확대 상태 위 가장자리"), false);
+        peer()->setBounds (sh->zoomBounds, false);
+    }, 1200);
+    add ([this, sh, handle, emptyPoint]
+    {
+        sh->bounds = sh->beforeZoom;
         if (peer()->getBounds() != sh->bounds)
         {
             const auto e = emptyPoint();
             meon::chrome::devPostClick (handle(), e.x, e.y, 1);
             meon::chrome::devPostClick (handle(), e.x, e.y, 2);
         }
-    }, 0);
+    }, 300);
     waitUntilOr (TXT ("더블클릭 되돌림"), [this, sh] { return peer()->getBounds() == sh->bounds; }, 3000,
                  [this, sh] { std::cerr << "UITEST INFO chrome 두 번째 더블클릭 뒤 창 " << peer()->getBounds().toString() << " (처음 " << sh->bounds.toString() << ")" << std::endl;
                               peer()->setBounds (sh->bounds, false); });
@@ -1633,8 +1704,20 @@ void UiSelfTest::addChromeTests()
         log (TXT ("전체 화면"), p);
         expect (! p.toolbar, TXT ("전체 화면: 툴바 뗌"));
         expect (root.chromeMode() == Sidebar::Chrome::flat, TXT ("전체 화면: 신호등 없는 배치"));
-        peer()->setFullScreen (false);
     }, 0);
+    // 전체 화면: 위 가장자리를 끌어도 크기·자리 그대로
+    add ([sh, edgeDrag, emptyPoint] { if (sh->fullScreen) edgeDrag (emptyPoint().x, 1, 0, 40); }, 400);
+    add ([this, sh, handle, edgeResult]
+    {
+        if (! sh->fullScreen) return;
+        double before[4] { sh->frame[0], sh->frame[1], sh->frame[2], sh->frame[3] }, f[4] {};
+        meon::chrome::devWindowFrame (handle(), f);
+        edgeResult (TXT ("전체 화면 위 가장자리"), false);
+        bool same = true;
+        for (int i = 0; i < 4; ++i) same = same && std::abs (f[i] - before[i]) < 1.0;
+        expect (same, TXT ("전체 화면 위 가장자리: 창 크기·자리 그대로"));
+        peer()->setFullScreen (false);
+    }, 1200);
     waitUntilOr (TXT ("전체 화면 나옴"), [this] { return ! peer()->isFullScreen(); }, 8000,
                  [] { std::cerr << "UITEST INFO chrome 전체 화면에서 나오지 못함" << std::endl; });
     add ({}, 1500);
@@ -3525,7 +3608,7 @@ void UiSelfTest::addWinStatesTests()
 
     // 크기 조절: 오른쪽·아래·왼쪽 끝을 잡고 끈다 (윈도우 10 은 내용 끝 1px 도 크기 조절 자리)
     struct Drag { const char* name; int edge; int dx, dy; };
-    for (auto d : { Drag { "오른쪽", 0, 40, 0 }, Drag { "아래", 1, 0, 30 }, Drag { "왼쪽", 2, -30, 0 } })
+    for (auto d : { Drag { "오른쪽", 0, 40, 0 }, Drag { "아래", 1, 0, 30 }, Drag { "왼쪽", 2, -30, 0 }, Drag { "위", 3, 0, -30 } })
     {
         auto start = std::make_shared<juce::Point<int>>();
         auto before = std::make_shared<meon::winframe::Probe>();
@@ -3537,7 +3620,8 @@ void UiSelfTest::addWinStatesTests()
             const int b = p.resizeBorder;
             if (d.edge == 0) *start = { p.window[0] + p.window[2] - b / 2, p.window[1] + p.window[3] / 2 };
             else if (d.edge == 1) *start = { p.window[0] + p.window[2] / 2, p.window[1] + p.window[3] - b / 2 };
-            else *start = { p.window[0] + b / 2, p.window[1] + p.window[3] / 2 };
+            else if (d.edge == 2) *start = { p.window[0] + b / 2, p.window[1] + p.window[3] / 2 };
+            else *start = { p.window[0] + p.window[2] / 2, p.window[1] + b / 2 };   // 위: 가운데 (창 버튼·사이드바 접기 버튼에서 먼 곳)
             // 끌 자리와 끈 뒤 자리가 작업 영역 안이어야 한다 (큰 배율에서 창이 화면보다 크면 아래 끝이 화면 밖)
             const juce::Rectangle<int> work (p.work[0], p.work[1], p.work[2], p.work[3]);
             *skip = ! work.contains (*start) || ! work.contains (*start + juce::Point<int> (d.dx, d.dy));
@@ -3552,7 +3636,7 @@ void UiSelfTest::addWinStatesTests()
             if (*skip) return;
             const auto p = meon::winframe::probe (handle());
             const int dw = p.client[2] - before->client[2], dh = p.client[3] - before->client[3];
-            const int wantW = d.edge == 2 ? -d.dx : d.dx, wantH = d.dy;
+            const int wantW = d.edge == 2 ? -d.dx : d.dx, wantH = d.edge == 3 ? -d.dy : d.dy;
             expect (std::abs (dw - wantW) <= 2 && std::abs (dh - wantH) <= 2,
                     juce::String (juce::CharPointer_UTF8 (d.name)) + TXT (" 끝을 끌어 크기 조절 (") + juce::String (dw) + "x" + juce::String (dh) + ")");
         }, 0);
@@ -4192,6 +4276,124 @@ void UiSelfTest::addPhotoTests()
         if (auto* s = settings()) s->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));   // 설정 창의 Esc (뒤 시험이 홈을 쓴다)
     }, 0);
     waitUntil (TXT ("설정 창 닫힘"), [settings] { return settings() == nullptr; });
+}
+
+//==============================================================================
+// 모달·확인 창 구분선: 상자 안쪽 세로줄 하나(왼쪽 끝에서 6px, 설정은 오른쪽 끝에서 12px: 글자·칸이 없는 자리)를 위에서 아래로 훑어
+// 흰색이 아닌 줄의 연속 두께를 물리 픽셀로 잰다. 구분선(헤더 아래·본문 위·푸터 위)은 hairline 으로 물리 floor(배율) 줄
+// (100·125·150% 1줄, 레티나 2줄 = 1px). 두 선이 붙으면 두 배, 픽셀 경계에 안 맞아 번지면 그보다 두껍다.
+// 화면과 같은 배율로 창 전체를 그려서 잰다 (선은 창 안의 자리로 픽셀에 맞추므로 상자만 그리면 어긋난다). 배율은 --global-scale 로
+void UiSelfTest::addModalLineTests()
+{
+    begin (TXT ("모달 구분선 1px"));
+    // 맨 위에 보이는 모달·확인 창과 그 상자 (창 좌표)
+    auto topDialog = [this]() -> std::pair<juce::Component*, juce::Rectangle<int>>
+    {
+        auto* top = root.getTopLevelComponent();
+        juce::Component* found = nullptr;
+        juce::Rectangle<int> box;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* ch : c.getChildren())
+            {
+                if (! ch->isVisible()) continue;
+                if (auto* m = dynamic_cast<ModalBase*> (ch)) { found = m; box = top->getLocalArea (m, m->dialogBounds()); }
+                walk (*ch);
+            }
+        };
+        walk (*top);
+        if (root.fail != nullptr && root.fail->isVisible())
+        {
+            found = root.fail.get();
+            box = top->getLocalArea (root.fail.get(), root.fail->getLocalBounds());
+        }
+        return { found, box };
+    };
+    auto measure = [this, topDialog] (const juce::String& name, bool rightColumn, int wantLines)
+    {
+        auto [d, box] = topDialog();
+        if (d == nullptr) { expect (false, name + TXT (": 창이 열리지 않음")); return; }
+        auto* top = root.getTopLevelComponent();
+        const float s = juce::Desktop::getInstance().getGlobalScaleFactor() * (float) (top->getPeer() != nullptr ? top->getPeer()->getPlatformScaleFactor() : 1.0);
+        const auto img = top->createComponentSnapshot (top->getLocalBounds(), true, s);
+        juce::Image::BitmapData bd (img, juce::Image::BitmapData::readOnly);
+        const int want = juce::jmax (1, (int) std::floor (s + 0.001f));
+        const float colX = rightColumn ? (float) box.getRight() - 12.0f : (float) box.getX() + 6.0f;
+        const int px = juce::jlimit (0, img.getWidth() - 1, (int) std::floor (colX * s));
+        const int y0 = juce::jmax (0, (int) std::ceil (((float) box.getY() + 3.0f) * s));
+        const int y1 = juce::jmin (img.getHeight(), (int) std::floor (((float) box.getBottom() - 3.0f) * s));
+        auto isLine = [&] (int y) { const auto c = bd.getPixelColour (px, y); return c.getRed() < 250 || c.getGreen() < 250 || c.getBlue() < 250; };
+        juce::StringArray runs;
+        int count = 0;
+        bool ok = true;
+        for (int y = y0; y < y1;)
+        {
+            if (! isLine (y)) { ++y; continue; }
+            const int start = y;
+            while (y < y1 && isLine (y)) ++y;
+            ++count;
+            const auto c = bd.getPixelColour (px, start);
+            runs.add (juce::String ((float) start / s - (float) box.getY(), 1) + ":" + juce::String (y - start) + "px#" + c.toDisplayString (false));
+            ok = ok && (y - start) == want;
+        }
+        if (const auto dir = juce::SystemStats::getEnvironmentVariable ("MEON_MODALLINES_DIR", {}); dir.isNotEmpty())
+        {
+            // 상자 자리 그림 (확인용): <이름>-<배율>.png
+            const auto crop = img.getClippedImage ((box.toFloat() * s).getSmallestIntegerContainer().expanded (4).getIntersection (img.getBounds()));
+            juce::File f (juce::File (dir).getChildFile (name.retainCharacters ("abcdefghijklmnopqrstuvwxyz0123456789") + juce::String (std::abs (name.hashCode())) + "-" + juce::String (s, 2) + ".png"));
+            f.getParentDirectory().createDirectory();
+            juce::FileOutputStream out (f);
+            if (out.openedOk()) { out.setPosition (0); out.truncate(); juce::PNGImageFormat().writeImageToStream (crop, out); }
+        }
+        std::cerr << "UITEST INFO modallines " << name << " scale " << s << " box " << box.toString() << (rightColumn ? " right" : " left")
+                  << " lines (y:thickness) " << runs.joinIntoString (" ") << std::endl;
+        const bool countOk = wantLines < 0 ? count >= 1 : count == wantLines;   // -1: 창 내용에 따라 (1개 이상)
+        expect (ok && countOk, name + TXT (": 구분선 ") + (wantLines < 0 ? TXT ("1개 이상") : juce::String (wantLines) + TXT ("개")) + TXT (", 각 물리 ") + juce::String (want)
+                                          + TXT ("px (") + runs.joinIntoString (" ") + ")");
+    };
+    auto closeTop = [this, topDialog]
+    {
+        if (root.fail != nullptr) { root.fail.reset(); return; }
+        if (auto [d, box] = topDialog(); d != nullptr) d->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    };
+    auto check = [this, measure, closeTop] (const juce::String& name, std::function<void()> open, bool right, int lines)
+    {
+        add ([open] { open(); }, 700);   // 여는 애니메이션(240ms)이 끝난 뒤 잰다 (add 의 시간 = 이 단계 뒤 기다림)
+        add ([measure, name, right, lines] { measure (name, right, lines); }, 0);
+        add ([closeTop] { closeTop(); }, 600);
+    };
+    auto friendUser = [this]() -> std::optional<core::UserPublic>
+    {
+        const auto& fr = core.store().state().friends;
+        if (fr.empty()) return std::nullopt;
+        return fr.front().user;
+    };
+
+    closeToasts();
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("홈 (방 밖)"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
+    // 선 수: 머리말 아래 + 푸터 위 (+ 받은 요청이 있으면 본문 위). 푸터가 없는 창은 머리말 아래만
+    check (TXT ("친구 추가"), [this] { home().openAddFriend(); }, false, -1);
+    check (TXT ("새 합주실"), [this] { home().openCreateRoom(); }, false, 2);
+    check (TXT ("코드로 입장"), [this] { home().openJoinCode(); }, false, -1);
+    check (TXT ("방 필터"), [this] { home().openFilter(); }, false, 2);
+    check (TXT ("친구 프로필"), [this, friendUser] { if (auto u = friendUser()) home().openProfile (*u); }, false, -1);
+    if (root.onOpenSettings)
+    {
+        check (TXT ("설정 · 프로필"), [this] { root.onOpenSettings ((int) SettingsModal::Tab::profile); }, true, 1);
+        check (TXT ("설정 · 오디오"), [this] { root.onOpenSettings ((int) SettingsModal::Tab::audio); }, true, 1);
+    }
+    check (TXT ("입장 실패"), [this] { root.showJoinFailure (core::HomeController::JoinFailure::full); }, false, 1);
+    enterNewRoom();
+    // 배율(--global-scale)을 바꾸면 마우스 클릭 자리가 어긋나므로 버튼을 직접 누른다
+    check (TXT ("방 설정"), [this] { if (auto* j = jam(); j != nullptr && j->gear.onClick) j->gear.onClick(); }, false, -1);
+    check (TXT ("친구 프로필 (방 안)"), [this, friendUser] { if (auto u = friendUser(); u && jam() != nullptr) jam()->openProfile (*u); }, false, -1);
+    add ([this] { root.showPage (Sidebar::Page::rooms); }, 0);   // 방은 그대로 두고 공개 방으로 (최소화)
+    waitUntil (TXT ("최소화"), [this] { return inRoom() && root.isMinimized() && home().isShowing(); });
+    check (TXT ("나가고 만들기 확인"), [this] { home().openCreateRoom(); }, false, 2);
+    check (TXT ("나가고 들어가기 확인"), [this] { home().confirmLeaveThen (false, "r_modallines_other", [] {}); }, false, 2);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("방에서 나옴"), [this] { return ! inRoom(); });
 }
 
 } // namespace meon::ui

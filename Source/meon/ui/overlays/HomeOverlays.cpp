@@ -158,8 +158,7 @@ int LeaveConfirmModal::textHeight() const
 
 void LeaveConfirmModal::Body::paint (juce::Graphics& g)
 {
-    g.setColour (col::borderSubtle);
-    hairline::horizontal (g, *this, 0.0f, 0.0f, (float) getWidth());
+    // 머리말 아래 구분선은 공통 모달(Modal::paintDialog)이 긋는다. 여기서 또 그으면 본문 맨 윗줄(바로 아래 1px)에 한 줄이 더 붙어 2px 로 보였다
     juce::TextLayout t;
     t.createLayout (owner.text(), (float) (getWidth() - metric::padX * 2));
     t.draw (g, juce::Rectangle<float> ((float) metric::padX, 18.0f, (float) (getWidth() - metric::padX * 2), (float) owner.textHeight()));
@@ -466,7 +465,7 @@ void JoinFailDialog::paint (juce::Graphics& g)
     g.setColour (col::white);
     g.fillRoundedRectangle (r, metric::radius);
     g.setColour (col::borderSubtle);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    hairline::roundedBorder (g, *this, r, metric::radius);   // 물리 픽셀에 맞춘 1px (125·150% 에서 두 픽셀에 번지지 않게)
     g.setColour (col::ink);
     g.setFont (font (600, 15.0f));
     g.drawText (title, metric::padX, 0, getWidth() - 36 - 30, 48, juce::Justification::centredLeft, true);

@@ -49,11 +49,18 @@ struct Probe
     std::string hitToggle, hitEmpty, hitClose;   // 그 점을 누르면 받는 곳: content(앱 화면) | button(신호등) | 그 밖 클래스 이름
     int forwarded = 0;            // 제목 줄이 가로챈 누름을 앱 화면으로 넘긴 횟수
     int titleBarPresses = 0;      // titleBarMouseDown 이 불린 횟수
+    int edgePasses = 0;           // 위 가장자리(창 틀 뷰가 받는 크기 조절 자리) 누름을 macOS 에 맡긴 횟수
+    bool zoomed = false;          // 확대(zoom) 상태
+    std::string hitEdges;         // 위 가장자리(위에서 0.5~8pt)·위 모서리·옆 끝(윗줄 안)을 누르면 받는 곳
     std::string os;
 };
 Probe probe (void* nsView, int toggleX, int toggleY, int emptyX, int emptyY);
 /** 개발용: 창의 (x, y) 를 마우스로 누른 것처럼 AppKit 이벤트 줄에 넣는다 (누름·뗌. clickCount 2 = 더블클릭의 두 번째) */
 void devPostClick (void* nsView, int x, int y, int clickCount);
+/** 개발용: (x, y) 에서 눌러 (dx, dy) 만큼 끌고 뗀 것처럼 AppKit 이벤트 줄에 넣는다 (창 왼쪽 위 기준 pt) */
+void devPostDrag (void* nsView, int x, int y, int dx, int dy);
+/** 개발용: 창 틀 (AppKit 화면 좌표: x, 아래 y, 폭, 높이) */
+void devWindowFrame (void* nsView, double out[4]);
 /** 개발용: 앱을 비활성(다른 앱으로 간 것처럼)·활성으로 */
 void devSetActive (bool);
 
