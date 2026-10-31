@@ -364,7 +364,8 @@ bool devCornerPoint (void* nsView, bool right, int& x, int& y)
     if (w == nil) return false;
     NSView* frameView = [[w contentView] superview];
     const CGFloat W = NSWidth ([w frame]), H = NSHeight ([w frame]);
-    auto isFrame = [&] (int px, int py) { return hitAt (w, NSMakePoint ((CGFloat) px + 0.5, H - (CGFloat) py - 0.5)) == frameView; };
+    // devPostDrag 이 누르는 자리와 같은 좌표로 본다 (반 점 차이로 경계 밖이 될 수 있다)
+    auto isFrame = [&] (int px, int py) { return hitAt (w, NSMakePoint ((CGFloat) px, H - (CGFloat) py)) == frameView; };
     for (int d = 0; d < 40; ++d)
     {
         const int px = right ? (int) W - 1 - d : d;

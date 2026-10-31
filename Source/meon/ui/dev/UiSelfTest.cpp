@@ -1618,8 +1618,10 @@ void UiSelfTest::addChromeTests()
         {
             expect (drags == 0, name + TXT (": 앱이 창을 끌지 않음 (끌기 ") + juce::String (drags) + TXT ("번)"));
             expect (passes > 0, name + TXT (": 크기 조절 자리 누름을 macOS 에 맡김 (") + juce::String (passes) + TXT ("번)"));
-            if (std::abs (f[3] - sh->frame[3]) >= 1.0)
-                expect (std::abs (f[1] - sh->frame[1]) < 1.0, name + TXT (": 높이가 바뀌고 아래 끝은 그대로"));
+            // 아래·안쪽으로 끈다: 높이가 줄고 아래 끝(AppKit y)은 그대로면 크기 조절 (옮겨졌으면 아래 끝도 움직인다)
+            if (std::abs (f[3] - sh->frame[3]) >= 1.0 || std::abs (f[2] - sh->frame[2]) >= 1.0)
+                expect (std::abs (f[1] - sh->frame[1]) < 1.0 && f[3] < sh->frame[3],
+                        name + TXT (": 크기가 바뀜 (높이 ") + juce::String (sh->frame[3], 0) + " → " + juce::String (f[3], 0) + TXT (", 아래 끝 그대로)"));
             else
                 std::cerr << "UITEST INFO chrome " << name << ": 합성 이벤트로는 크기가 바뀌지 않음 (macOS 가 실제 마우스로 크기 조절을 따라가는 경우). 앱이 가로채지 않은 것만 확인" << std::endl;
         }
@@ -1630,7 +1632,7 @@ void UiSelfTest::addChromeTests()
         if (peer()->getBounds() != sh->edgeBounds) peer()->setBounds (sh->edgeBounds, false);   // 다음 확인을 위해 원래 자리로
     };
     add ([this, probeNow] { std::cerr << "UITEST INFO chrome 위 가장자리 누름 자리: " << probeNow().hitEdges << std::endl; }, 0);
-    add ([edgeDrag, emptyPoint] { edgeDrag (emptyPoint().x, 1, 0, -40); }, 0);
+    add ([edgeDrag, emptyPoint] { edgeDrag (emptyPoint().x, 1, 0, 40); }, 0);   // 아래로 (위로 끌면 메뉴 막대에 막힌다)
     add ([edgeResult] { edgeResult (TXT ("위 가장자리 끌기"), true); }, 1200);
     // 모서리: 둥근 모서리 바깥(창이 아닌 곳)이 아니라, 모서리에서 가장 가까운 macOS 크기 조절 자리 (창 틀 뷰가 받는 점)를 누른다
     for (const bool right : { false, true })
@@ -1642,7 +1644,7 @@ void UiSelfTest::addChromeTests()
             *found = meon::chrome::devCornerPoint (handle(), right, x, y);
             std::cerr << "UITEST INFO chrome " << (right ? "오른쪽" : "왼쪽") << " 위 모서리 크기 조절 자리: "
                       << (*found ? juce::String (x) + "," + juce::String (y) : juce::String ("없음")) << std::endl;
-            if (*found) edgeDrag (x, y, right ? 30 : -30, -30);
+            if (*found) edgeDrag (x, y, right ? -30 : 30, 30);   // 안쪽 아래로
         }, 400);
         add ([this, edgeResult, right, found]
         {
