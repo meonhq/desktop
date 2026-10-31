@@ -52,6 +52,7 @@ public:
     explicit MeterBox (const juce::String& tooltip = {}) { addAndMakeVisible (meter); meter.setTooltip (tooltip); }
     void paint (juce::Graphics& g) override
     {
+        ++devPaints;
         auto r = getLocalBounds().toFloat();
         g.setColour (col::softBg);
         g.fillRoundedRectangle (r, metric::smallRadius);
@@ -60,6 +61,7 @@ public:
     }
     void resized() override { meter.setBounds (getLocalBounds().reduced (9, 0).withSizeKeepingCentre (getWidth() - 18, 7)); }
     Meter meter;
+    static inline int devPaints = 0;   // 개발용 (다시 그리기 확인)
 };
 
 } // namespace meon::ui

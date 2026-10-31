@@ -5,6 +5,9 @@
 #include "overlays/JamOverlays.h"
 #include "../core/model/PanelWidth.h"
 #include "../MeonWindowChrome.h"
+#include "../MeonReduceMotion.h"
+#include "../shell/ShellHooks.h"
+#include "../core/util/Fold.h"
 
 namespace meon::ui
 {
@@ -47,6 +50,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     // 겹침은 한 번에 하나 (홈·방 화면 사이에도): 한 화면이 모달·팝오버를 띄우면 다른 화면의 팝오버는 닫힌다 (모달이 떠 있으면 덮개가 막아 다른 화면은 띄우지 못한다)
     home->hostOverlay = [this] (juce::Component& c, bool full) { if (auto* j = getJamScreen()) j->closeOverlays(); hostOverlay (c, full); };
     home->onOverlayClosed = [this] { focusScreen(); };
+    home->onDockSlotChanged = [this] { layoutDock(); };
     home->onOpenProfileFromList = [this] (const core::UserPublic& u)
     {
         // 알림 목록 줄 안에서 불리므로 다음 메시지에서 (목록을 닫는다)
@@ -80,6 +84,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
 AppRoot::~AppRoot()
 {
     tearingDown = true;
+    getProperties().set (ModalBase::noCloseAnimationProperty, true);   // 끄는 중: 닫히는 모달 그림을 남기지 않는다
     if (home != nullptr) home->onOverlayChanged = nullptr;
     if (auto* screen = getJamScreen()) screen->onOverlayChanged = nullptr;
     core.store().removeListener (this);
@@ -91,6 +96,10 @@ AppRoot::~AppRoot()
     profileMenu.reset();
     toasts.clear();
     fail.reset();
+    dockTimer.stopTimer();
+    dockVBlank.reset();
+    if (auto* screen = getJamScreen()) screen->setDock (nullptr);
+    dock.reset();
     jam.reset();
     home.reset();
 }
@@ -179,6 +188,7 @@ bool AppRoot::hasWindowModal() const
 void AppRoot::restack()
 {
     if (toggle != nullptr) toggle->toFront (false);
+    if (dock != nullptr) { dock->toFront (false); dock->raiseMeters(); }   // 화면 위, 모달 층 아래
     for (auto& h : hosted) if (h.c != nullptr) h.c->toFront (false);
     raiseTopLayers();
 }
@@ -230,6 +240,9 @@ void AppRoot::setMinimized (bool b)
 
 void AppRoot::applyScreen()
 {
+    // 카드 묶음이 지금 있는 자리·그림자에서 새 화면 자리로 잇는다 (같은 카드를 옮긴다)
+    const auto flipFrom = dock != nullptr && dock->isVisible() ? dock->getCardsBounds() : juce::Rectangle<int>();
+    const float flipShadow = dock != nullptr ? dock->getShadow() : 0.0f;
     // 화면만 바꾼다. 방 연결·오디오·채팅·세션 로그는 JamSession 이 그대로 이어 간다.
     // 셀프 모니터는 방 안이면 prefs.selfMonitor 만 본다 (JamSession::isSelfMonitorAudible). HomeController 의
     // setHomeVisible 은 공개 방 구독·새로 고침만 하므로 최소화해도 내 소리는 그대로다
@@ -255,6 +268,78 @@ void AppRoot::applyScreen()
     syncSidebar();
     resized();
     restack();
+    startDockFlip (flipFrom, flipShadow);
+}
+
+//==============================================================================
+juce::Rectangle<int> AppRoot::dockTarget (float& shadow)
+{
+    // 방 화면: 방 화면이 비워 둔 자리 (그림자 없음) / 공개 방(방 최소화): 목록 영역 안 왼쪽·오른쪽·아래 18 (팝오버 그림자)
+    shadow = 0.0f;
+    if (dock == nullptr) return {};
+    if (! minimized)
+    {
+        if (auto* screen = getJamScreen(); screen != nullptr && screen->isVisible())
+            return screen->dockSlot().isEmpty() ? juce::Rectangle<int>() : screen->dockSlot() + screen->getPosition();
+        return {};
+    }
+    shadow = 1.0f;
+    if (home->isVisible() && ! home->dockSlot().isEmpty()) return home->dockSlot() + home->getPosition();
+    return {};
+}
+
+void AppRoot::startDockFlip (juce::Rectangle<int> fromCards, float fromShadow)
+{
+    float toShadow = 0.0f;
+    const auto to = dockTarget (toShadow);
+    if (dock == nullptr || fromCards.isEmpty() || to.isEmpty() || (fromCards == to && fromShadow == toShadow) || systemPrefersReducedMotion())
+    {
+        layoutDock();
+        return;
+    }
+    dockFlip = { true, juce::Time::getMillisecondCounterHiRes(), fromCards.toFloat(), fromShadow };
+    if (dockVBlank == nullptr) dockVBlank = std::make_unique<juce::VBlankAttachment> (this, [this] { if (dockFlip.active) layoutDock(); });
+    dockTimer.tick = [this] { if (dockFlip.active) layoutDock(); };
+    dockTimer.startTimerHz (60);   // VBlank 가 없을 때도 끝나게 (진행은 경과 시간)
+    layoutDock();
+}
+
+void AppRoot::layoutDock()
+{
+    if (dock == nullptr) return;
+    float shadow = 0.0f;
+    const auto target = dockTarget (shadow);
+    if (target.isEmpty())
+    {
+        dockFlip.active = false;
+        dockTimer.stopTimer();
+        dock->setVisible (false);
+        return;
+    }
+    auto rect = target.toFloat();
+    if (dockFlip.active)
+    {
+        const double t = (juce::Time::getMillisecondCounterHiRes() - dockFlip.startMs) / motion::dockFlipMs;
+        if (t >= 1.0)
+        {
+            dockFlip.active = false;   // 끝: 각 화면의 원래 자리 그대로 (여백 18 포함)
+            dockTimer.stopTimer();
+        }
+        else
+        {
+            static const core::CubicBezier ease (motion::foldEase[0], motion::foldEase[1], motion::foldEase[2], motion::foldEase[3]);
+            const float e = (float) ease (t);
+            const auto& f = dockFlip.from;
+            auto lerp = [e] (float a, float b) { return a + (b - a) * e; };
+            rect = juce::Rectangle<float>::leftTopRightBottom (lerp (f.getX(), rect.getX()), lerp (f.getY(), rect.getY()),
+                                                               lerp (f.getRight(), rect.getRight()), lerp (f.getBottom(), rect.getBottom()));
+            shadow = lerp (dockFlip.fromShadow, shadow);
+        }
+    }
+    dock->setCardsBounds (juce::Rectangle<int>::leftTopRightBottom (juce::roundToInt (rect.getX()), juce::roundToInt (rect.getY()),
+                                                                    juce::roundToInt (rect.getRight()), juce::roundToInt (rect.getBottom())));
+    dock->setShadow (shadow);
+    dock->setVisible (true);
 }
 
 //==============================================================================
@@ -316,8 +401,18 @@ void AppRoot::updateScreen()
             screen->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
             screen->onOverlayChanged = [this] { syncToggle(); };
             screen->hostOverlay = [this] (juce::Component& c, bool full) { home->closeOverlays(); hostOverlay (c, full); };
+            screen->onDockSlotChanged = [this] { layoutDock(); };
             jam = std::move (screen);
             addAndMakeVisible (*jam);
+            // 내 오디오·모니터 카드 묶음: 방 화면·공개 방이 같이 쓰는 하나 (방 화면 위, 미터 상자는 그 바로 위 형제)
+            dock = std::make_unique<AudioDock> (core, *core.jam());
+            dock->setVisible (false);
+            addChildComponent (*dock);
+            getJamScreen()->setDock (dock.get());
+            home->setDockHeight (dock->getCardsHeight());
+           #if MEON_DEV_OPTIONS
+            if (meon::devOptions().containsKey ("dock-drive")) dock->devDriveMeters (true);   // 개발용: 소리 없이 미터를 움직인다 (다시 그리기 확인)
+           #endif
             toggle->toFront (false);   // 접기 버튼은 방 화면 위 (모달 층·토스트는 applyScreen 의 restack 이 다시 앞으로)
             minimized = false;   // 새로 들어간 방은 합주 화면부터
         }
@@ -335,6 +430,10 @@ void AppRoot::updateScreen()
         // 최소화 중에 내보내지거나 방이 닫혀도 여기로 온다: 막대가 사라지고 보통 홈 + 알림 토스트
         minimized = false;
         home->setRoomBar (false);
+        dockFlip.active = false;
+        if (auto* screen = getJamScreen()) screen->setDock (nullptr);
+        dock.reset();
+        home->setDockHeight (0);   // 방 밖: 카드도 늘린 여백도 없다
         jam.reset();
         shownRoomId = {};
         home->setVisible (true);
@@ -652,6 +751,7 @@ void AppRoot::resized()
         fail->setBounds (juce::Rectangle<int> (380, fail->getPreferredHeight()).withCentre (getLocalBounds().getCentre()));
     syncToggle();
     layoutToasts();
+    layoutDock();
 }
 
 } // namespace meon::ui

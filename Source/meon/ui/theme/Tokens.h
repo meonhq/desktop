@@ -75,6 +75,13 @@ namespace motion
 {
     constexpr int foldDurationMs = 180;
     constexpr double foldEase[4] = { 0.2, 0.0, 0.0, 1.0 };   // cubic-bezier(0.2, 0, 0, 1)
+    // 모달 (디자인 v2.1 mEl): 열기 덮개 200ms ease-out · 상자 240ms foldEase (8px 아래·98%·투명 → 제자리), 닫기 상자 160ms foldEase (→ 4px 아래·98%·투명) · 덮개 180ms ease-in
+    constexpr double modalOpenDimMs = 200.0, modalOpenBoxMs = 240.0, modalCloseBoxMs = 160.0, modalCloseDimMs = 180.0;
+    constexpr float modalOpenDy = 8.0f, modalCloseDy = 4.0f, modalScale = 0.98f;
+    constexpr double easeOut[4] = { 0.0, 0.0, 0.58, 1.0 };   // CSS ease-out
+    constexpr double easeIn[4] = { 0.42, 0.0, 1.0, 1.0 };    // CSS ease-in
+    // 방 화면 ↔ 공개 방: 내 오디오·모니터 카드 묶음 (디자인 v2.1 barFlip) 320ms foldEase, 그림자 0 ↔ 팝오버 그림자
+    constexpr double dockFlipMs = 320.0;
 }
 
 namespace metric

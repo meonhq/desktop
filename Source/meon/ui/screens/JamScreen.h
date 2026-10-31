@@ -16,6 +16,7 @@
 #include "../../core/MeonCore.h"
 #include "../overlays/JamOverlays.h"
 #include "../overlays/HomeOverlays.h"
+#include "../shell/AudioDock.h"
 
 namespace meon::ui
 {
@@ -37,6 +38,7 @@ public:
     std::function<void (const core::ApiError&)> onJoinFailure;
 
     void paint (juce::Graphics&) override;
+    static int devPaints;   // 개발용 (다시 그리기 확인)
     bool keyPressed (const juce::KeyPress&) override;
     /** 단축키 (설정 › 단축키, REMAKE_PLAN 4.4): M 송출, N 모니터, ⌘↑/⌘↓ 마스터 ±1 dB, Enter 채팅 입력, Esc 겹침 닫기 */
     bool handleShortcut (const juce::KeyPress&);
@@ -93,6 +95,11 @@ public:
     }
     /** 제목 줄 오른쪽 여백 (디자인 hdPR: 보통 18, 윈도우 독립 앱은 창 버튼 + 12 = 150) */
     void setHeaderRightInset (int);
+    /** 내 오디오·모니터 카드 묶음 (AppRoot 가 갖는다. 단축키·개발용 접기를 넘긴다) */
+    void setDock (AudioDock*);
+    /** 카드 묶음 자리 (이 화면 좌표: 멤버 아래 왼쪽 열, 오른쪽 채팅 영역 제외) */
+    juce::Rectangle<int> dockSlot() const { return dockSlotRect; }
+    std::function<void()> onDockSlotChanged;
     void mouseDown (const juce::MouseEvent&) override;
     void childrenChanged() override { if (onOverlayChanged) onOverlayChanged(); }
 
@@ -121,7 +128,7 @@ private:
     std::unique_ptr<TipOnHover> settingsTip, lobbyTip;
 
     // 겹침 (방 설정·멤버 관리·프로필, 입장 요청 팝오버)
-    std::unique_ptr<Modal> modal;
+    ModalSlot<Modal> modal;   // 지우면 닫히는 애니메이션 (ModalBase)
     std::unique_ptr<Popover> popover;
     std::unique_ptr<JoinRequestList> requestList;
     std::unique_ptr<NotificationList> notifications;
@@ -142,12 +149,9 @@ private:
     std::unique_ptr<MemberList> memberList;
     juce::Viewport memberViewport;
 
-    // 내 오디오 · 모니터
-    Card sendCard, monCard;
-    Button sendMute { Button::Kind::small, TXT ("송출 정지") }, monMute { Button::Kind::small, TXT ("전체 음소거") };
-    DbSlider sendGain { -30.0f, 10.0f }, master { -30.0f, 6.0f };
-    MeterBox inputMeter { TXT ("입력 미터") }, outputMeter { TXT ("출력 미터") };
-    bool sendOpen = true, monOpen = true;
+    // 내 오디오 · 모니터: 카드 묶음은 AppRoot 가 갖고(공개 방과 같이 쓴다) 이 화면은 자리만 비워 둔다
+    AudioDock* dock = nullptr;
+    juce::Rectangle<int> dockSlotRect;
 
     // 오른쪽 패널 너비 조절 (멤버·패널 사이 18 전체, 끌기·더블클릭하면 기본)
     struct SideResizer;
@@ -203,13 +207,12 @@ private:
     void toggleFold (int panel, bool open);
     void layoutChatContent (int cardW, int cardH);
     void layoutFriendsContent (int cardW, int cardH);
-    int sideAvail = 0, bottomAvail = 0;   // 지난 resized 의 묶음 안 크기 (간격 뺀 값)
-    int foldChatH = 0, foldFriendsH = 0, foldSendW = 0, foldMonW = 0;
-    bool foldFillV = true, foldFillH = true;   // 이번 움직임의 시작·끝이 모두 묶음을 채우는지 (FoldLayout::blend)
+    int sideAvail = 0;   // 지난 resized 의 묶음 안 크기 (간격 뺀 값)
+    int foldChatH = 0, foldFriendsH = 0;
+    bool foldFillV = true;   // 이번 움직임의 시작·끝이 모두 묶음을 채우는지 (FoldLayout::blend)
     juce::Point<int> laidChat, laidFriends;   // 움직이는 동안 배치해 둔 크기 (같으면 다시 배치하지 않는다)
     FoldAnimator fold { *this, [this] { resized(); } };
-    const int foldChat = fold.add ("chat", true), foldFriends = fold.add ("friends", true),
-              foldSend = fold.add ("send", true), foldMon = fold.add ("mon", true);
+    const int foldChat = fold.add ("chat", true), foldFriends = fold.add ("friends", true);   // 내 오디오·모니터는 AudioDock
 };
 
 } // namespace meon::ui

@@ -9,6 +9,7 @@
  #endif
 #endif
 #include "MeonReduceMotion.h"
+#include <cstdlib>
 
 #if ! defined (__APPLE__)
 
@@ -17,6 +18,9 @@ namespace meon
 
 bool systemPrefersReducedMotion()
 {
+   #if MEON_DEV_OPTIONS
+    if (const char* v = std::getenv ("MEON_REDUCE_MOTION"); v != nullptr && v[0] == '1') return true;
+   #endif
    #if defined (_WIN32)
     BOOL animate = TRUE;
     if (SystemParametersInfoW (SPI_GETCLIENTAREAANIMATION, 0, &animate, 0))

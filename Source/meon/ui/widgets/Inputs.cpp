@@ -1,4 +1,5 @@
 #include "Inputs.h"
+#include "ModalBase.h"
 #include "../theme/Icons.h"
 #include "../../core/model/Validation.h"
 
@@ -258,7 +259,13 @@ void TextInput::textEditorTextChanged (juce::TextEditor&)
 }
 
 void TextInput::textEditorReturnKeyPressed (juce::TextEditor&) { if (onReturn) onReturn(); }
-void TextInput::textEditorEscapeKeyPressed (juce::TextEditor&) { if (onEscape) onEscape(); }
+void TextInput::textEditorEscapeKeyPressed (juce::TextEditor&)
+{
+    if (onEscape) { onEscape(); return; }
+    // 모달 안에서 글자를 넣는 중에도 Esc 는 모달을 닫는다 (입력 칸이 Esc 를 먹어 모달까지 가지 않으므로 넘겨 준다)
+    if (auto* m = findParentComponentOfClass<ModalBase>())
+        m->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+}
 void TextInput::textEditorFocusLost (juce::TextEditor&) { if (onFocusLost) onFocusLost(); }
 
 //==============================================================================

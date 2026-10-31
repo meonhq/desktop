@@ -6,6 +6,7 @@
 #include "shell/Sidebar.h"
 #include "shell/WindowChromeView.h"
 #include "overlays/HomeOverlays.h"
+#include "shell/AudioDock.h"
 #include "../core/MeonCore.h"
 
 namespace meon::ui
@@ -25,6 +26,8 @@ public:
     std::function<void (int tab)> onOpenSettings;
 
     HomeScreen* getHome() { return home.get(); }
+    /** 방 안이면 내 오디오·모니터 카드 묶음 (방 화면·공개 방이 같이 쓴다) */
+    AudioDock* getAudioDock() { return dock.get(); }
     Sidebar* getSidebar() { return sidebar.get(); }   // 개발용 미리 보기
     /** 방 안이면 합주 화면 (개발용 미리 보기) */
     JamScreen* getJamScreen();
@@ -95,6 +98,15 @@ private:
     juce::StringArray seenJoinRequests;   // 알림을 한 번 띄운 입장 요청
     juce::StringArray seenInvites;        // 알림을 한 번 띄운 초대 (10초 뒤 닫히면 다시 띄우지 않는다. 사이드바 카드는 남는다)
     bool minimized = false;   // 방 안이면서 홈을 보는 중 (방에 있는지는 store.currentRoom)
+    // 내 오디오·모니터 카드 묶음 (방 안). 방 화면이면 방 화면이 비워 둔 자리, 공개 방이면 목록 위 (그림자).
+    // 오갈 때 같은 카드를 옮기며 폭·그림자를 잇는다 (디자인 barFlip: 320ms cubic-bezier(0.2, 0, 0, 1))
+    std::unique_ptr<AudioDock> dock;
+    struct DockFlip { bool active = false; double startMs = 0.0; juce::Rectangle<float> from; float fromShadow = 0.0f; } dockFlip;
+    struct DockTicker : juce::Timer { std::function<void()> tick; void timerCallback() override { if (tick) tick(); } } dockTimer;
+    std::unique_ptr<juce::VBlankAttachment> dockVBlank;
+    juce::Rectangle<int> dockTarget (float& shadow);
+    void layoutDock();
+    void startDockFlip (juce::Rectangle<int> fromCards, float fromShadow);
     struct Hosted { juce::Component::SafePointer<juce::Component> c; bool full = false; };
     std::vector<Hosted> hosted;   // 모달 층 (띄운 순서, 아래 → 위)
     bool tearingDown = false;

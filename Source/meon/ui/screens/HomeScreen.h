@@ -55,6 +55,9 @@ public:
     Button* devRoomBarLeave() const;
     int devRoomBarUnread() const;
     std::vector<std::pair<core::Room, juce::Button*>> devRoomCards() const;
+    /** 개발용: 공개 방 목록(뷰포트 안 내용)과 방 카드들 */
+    juce::Component* devRoomList() const;
+    std::vector<juce::Component*> devRoomCardComps() const;
     void openFilter();
     void toggleNotifications();
     void openProfile (const core::UserPublic&);
@@ -100,10 +103,18 @@ public:
     /** 알림 목록의 초대 "입장" (AppRoot::acceptInvite: 실패하면 토스트·입장 실패 상자) */
     std::function<void (const juce::String& inviteId)> onAcceptInvite;
     bool isShell() const { return shell; }
+    /** 방에 있으면 공개 방 목록 위에 뜨는 내 오디오·모니터 카드 높이 (AppRoot 가 카드를 재서 준다. 0 = 방 밖: 카드도 늘린 여백도 없다).
+        목록 아래 안쪽 여백 = 카드 높이 + 위아래 18 (끝까지 내리면 마지막 방이 카드 위로 다 올라온다) */
+    void setDockHeight (int);
+    /** 카드 자리 (이 화면 좌표): 목록 영역 안 왼쪽·오른쪽·아래 18. 공개 방 쪽이 아니면 빈 사각형 */
+    juce::Rectangle<int> dockSlot() const { return dockSlotRect; }
+    std::function<void()> onDockSlotChanged;
     /** 친구 추가 (사이드바의 +) */
     void openAddFriend();
 
     static constexpr int sideWidthApp = 320, sideWidthPlugin = 240;
+    /** 개발용 (다시 그리기 확인): 이 화면·방 카드 paint 횟수 */
+    static int devPaints, devRoomCardPaints;
 
 private:
     friend class UiSelfTest;   // 개발용 화면 자가 테스트 (--uitest)
@@ -146,6 +157,8 @@ private:
     juce::Viewport roomViewport;
     Masonry masonry;
     bool roomsShownOnce = false;   // 처음 목록은 애니메이션 없이
+    int dockH = 0;
+    juce::Rectangle<int> dockSlotRect;
     core::RoomFilter filter;
 
     // 내 오디오
@@ -177,7 +190,7 @@ private:
     void sendFriendRequest();
 
     // 겹침
-    std::unique_ptr<Modal> modal;
+    ModalSlot<Modal> modal;   // 지우면 닫히는 애니메이션 (ModalBase)
     std::unique_ptr<Popover> popover;
     std::unique_ptr<NotificationList> notifications;
     void showModal (std::unique_ptr<Modal>);
@@ -188,7 +201,7 @@ private:
     // 방 최소화
     struct RoomBar;
     std::unique_ptr<RoomBar> roomBar;
-    std::unique_ptr<Modal> confirm;   // 최소화 중 나가기 확인 (프로필·코드로 입장 모달 위에 뜬다)
+    ModalSlot<Modal> confirm;   // 최소화 중 나가기 확인 (프로필·코드로 입장 모달 위에 뜬다)
     /** 방에 없으면 바로 proceed. roomId 가 지금 방이면 합주 화면으로 돌아간다. 아니면 확인 모달 → 나간 뒤 proceed */
     void confirmLeaveThen (bool create, const juce::String& roomId, std::function<void()> proceed);
     LeaveGuard leaveGuard();

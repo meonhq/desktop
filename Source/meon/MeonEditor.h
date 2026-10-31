@@ -86,8 +86,7 @@ private:
     std::unique_ptr<ui::WindowChromeView> chromeView;
     juce::TooltipWindow tooltipWindow { this, 500 };
 
-    std::unique_ptr<juce::Component> settingsOverlay;
-    std::unique_ptr<juce::Component> settingsFadingOut;
+    ui::ModalSlot<ui::SettingsModal> settingsOverlay;   // 열고 닫는 애니메이션은 공통 모달 래퍼 (ModalBase)
     std::unique_ptr<juce::Component> devScreen;   // 개발용 화면 (--screen=widgets)
 
     core::MeonCore& core;

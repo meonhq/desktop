@@ -177,6 +177,7 @@ void MeonEditor::stateChanged (core::StateKey k)
 
 MeonEditor::~MeonEditor()
 {
+    getProperties().set (ui::ModalBase::noCloseAnimationProperty, true);   // 끄는 중: 닫히는 모달 그림을 남기지 않는다
     stopTimer();
     if (chromeInstalled) chrome::detach();   // 창 모양은 그대로 (앱을 끄는 중). 창 크기는 창이 먼저 저장했다
     if (winFrameInstalled) winframe::detach();   // 창 프로시저를 원래대로 (창은 곧 닫힌다)
@@ -185,7 +186,6 @@ MeonEditor::~MeonEditor()
     appRoot.reset();
     onboarding.reset();
     settingsOverlay = nullptr;
-    settingsFadingOut = nullptr;
     updater = nullptr;
     settings = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -208,8 +208,7 @@ void MeonEditor::openSettings (int tab)
     settingsOverlay = std::move (modal);
     settingsOverlay->setBounds (contentBounds());
     addAndMakeVisible (*settingsOverlay);
-    settingsOverlay->toFront (false);
-    fader.fade (settingsOverlay.get(), 0.0f, 1.0f, metric::fadeMs);
+    settingsOverlay->toFront (false);   // 열기 애니메이션은 모달 래퍼가 (화면에 붙는 순간)
     grabKeyboardFocus();
 }
 
@@ -256,14 +255,7 @@ void MeonEditor::closeSettings()
 {
     if (settingsOverlay == nullptr)
         return;
-    if (settingsFadingOut != nullptr)
-    {
-        fader.cancel (settingsFadingOut.get());
-        settingsFadingOut = nullptr;
-    }
-    settingsFadingOut = std::move (settingsOverlay);
-    juce::Component::SafePointer<MeonEditor> safe (this);
-    fader.fade (settingsFadingOut.get(), 1.0f, 0.0f, metric::fadeMs, [safe] { if (safe != nullptr) safe->settingsFadingOut = nullptr; });
+    settingsOverlay = nullptr;   // 닫는 애니메이션은 모달 래퍼가 (지우기 직전 모습을 남긴다)
     saveAll();
     grabKeyboardFocus();
 }
@@ -368,7 +360,6 @@ void MeonEditor::updateOnboarding()
     {
         appRoot.reset();   // 로그아웃 등
         settingsOverlay = nullptr;
-        settingsFadingOut = nullptr;
         if (onboarding == nullptr)
         {
             onboarding = std::make_unique<ui::OnboardingScreen> (core, settingsUpdateHooks());
@@ -479,7 +470,7 @@ void MeonEditor::applyHomePreview()
         appRoot->devForceChrome (ch == "mac" ? ui::Sidebar::Chrome::macWindow : ui::Sidebar::Chrome::flat);
     // --sidebar=collapsed: 다른 미리 보기와 같이 사이드바를 접은 채로 (홈·사이드바 디자인 v2.1 접힌 상태 확인)
     if (meon::devOptions()["sidebar"] == "collapsed")
-        appRoot->getSidebar()->previewFold (false, 0.0f);
+        appRoot->getSidebar()->setCollapsed (true);   // 실제로 접는다 (멈춘 미리 보기는 프레임마다 다시 그려 다시 그리기 확인을 흐린다)
     auto* home = appRoot->getHome();
     const auto p = devHomePreview;
     if (p == "uitest")
@@ -1111,8 +1102,6 @@ void MeonEditor::resized()
 {
     if (settingsOverlay != nullptr)
         settingsOverlay->setBounds (contentBounds());
-    if (settingsFadingOut != nullptr)
-        settingsFadingOut->setBounds (contentBounds());
     if (devScreen != nullptr)
         devScreen->setBounds (contentBounds());
     if (appRoot != nullptr)

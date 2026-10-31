@@ -11,6 +11,8 @@
 #include "../../MeonWindowFrame.h"
 #include "../shell/WindowChromeView.h"
 #include "../overlays/SettingsModal.h"
+#include "../../MeonReduceMotion.h"
+#include "RepaintProbe.h"
 
 namespace meon::ui
 {
@@ -38,6 +40,9 @@ void UiSelfTest::start()
     if (want ("popover"))  addPopoverTests();
     if (want ("winchrome")) addWinChromeTests();
     if (want ("overlay"))  addOverlayTests();
+    if (want ("dock"))     addDockTests();
+    if (want ("modalanim")) addModalAnimTests();
+    if (which == "reducedmotion") addReducedMotionTests();   // MEON_REDUCE_MOTION=1 로 돌린다 (all 에 없음)
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -214,6 +219,32 @@ juce::Button* UiSelfTest::findButton (juce::Component& c, const juce::String& te
     return nullptr;
 }
 
+juce::String UiSelfTest::dockOverlaps() const
+{
+    // 카드 묶음: 카드 안 버튼·슬라이더와 (형제인) 미터 상자가 겹치지 않고 카드 안에 있는지
+    juce::String bad;
+    auto* d = root.dock.get();
+    if (d == nullptr) return TXT ("카드 묶음 없음");
+    auto one = [&] (Card& card, juce::Component& meter, const juce::String& name)
+    {
+        juce::Array<juce::Rectangle<int>> rs;
+        juce::StringArray names;
+        for (auto* c : card.getChildren())
+            if (c->isVisible() && ! c->getBounds().isEmpty() && c->getY() > 40) { rs.add (c->getBounds()); names.add (c->getName()); }
+        const auto m = meter.getBounds() - d->getPosition() - card.getPosition();
+        if (meter.isVisible()) { rs.add (m); names.add ("meter"); }
+        for (int i = 0; i < rs.size(); ++i)
+        {
+            if (! card.getLocalBounds().contains (rs[i])) bad << name << " " << names[i] << TXT (" 카드 밖 ");
+            for (int k = i + 1; k < rs.size(); ++k)
+                if (rs[i].intersects (rs[k])) bad << name << " " << names[i] << "/" << names[k] << " ";
+        }
+    };
+    one (d->sendCard, d->inputMeter, TXT ("내 오디오"));
+    one (d->monCard, d->outputMeter, TXT ("모니터"));
+    return bad;
+}
+
 juce::Button* UiSelfTest::confirmButton (const juce::String& text) const
 {
     // 홈의 확인 모달 (모달 층: AppRoot 의 자식)
@@ -375,7 +406,7 @@ void UiSelfTest::addMinimizeTests()
     add ([this] { type (TXT ("draft 쓰는 중")); });
     add ([this]
     {
-        if (auto* b = firstButton (jam()->monCard)) click (*b);   // 모니터 패널 접기 (v2.1: 방 화면에 친구 패널 없음)
+        if (auto* b = firstButton (root.dock->monCard)) click (*b);   // 모니터 패널 접기 (v2.1: 방 화면에 친구 패널 없음)
     }, 700);
     add ([this] { jam()->chatViewport.setViewPosition (0, 120); });   // 채팅을 위로 올려 둔다 (맨 아래가 아니면 새 메시지를 따라가지 않는다)
     add ([this, state]
@@ -385,11 +416,11 @@ void UiSelfTest::addMinimizeTests()
         (*state)["room"] = roomId();
         (*state)["text"] = j->chatInput.getText();
         (*state)["scroll"] = j->chatViewport.getViewPositionY();
-        (*state)["monOpen"] = j->monOpen;
+        (*state)["monOpen"] = root.dock->monOpen;
         (*state)["phase"] = (int) session->getPhase();
         (*state)["msgs"] = (int) session->chat().getMessages().size();
         expect ((*state)["text"].toString() == TXT ("draft 쓰는 중"), TXT ("채팅 입력에 글을 써 둠"));
-        expect (! j->monOpen, TXT ("모니터 패널을 접어 둠"));
+        expect (! root.dock->monOpen, TXT ("모니터 패널을 접어 둠"));
         expect (! j->friendsCard.isVisible(), TXT ("방 화면에 친구 패널 없음 (v2.1)"));
         expect (! j->chatOpen || j->chatCard.getHeight() == j->sideAvail, TXT ("채팅이 반주 위까지 세로 전체 (") + juce::String (j->chatCard.getHeight()) + " / " + juce::String (j->sideAvail) + ")");
         // 셀프 모니터: 끈 채로, 입장 전 듣기는 켠 채로 (최소화한 홈에서 이것으로 바뀌면 안 된다)
@@ -439,7 +470,7 @@ void UiSelfTest::addMinimizeTests()
         expect (j->chatInput.getText() == (*state)["text"].toString(), TXT ("입력 중인 글 그대로"));
         expect (std::abs (j->chatViewport.getViewPositionY() - (int) (*state)["scroll"]) <= 1,
                 TXT ("채팅 스크롤 그대로 (") + (*state)["scroll"].toString() + " -> " + juce::String (j->chatViewport.getViewPositionY()) + ")");
-        expect (j->monOpen == (bool) (*state)["monOpen"], TXT ("접기 상태 그대로"));
+        expect (root.dock->monOpen == (bool) (*state)["monOpen"], TXT ("접기 상태 그대로"));
         expect ((int) session->chat().getMessages().size() == (int) (*state)["msgs"] + 2, TXT ("최소화 중 받은 채팅이 목록에"));
         expect (session->isSelfMonitorAudible(), TXT ("돌아와도 셀프 모니터 같음 (켬)"));
         session->setSelfMonitor (false);
@@ -642,7 +673,7 @@ void UiSelfTest::addResizeTests()
     // 끌어서 바꾼 너비는 지금 창의 최대에서 멈춘다 (플러그인 900: 240 ~ 280)
     auto widened = [this, plugin] (int w) { return core::panel::clampWidth (plugin, jam()->getWidth(), w); };
     // 멤버 행·내 오디오·모니터에서 볼륨이 60, 미터가 84 아래로 줄어든 곳 (없으면 빈 문자열)
-    auto tooSmall = [] (JamScreen& j)
+    auto tooSmall = [this] (JamScreen& j)
     {
         juce::String small;
         auto check = [&small] (juce::Component& c, const juce::String& where)
@@ -657,8 +688,14 @@ void UiSelfTest::addResizeTests()
         };
         if (auto* list = j.memberViewport.getViewedComponent())
             for (auto* row : list->getChildren()) check (*row, TXT ("멤버 행"));
-        check (j.sendCard, TXT ("내 오디오"));
-        check (j.monCard, TXT ("모니터"));
+        // 내 오디오·모니터: 카드 묶음 (미터 상자는 카드 묶음의 형제)
+        if (auto* d = root.dock.get())
+        {
+            check (d->sendCard, TXT ("내 오디오"));
+            check (d->monCard, TXT ("모니터"));
+            for (auto* m : std::initializer_list<juce::Component*> { &d->inputMeter, &d->outputMeter })
+                if (m->isVisible() && m->getWidth() < 84) small << TXT ("미터 ") << m->getWidth() << " ";
+        }
         return small;
     };
     add ([this, def]
@@ -704,7 +741,7 @@ void UiSelfTest::addResizeTests()
         juce::String bad;
         if (auto* list = j->memberViewport.getViewedComponent()) for (auto* row : list->getChildren()) bad << overlaps (*row);
         expect (bad.isEmpty(), TXT ("최대 너비: 멤버 행 겹침 없음 ") + bad);
-        bad = overlaps (j->sendCard) + overlaps (j->monCard);
+        bad = dockOverlaps();
         expect (bad.isEmpty(), TXT ("최대 너비: 내 오디오·모니터 겹침 없음 ") + bad);
         const auto small = tooSmall (*j);
         expect (small.isEmpty(), TXT ("최대 너비: 볼륨 60·미터 84 이상 ") + small);
@@ -2343,6 +2380,492 @@ void UiSelfTest::addOverlayTests()
         expect (home().modal == nullptr && ! root.hasWindowModal(), TXT ("방에 들어가면 코드로 입장 창은 닫힘"));
         expect (root.sidebar->devRow (TXT ("코드로 입장")).isEmpty(), TXT ("방에 들어가면 사이드바 코드로 입장 없음"));
     }, 300);
+}
+
+//==============================================================================
+// 내 오디오·모니터 카드 묶음 (AudioDock): 방 화면·공개 방이 같이 쓰는 하나. 공개 방에서는 목록 위에 떠 있고(그림자),
+// 틈·바깥은 뒤의 방 카드가 받는다. 목록 아래 여백 = 카드 높이 + 36. 미터만 다시 그린다. 오갈 때 폭·그림자가 이어진다 (320ms)
+void UiSelfTest::addDockTests()
+{
+    struct Shared
+    {
+        juce::Rectangle<int> roomCards, roomsCards, mid;
+        float midShadow = -1.0f;
+        int toasts = 0;
+        bool retry = false;
+        juce::uint32 countFrom = 0;
+        bool gapCard = false;
+        bool sendMuted = false;
+        int phase = 0;
+    };
+    auto sh = std::make_shared<Shared>();
+    auto dockRoomSlot = [this]() -> juce::Rectangle<int>
+    {
+        auto* j = jam();
+        return j != nullptr ? j->dockSlot() + j->getPosition() : juce::Rectangle<int>();
+    };
+    auto dockRoomsSlot = [this]() -> juce::Rectangle<int> { return home().dockSlot() + home().getPosition(); };
+    auto roomsView = [this] { return inRoom() && root.isMinimized() && home().isShowing(); };
+    auto listBottomPad = [this]() -> int
+    {
+        int maxBottom = 0;
+        for (auto* c : home().devRoomCardComps()) maxBottom = juce::jmax (maxBottom, c->getBottom());
+        return home().devRoomList()->getHeight() - maxBottom;
+    };
+    auto scrollable = [this] { return home().devRoomList()->getHeight() > home().roomViewport.getHeight(); };
+    auto checkRoomsLayout = [this, dockRoomsSlot, listBottomPad, scrollable] (const juce::String& where)
+    {
+        auto* d = root.dock.get();
+        expect (d != nullptr && d->isVisible(), where + TXT (": 카드 묶음 보임"));
+        if (d == nullptr) return;
+        const auto list = home().roomViewport.getBounds() + home().getPosition();
+        const auto cards = d->getCardsBounds();
+        expect (cards == dockRoomsSlot(), where + TXT (": 카드 자리 = 공개 방 자리 ") + cards.toString());
+        expect (cards.getX() == list.getX() + 18 && cards.getRight() == list.getRight() - 18 && cards.getBottom() == list.getBottom() - 18,
+                where + TXT (": 목록 영역 기준 왼쪽·오른쪽·아래 18 (") + cards.toString() + " / " + list.toString() + ")");
+        expect (cards.getHeight() == d->getCardsHeight(), where + TXT (": 높이 = 카드 높이"));
+        const auto s = d->sendCard.getBounds(), m = d->monCard.getBounds();
+        if (d->isSendOpen() && d->isMonOpen())
+            expect (std::abs (s.getWidth() - m.getWidth()) <= 1, where + TXT (": 두 카드 같은 폭 (") + juce::String (s.getWidth()) + " / " + juce::String (m.getWidth()) + ")");
+        expect (m.getX() - s.getRight() == 9, where + TXT (": 카드 사이 9"));
+        expect (d->getShadow() == 1.0f, where + TXT (": 팝오버 그림자"));
+        if (scrollable())
+            expect (listBottomPad() == d->getCardsHeight() + 36, where + TXT (": 목록 아래 여백 = 카드 높이 + 위아래 18 (") + juce::String (listBottomPad()) + ")");
+    };
+    auto checkRoomLayout = [this, dockRoomSlot] (const juce::String& where)
+    {
+        auto* d = root.dock.get();
+        auto* j = jam();
+        expect (d != nullptr && d->isVisible() && j != nullptr, where + TXT (": 방 화면 카드 묶음"));
+        if (d == nullptr || j == nullptr) return;
+        const auto cards = d->getCardsBounds();
+        expect (cards == dockRoomSlot(), where + TXT (": 카드 자리 = 방 화면 자리 ") + cards.toString());
+        expect (cards.getX() == j->getX() + 18 && cards.getBottom() == root.getHeight() - 18, where + TXT (": 왼쪽 18 · 아래 18"));
+        expect (cards.getRight() + 18 == j->getX() + j->chatCard.getX(), where + TXT (": 오른쪽 = 채팅 영역 왼쪽 - 18"));
+        expect (d->getShadow() == 0.0f, where + TXT (": 그림자 없음"));
+        expect (dockOverlaps().isEmpty(), where + TXT (": 카드 안 겹침 없음 ") + dockOverlaps());
+    };
+    auto clickRooms = [this]
+    {
+        if (root.sidebar->isVisible() && ! root.sidebar->devRow (TXT ("공개 방")).isEmpty()) click (*root.sidebar, root.sidebar->devRow (TXT ("공개 방")).getCentre());
+        else if (auto* j = jam()) click (j->lobby);   // 좁은 플러그인 창: 방 화면 윗줄 로비 보기
+    };
+    auto clickRoom = [this]
+    {
+        const auto& s = core.store().state();
+        const auto r = s.currentRoom ? root.sidebar->devRow (s.currentRoom->title) : juce::Rectangle<int>();
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre());
+        else root.setMinimized (false);
+    };
+
+    begin (TXT ("내 오디오·모니터: 방 밖에는 없다"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("방 밖 공개 방"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); }, 6000);
+    closeToasts();
+    add ([this, listBottomPad, scrollable]
+    {
+        expect (root.dock == nullptr, TXT ("방 밖: 카드 묶음 없음"));
+        expect (home().dockSlot().isEmpty() && home().dockH == 0, TXT ("방 밖: 카드 자리 없음"));
+        if (scrollable()) expect (listBottomPad() == metric::pagePad, TXT ("방 밖: 목록 아래 여백 18 그대로 (") + juce::String (listBottomPad()) + ")");
+        else std::cerr << "UITEST INFO dock: 목록이 짧아 스크롤 없음 (아래 여백 확인 생략)" << std::endl;
+    }, 0);
+
+    begin (TXT ("내 오디오·모니터: 방 화면"));
+    enterNewRoom();
+    closeToasts();
+    add ([this, sh, checkRoomLayout]
+    {
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+        checkRoomLayout (TXT ("방 화면"));
+        auto* d = root.dock.get();
+        if (d == nullptr) return;
+        for (auto* m : std::initializer_list<juce::Component*> { &d->inputMeter, &d->outputMeter })
+            expect (m->getParentComponent() == &root && m->isOpaque() && root.getIndexOfChildComponent (m) > root.getIndexOfChildComponent (d),
+                    TXT ("미터 상자: 카드 묶음 바로 위 형제, 불투명"));
+        expect (root.getIndexOfChildComponent (d) > root.getIndexOfChildComponent (root.jam.get())
+                 && root.getIndexOfChildComponent (d) > root.getIndexOfChildComponent (root.home.get()), TXT ("카드 묶음: 방 화면·홈 위"));
+        sh->roomCards = d->getCardsBounds();
+        sh->phase = (int) core.jam()->getPhase();
+    }, 300);
+    // 단축키 M (방 화면) → 카드 묶음에 바로
+    add ([this, sh]
+    {
+        sh->sendMuted = core.jam()->isSendMuted();
+        jam()->grabKeyboardFocus();
+        key (juce::KeyPress ('m', juce::ModifierKeys(), 'm'));
+    }, 200);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        expect (core.jam()->isSendMuted() != sh->sendMuted && d->sendMute.isOn() == core.jam()->isSendMuted()
+                 && d->sendMute.getButtonText() == (core.jam()->isSendMuted() ? TXT ("송출 재개") : TXT ("송출 정지")),
+                TXT ("단축키 M → 카드의 송출 정지 그대로 반영"));
+        core.jam()->setSendGainDb (-3.0f);   // 바깥에서 바꾼 값 (설정·DAW 등)
+    }, 900);
+    add ([this]
+    {
+        expect (std::abs (root.dock->sendGain.getValue() - (-3.0f)) < 0.01f, TXT ("바깥에서 바꾼 송출 레벨 → 카드에 0.4초 안에 반영"));
+    }, 0);
+
+    // 방 화면 → 공개 방: 같은 카드가 폭만 늘고 그림자가 생긴다
+    begin (TXT ("내 오디오·모니터: 방 화면 ↔ 공개 방"));
+    add ([clickRooms] { clickRooms(); }, 110);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        sh->mid = d->getCardsBounds();
+        sh->midShadow = d->getShadow();
+    }, 500);
+    waitUntil (TXT ("공개 방"), roomsView);
+    add ([this, sh, checkRoomsLayout]
+    {
+        checkRoomsLayout (TXT ("공개 방"));
+        auto* d = root.dock.get();
+        sh->roomsCards = d->getCardsBounds();
+        const auto a = sh->roomCards, b = sh->roomsCards, m = sh->mid;
+        std::cerr << "UITEST INFO dock flip to rooms: room " << a.toString() << " mid " << m.toString() << " shadow " << sh->midShadow << " rooms " << b.toString() << std::endl;
+        expect (m.getBottom() == a.getBottom() && b.getBottom() == a.getBottom(), TXT ("전환 중: 바닥 그대로"));
+        if (a.getX() == b.getX())
+        {
+            expect (m.getX() == a.getX(), TXT ("전환 중: 왼쪽 끝 그대로"));
+            expect (m.getWidth() > juce::jmin (a.getWidth(), b.getWidth()) && m.getWidth() < juce::jmax (a.getWidth(), b.getWidth()),
+                    TXT ("전환 중: 폭만 두 화면 사이 (") + juce::String (m.getWidth()) + ")");
+        }
+        else   // 방 화면에서 사이드바가 숨거나(좁은 플러그인 창) 잠시 접히면(좁은 창) 왼쪽 끝이 두 화면에서 다르다
+            std::cerr << "UITEST INFO dock: 두 화면의 왼쪽 끝이 다름 (방 화면 " << a.getX() << ", 공개 방 " << b.getX() << "): 왼쪽 끝도 같이 옮긴다" << std::endl;
+        expect (sh->midShadow > 0.0f && sh->midShadow < 1.0f, TXT ("전환 중: 그림자가 서서히 생긴다 (") + juce::String (sh->midShadow, 2) + ")");
+    }, 0);
+    // 공개 방: 틈·바깥은 뒤의 방 목록이 받는다
+    add ([this]
+    {
+        auto* d = root.dock.get();
+        const auto s = d->sendCard.getBounds() + d->getPosition(), m = d->monCard.getBounds() + d->getPosition();
+        const juce::Point<int> gap ((s.getRight() + m.getX()) / 2, s.getCentreY());
+        const juce::Point<int> outsideLeft (s.getX() - 8, s.getCentreY()), outsideTop (s.getCentreX(), s.getY() - 8);
+        for (auto p : { gap, outsideLeft, outsideTop })
+        {
+            auto* hit = root.getComponentAt (p);
+            expect (hit != nullptr && hit != d && ! d->isParentOf (hit) && (hit == root.home.get() || root.home->isParentOf (hit)),
+                    TXT ("카드 틈·바깥 ") + p.toString() + TXT (" → 뒤의 방 목록이 받는다"));
+        }
+        auto* hitCard = root.getComponentAt (s.getCentre());
+        expect (hitCard == &d->sendCard || d->sendCard.isParentOf (hitCard) || hitCard == &d->inputMeter || d->inputMeter.isParentOf (hitCard),
+                TXT ("카드 위는 카드가 받는다"));
+    }, 0);
+    // 목록을 내려 카드 틈(9) 뒤에 방 카드가 오게 한 뒤: 틈을 누르면 그 방 카드가 받는다.
+    // 2열이면 카드 틈이 방 목록의 열 사이(9)와 겹쳐 방 카드가 오지 않으므로 사이드바를 접어 3열로
+    add ([this] { if (root.sidebar->isVisible()) root.sidebar->setCollapsed (true); }, 500);
+    add ([this, sh]
+    {
+        sh->gapCard = false;
+        auto* d = root.dock.get();
+        const auto s = d->sendCard.getBounds() + d->getPosition(), m = d->monCard.getBounds() + d->getPosition();
+        const juce::Point<int> gap ((s.getRight() + m.getX()) / 2, s.getCentreY());
+        juce::Component* under = nullptr;
+        for (int y = 0; y < 4000 && under == nullptr; y += 12)
+        {
+            home().roomViewport.setViewPosition (0, y);
+            for (auto* c : home().devRoomCardComps())
+                if (root.getLocalArea (c, c->getLocalBounds()).contains (gap)) under = c;
+            if (home().roomViewport.getViewPositionY() < y) break;   // 끝
+        }
+        if (under == nullptr) { std::cerr << "UITEST INFO dock: 카드 틈 뒤에 오는 방 카드가 없음 (목록이 짧거나 열 사이와 겹침)" << std::endl; return; }
+        sh->gapCard = true;
+        auto* hit = root.getComponentAt (gap);
+        expect (hit == under || under->isParentOf (hit), TXT ("카드 틈 뒤의 방 카드가 보이고 누름을 받는다"));
+        moveTo (root, gap);
+    }, 200);
+    add ([this, sh]
+    {
+        if (! sh->gapCard) return;
+        auto* d = root.dock.get();
+        const auto s = d->sendCard.getBounds() + d->getPosition(), m = d->monCard.getBounds() + d->getPosition();
+        const juce::Point<int> gap ((s.getRight() + m.getX()) / 2, s.getCentreY());
+        if (auto* hit = root.getComponentAt (gap); hit != nullptr && hit != d)
+            expect (hit->isMouseOver (true) || hit->getParentComponent()->isMouseOver (true), TXT ("카드 틈에 마우스를 올리면 뒤의 방 카드 위"));
+        home().roomViewport.setViewPosition (0, 0);
+        if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false);
+    }, 500);
+    // 끝까지 내리면 마지막 방이 카드 위로 다 올라온다
+    add ([this] { home().roomViewport.setViewPosition (0, 1 << 20); }, 300);
+    add ([this, scrollable]
+    {
+        if (! scrollable()) { std::cerr << "UITEST INFO dock: 목록이 짧아 스크롤 없음" << std::endl; return; }
+        auto* d = root.dock.get();
+        int lowest = 0;
+        for (auto* c : home().devRoomCardComps()) lowest = juce::jmax (lowest, root.getLocalArea (c, c->getLocalBounds()).getBottom());
+        expect (lowest <= d->getCardsBounds().getY() - 18, TXT ("끝까지 내리면 마지막 방 아래 = 카드 위 18 (") + juce::String (lowest) + " / " + juce::String (d->getCardsBounds().getY()) + ")");
+        home().roomViewport.setViewPosition (0, 0);
+    }, 200);
+    // 다시 그리기: 미터만 (카드·뒤의 방 카드·화면은 그리지 않는다)
+    closeToasts();
+    add ([this, sh]
+    {
+        root.dock->devDriveMeters (true);
+        moveTo (*root.sidebar, { 120, 400 });
+    }, 400);
+    auto resetCounts = [this, sh]
+    {
+        auto* d = root.dock.get();
+        MeterBox::devPaints = 0; AudioDock::devPaintCount = 0; HomeScreen::devRoomCardPaints = 0; HomeScreen::devPaints = 0; JamScreen::devPaints = 0;
+        d->sendCard.devPaintCount = 0; d->monCard.devPaintCount = 0;
+        devprobe::watch.clear();
+        devprobe::watch.add (d->inputMeter.getScreenBounds());
+        devprobe::watch.add (d->outputMeter.getScreenBounds());
+        devprobe::hits = 0;
+        devprobe::hitNames.clear();
+        sh->toasts = root.toasts.size();
+    };
+    auto countsLine = [this] (const juce::String& where)
+    {
+        auto* d = root.dock.get();
+        std::cerr << "UITEST INFO repaint " << where << ": meter " << MeterBox::devPaints << " dock " << AudioDock::devPaintCount
+                  << " cards " << d->sendCard.devPaintCount << "+" << d->monCard.devPaintCount << " roomcards " << HomeScreen::devRoomCardPaints
+                  << " home " << HomeScreen::devPaints << " jam " << JamScreen::devPaints
+                  << " | 미터 칸 안에서만 같이 그려진 것 " << devprobe::hits << " " << devprobe::hitNames.joinIntoString (",") << std::endl;
+    };
+    add ([resetCounts] { resetCounts(); }, 1000);
+    add ([this, sh, resetCounts]
+    {
+        // 그동안 토스트가 생기거나 사라졌으면(뒤가 다시 그려진다) 한 번 더 센다
+        sh->retry = root.toasts.size() != sh->toasts;
+        if (sh->retry) { std::cerr << "UITEST INFO repaint: 토스트가 바뀌어 한 번 더 센다" << std::endl; resetCounts(); }
+        sh->countFrom = juce::Time::getMillisecondCounter();
+    }, 0);
+    waitUntil (TXT ("다시 셈"), [sh] { return ! sh->retry || juce::Time::getMillisecondCounter() - sh->countFrom >= 1000; }, 3000);
+    add ([this, sh, countsLine]
+    {
+        countsLine (TXT ("공개 방"));
+        auto* d = root.dock.get();
+        expect (MeterBox::devPaints >= 10, TXT ("공개 방: 미터는 다시 그린다 (") + juce::String (MeterBox::devPaints) + ")");
+        // 미터가 다시 그려질 때 같이 그려진 것이 없다 (카드·방 목록·방 카드·화면). 방 목록이 새로 오는 등 다른 이유의 넓은 그리기는 세지 않는다
+        expect (devprobe::hits == 0, TXT ("공개 방: 미터 칸만 다시 그린다 (같이 그려진 것 ") + devprobe::hitNames.joinIntoString (",") + ")");
+        devprobe::watch.clear();
+        expect (d->devShadow (0).getBuildCount() == 1 && d->devShadow (1).getBuildCount() == 1, TXT ("그림자: 한 번만 계산 (") + juce::String (d->devShadow (0).getBuildCount()) + ")");
+    }, 0);
+    // 방 화면도
+    add ([clickRoom] { clickRoom(); }, 110);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        sh->mid = d->getCardsBounds();
+        sh->midShadow = d->getShadow();
+        expect (root.getIndexOfChildComponent (d) > root.getIndexOfChildComponent (root.jam.get()), TXT ("돌아가는 중: 카드는 방 화면 위"));
+        if (auto* j = jam()) expect (sh->mid.getRight() > j->getX() + j->chatCard.getX(), TXT ("돌아가는 중: 카드가 오른쪽 채팅 영역 위에 겹쳐 보인다"));
+    }, 500);
+    add ([this, sh, checkRoomLayout, countsLine]
+    {
+        checkRoomLayout (TXT ("방 화면으로 돌아옴"));
+        expect (sh->midShadow > 0.0f && sh->midShadow < 1.0f, TXT ("돌아가는 중: 그림자가 서서히 사라진다 (") + juce::String (sh->midShadow, 2) + ")");
+        moveTo (*root.sidebar, { 120, 400 });
+    }, 400);
+    add ([resetCounts] { resetCounts(); }, 1000);
+    add ([this, countsLine]
+    {
+        countsLine (TXT ("방 화면"));
+        auto* d = root.dock.get();
+        expect (MeterBox::devPaints >= 10, TXT ("방 화면: 미터는 다시 그린다"));
+        expect (devprobe::hits == 0 && AudioDock::devPaintCount == 0 && d->sendCard.devPaintCount == 0 && d->monCard.devPaintCount == 0,
+                TXT ("방 화면: 미터 칸만 다시 그린다 (같이 그려진 것 ") + devprobe::hitNames.joinIntoString (",") + ")");
+        devprobe::watch.clear();
+        root.dock->devDriveMeters (false);
+    }, 0);
+
+    // 여러 번 오가도 어긋나지 않는다 (사이드바 펼침·접힘)
+    for (int round = 0; round < 4; ++round)
+    {
+        const bool collapse = round >= 2;
+        add ([this, collapse] { if (root.sidebar->isVisible() && root.sidebar->isCollapsed() != collapse) root.sidebar->setCollapsed (collapse); }, 400);
+        add ([clickRooms] { clickRooms(); }, 450);
+        add ([checkRoomsLayout, round] { checkRoomsLayout (TXT ("공개 방 ") + juce::String (round + 1) + TXT ("번째")); }, 0);
+        add ([clickRoom] { clickRoom(); }, 450);
+        add ([checkRoomLayout, round] { checkRoomLayout (TXT ("방 화면 ") + juce::String (round + 1) + TXT ("번째")); }, 0);
+    }
+    add ([this] { if (root.sidebar->isCollapsed()) root.sidebar->setCollapsed (false); }, 400);
+    // 전환 중에도 송출 조작은 그대로 (소리·방 상태)
+    add ([clickRooms] { clickRooms(); }, 90);
+    add ([this, sh]
+    {
+        sh->sendMuted = core.jam()->isSendMuted();
+        click (root.dock->sendMute);
+    }, 450);
+    add ([this, sh]
+    {
+        expect (core.jam()->isSendMuted() != sh->sendMuted && (int) core.jam()->getPhase() == sh->phase, TXT ("전환 중 송출 정지 누름 → 바로 반영, 연결 그대로"));
+        click (root.dock->sendMute);   // 되돌림
+    }, 300);
+    add ([this, sh] { expect (core.jam()->isSendMuted() == sh->sendMuted, TXT ("공개 방에서 누름 → 같은 상태 (화면 밖 공통 상태)")); }, 0);
+    // 창 크기를 바꿔도 자리를 따라간다
+    add ([this] { if (auto* p = peer()) { auto b = p->getBounds(); p->setBounds (b.withSize (juce::jmax (1000, b.getWidth() - 180), juce::jmax (600, b.getHeight() - 80)), false); } }, 600);
+    add ([checkRoomsLayout] { checkRoomsLayout (TXT ("작은 창 공개 방")); }, 0);
+    add ([clickRoom] { clickRoom(); }, 450);
+    add ([checkRoomLayout] { checkRoomLayout (TXT ("작은 창 방 화면")); }, 0);
+    add ([this] { if (auto* p = peer()) { auto b = p->getBounds(); p->setBounds (b.withSize (b.getWidth() + 180, b.getHeight() + 80), false); } }, 600);
+    add ([checkRoomLayout] { checkRoomLayout (TXT ("창 되돌림")); }, 0);
+
+    begin (TXT ("내 오디오·모니터: 방에서 나가면 없어진다"));
+    add ([this] { click (jam()->leave); });
+    add ([this] { click (jam()->leave); }, 0);
+    waitUntil (TXT ("방에서 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); }, 6000);
+    add ([this, listBottomPad, scrollable]
+    {
+        expect (root.dock == nullptr && home().dockSlot().isEmpty(), TXT ("나가면 카드 묶음·자리 없음"));
+        if (scrollable()) expect (listBottomPad() == metric::pagePad, TXT ("나가면 목록 아래 여백 18"));
+        // 미터 상자도 함께 빠졌다
+        for (auto* c : root.getChildren()) expect (dynamic_cast<MeterBox*> (c) == nullptr, TXT ("미터 상자 남지 않음"));
+    }, 0);
+}
+
+//==============================================================================
+// 모달 애니메이션 (공통 래퍼 ModalBase): 열기 240ms 끝나면 정확히 100%, 닫기는 누름을 받지 않는 그림이 180ms 뒤 사라진다.
+// 다섯 모달(설정·방 만들기·친구 추가·코드로 입장·친구 프로필)을 Esc·닫기(또는 취소) 버튼·바깥 누름으로 닫는다
+void UiSelfTest::addModalAnimTests()
+{
+    enum class Kind { settings, create, friendAdd, joinCode, profile };
+    enum class How { esc, button, outside };
+    auto current = [this] (Kind k) -> ModalBase*
+    {
+        if (k == Kind::settings)
+        {
+            if (auto* e = root.getParentComponent())
+                for (auto* c : e->getChildren()) if (auto* s = dynamic_cast<SettingsModal*> (c)) return s;
+            return nullptr;
+        }
+        return home().modal.get();
+    };
+    auto ghost = [this] (Kind k) -> juce::Component*
+    {
+        auto* parent = k == Kind::settings ? root.getParentComponent() : static_cast<juce::Component*> (&root);
+        if (parent == nullptr) return nullptr;
+        for (auto* c : parent->getChildren()) if (c->getComponentID() == "modalCloseGhost") return c;
+        return nullptr;
+    };
+    auto open = [this] (Kind k)
+    {
+        switch (k)
+        {
+            case Kind::settings:  if (root.onOpenSettings) root.onOpenSettings (0); break;
+            case Kind::create:    home().openCreateRoom(); break;
+            case Kind::friendAdd: home().openAddFriend(); break;
+            case Kind::joinCode:  home().openJoinCode(); break;
+            case Kind::profile:
+                for (auto& f : core.store().state().friends) { home().openProfile (f.user); break; }
+                break;
+        }
+    };
+    const char* names[] = { "설정", "방 만들기", "친구 추가", "코드로 입장", "친구 프로필" };
+    const char* hows[] = { "Esc", "닫기 버튼", "바깥 누름" };
+
+    begin (TXT ("모달 애니메이션"));
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    closeToasts();
+    for (int ki = 0; ki < 5; ++ki)
+        for (int hi = 0; hi < 3; ++hi)
+        {
+            const auto k = (Kind) ki;
+            const auto how = (How) hi;
+            const juce::String label = juce::String (juce::CharPointer_UTF8 (names[ki])) + " · " + juce::String (juce::CharPointer_UTF8 (hows[hi]));
+            add ([open, k] { open (k); }, 40);
+            waitUntil (label + TXT (": 열림"), [current, k] { return current (k) != nullptr; }, 2000);
+            add ([this, current, k, label]
+            {
+                auto* m = current (k);
+                if (m == nullptr) return;
+                const auto st = m->getAnimState();
+                expect (m->isOpening() && st.box < 1.0f && st.dim < 1.0f, label + TXT (": 여는 중 (덮개 ") + juce::String (st.dim, 2) + TXT (", 상자 ") + juce::String (st.box, 2) + ")");
+            }, 350);
+            add ([this, current, k, label, how]
+            {
+                auto* m = current (k);
+                if (m == nullptr) return;
+                const auto st = m->getAnimState();
+                bool identity = true;
+                for (auto* c : m->getChildren()) identity = identity && ! c->isTransformed() && c->getAlpha() == 1.0f;
+                expect (! m->isOpening() && st.dim == 1.0f && st.box == 1.0f && st.dy == 0.0f && st.scale == 1.0f && identity,
+                        label + TXT (": 열기 끝 → 변환 없음 (정확히 100%), 불투명"));
+                switch (how)
+                {
+                    case How::esc: key (juce::KeyPress (juce::KeyPress::escapeKey)); break;
+                    case How::button:
+                    {
+                        juce::Button* b = nullptr;
+                        if (auto* s = dynamic_cast<SettingsModal*> (m)) b = &s->close;
+                        else if (auto* md = dynamic_cast<Modal*> (m); md != nullptr && md->closeButton.isShowing()) b = &md->closeButton;
+                        else b = findButton (*m, TXT ("취소"));   // 닫기 버튼이 없는 창 (방 만들기·코드로 입장): 취소
+                        expect (b != nullptr, label + TXT (": 닫기(취소) 버튼"));
+                        if (b != nullptr) click (*b);
+                        break;
+                    }
+                    case How::outside: click (*m, { 6, m->getHeight() / 2 }); break;
+                }
+            }, 60);
+            add ([this, current, ghost, k, label]
+            {
+                expect (current (k) == nullptr, label + TXT (": 닫힘 (모달은 바로 빠진다)"));
+                auto* g = ghost (k);
+                expect (g != nullptr, label + TXT (": 닫히는 그림이 남아 있다"));
+                if (g != nullptr)
+                {
+                    auto* parent = g->getParentComponent();
+                    auto* hit = parent->getComponentAt (g->getBounds().getCentre());
+                    bool self = true, kids = true;
+                    g->getInterceptsMouseClicks (self, kids);
+                    expect (hit != g && ! self, label + TXT (": 닫히는 동안 누름을 받지 않는다"));
+                }
+            }, 300);
+            add ([ghost, k, label, this] { expect (ghost (k) == nullptr, label + TXT (": 끝나면 화면에서 빠진다")); }, 100);
+        }
+}
+
+//==============================================================================
+// 동작 줄이기 (MEON_REDUCE_MOTION=1 로 켜서 돌린다): 모달·카드 전환·사이드바 접기 애니메이션 없이 바로
+void UiSelfTest::addReducedMotionTests()
+{
+    begin (TXT ("동작 줄이기"));
+    add ([this] { expect (systemPrefersReducedMotion(), TXT ("동작 줄이기 켜짐 (MEON_REDUCE_MOTION=1)")); if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    closeToasts();
+    add ([this] { home().openAddFriend(); }, 30);
+    add ([this]
+    {
+        auto* m = home().modal.get();
+        expect (m != nullptr && ! m->isOpening() && m->getAnimState().box == 1.0f, TXT ("모달: 열기 애니메이션 없이 바로"));
+        key (juce::KeyPress (juce::KeyPress::escapeKey));
+    }, 60);
+    add ([this]
+    {
+        bool g = false;
+        for (auto* c : root.getChildren()) g = g || c->getComponentID() == "modalCloseGhost";
+        expect (home().modal == nullptr && ! g, TXT ("모달: 닫기 애니메이션 없이 바로"));
+        root.sidebar->toggleCollapsed();
+    }, 30);
+    add ([this]
+    {
+        expect (root.sidebar->getWidth() == Sidebar::closedW, TXT ("사이드바 접기: 애니메이션 없이 바로 (") + juce::String (root.sidebar->getWidth()) + ")");
+        root.sidebar->toggleCollapsed();
+    }, 30);
+    add ([this] { expect (root.sidebar->getWidth() == Sidebar::openW, TXT ("사이드바 펼치기: 바로")); }, 0);
+    enterNewRoom();
+    add ([this]
+    {
+        const auto r = root.sidebar->devRow (TXT ("공개 방"));
+        if (! r.isEmpty()) click (*root.sidebar, r.getCentre()); else root.setMinimized (true);
+    }, 30);
+    add ([this]
+    {
+        auto* d = root.dock.get();
+        expect (d != nullptr && d->getCardsBounds() == home().dockSlot() + home().getPosition() && d->getShadow() == 1.0f,
+                TXT ("카드 전환: 애니메이션 없이 바로 공개 방 자리·그림자"));
+        root.setMinimized (false);
+    }, 30);
+    add ([this]
+    {
+        auto* d = root.dock.get();
+        auto* j = jam();
+        expect (d != nullptr && j != nullptr && d->getCardsBounds() == j->dockSlot() + j->getPosition() && d->getShadow() == 0.0f,
+                TXT ("카드 전환: 바로 방 화면 자리"));
+    }, 0);
 }
 
 } // namespace meon::ui

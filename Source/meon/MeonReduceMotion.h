@@ -7,7 +7,8 @@
 namespace meon
 {
 
-/** 누를 때마다 부른다 (설정을 바꾸면 앱을 다시 켜지 않아도 바로 따른다) */
+/** 누를 때마다 부른다 (설정을 바꾸면 앱을 다시 켜지 않아도 바로 따른다).
+    빌드 0(MEON_DEV_OPTIONS)에서는 환경 변수 MEON_REDUCE_MOTION=1 이면 켜진 것으로 (자가 테스트) */
 bool systemPrefersReducedMotion();
 
 } // namespace meon

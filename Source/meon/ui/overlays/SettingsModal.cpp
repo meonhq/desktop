@@ -1407,10 +1407,8 @@ juce::Rectangle<int> SettingsModal::tabBounds (int i) const
     return { b.getX() + 9, b.getY() + 12 + 32 + 6 + i * 34, tabsW - 18, 32 };
 }
 
-void SettingsModal::paint (juce::Graphics& g)
+void SettingsModal::paintDialog (juce::Graphics& g)
 {
-    g.setColour (col::overlay);
-    g.fillRect (getLocalBounds());
     const auto b = box().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (b, metric::radius);

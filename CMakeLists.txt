@@ -225,6 +225,10 @@ set(MEON_UI_SOURCES
     Source/meon/ui/widgets/Meter.cpp
     Source/meon/ui/widgets/Display.h
     Source/meon/ui/widgets/Display.cpp
+    Source/meon/ui/widgets/ModalBase.h
+    Source/meon/ui/widgets/ModalBase.cpp
+    Source/meon/ui/shell/AudioDock.h
+    Source/meon/ui/shell/AudioDock.cpp
     Source/meon/ui/widgets/FoldAnimator.h
     Source/meon/ui/widgets/FoldAnimator.cpp
     Source/meon/ui/widgets/Masonry.h
@@ -256,6 +260,7 @@ set(MEON_UI_SOURCES
     Source/meon/ui/dev/DevJamScreen.h
     Source/meon/ui/dev/DevJamScreen.cpp
     Source/meon/ui/dev/UiSelfTest.h
+    Source/meon/ui/dev/RepaintProbe.h
     Source/meon/ui/dev/UiSelfTest.cpp
     Source/meon/ui/dev/ShowcaseEngine.h
     Source/meon/ui/dev/ShowcaseEngine.cpp

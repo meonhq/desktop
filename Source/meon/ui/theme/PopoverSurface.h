@@ -32,6 +32,21 @@ private:
     float cachedScale = 0.0f;
 };
 
+/** 폭이 바뀌는 판의 그림자만 (공개 방 위 내 오디오·모니터 카드: 방 화면과 오가며 폭이 바뀐다). 진하기 opacity (0~1).
+    흐림은 판 높이·화면 배율이 바뀔 때만 한 번 계산하고, 폭은 왼쪽·오른쪽 끝을 그대로 두고 가운데 한 줄을 늘려 붙인다
+    (판 가장자리에서 모서리 + 그림자 폭보다 안쪽은 가로로 같은 그림자라서 같은 그림이 된다) */
+class StretchShadow
+{
+public:
+    void paint (juce::Graphics&, const juce::Component& c, juce::Rectangle<int> panel, float opacity);
+    int getBuildCount() const { return builds; }
+private:
+    juce::Image shadow;
+    int cachedH = 0, builds = 0;
+    float cachedScale = 0.0f;
+    PopoverSurface narrow;   // 끝끼리 겹칠 만큼 좁으면 (거의 없음) 보통 방식
+};
+
 /** 판 둘레에 그림자를 그리는 떠 있는 판 (팝오버·토스트, 앞으로 생길 팝오버도 이것을 쓴다).
     구성 요소는 판보다 그림자 폭만큼 사방으로 크고(그림자가 잘리지 않게), 그 자리는 마우스를 받지 않는다.
     자리는 setPanelBounds 로 판 기준으로 정하고, 안쪽은 panel() 기준으로 배치·그리기 */

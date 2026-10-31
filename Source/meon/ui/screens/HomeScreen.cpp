@@ -1,4 +1,5 @@
 #include "HomeScreen.h"
+#include "../dev/RepaintProbe.h"
 #include "../theme/Hairline.h"
 #include "HomePage.h"
 #include "../Messages.h"
@@ -102,6 +103,8 @@ struct HomeScreen::RoomCard : juce::Component
 
     void paint (juce::Graphics& g) override
     {
+        ++HomeScreen::devRoomCardPaints;   // 개발용: 다시 그리기 확인 (미터만 움직일 때 0 이어야 한다)
+        devprobe::note (*this, g, "RoomCard");
         auto r = getLocalBounds().toFloat();
         g.setColour (col::white);
         g.fillRoundedRectangle (r, metric::radius);
@@ -187,6 +190,7 @@ struct HomeScreen::RoomList : juce::Component
 
     void paint (juce::Graphics& g) override
     {
+        devprobe::note (*this, g, "RoomList");
         g.fillAll (col::softBg);
         if (! cards.isEmpty()) return;
         const bool filtered = owner.filter.isActive() && ! owner.core.store().state().publicRooms.empty();
@@ -583,8 +587,11 @@ int HomeScreen::bannersHeight() const
 void HomeScreen::refreshHeader()
 {
     bell.setDot (core.store().state().hasUnreadNotifications || ! core.store().state().friendRequests.empty());
-    filterButton->active = filter.isActive();
-    filterButton->repaint();
+    if (filterButton->active != filter.isActive())   // 0.5초마다 불린다: 바뀔 때만 다시 그린다
+    {
+        filterButton->active = filter.isActive();
+        filterButton->repaint();
+    }
     const bool upd = showUpdate();
     const auto st = updateState();
     const auto& cfg = core.store().state().config;
@@ -678,6 +685,8 @@ void HomeScreen::layoutRooms()
     if (viewW <= 0) return;
     const int n = Masonry::columnsForWidth (shell ? getWidth() - shellInset : getWidth());
     const int pad = shell ? metric::pagePad : 12, gap = Masonry::gap;   // 사이드바 안: 홈 쪽과 같은 바깥 여백
+    // 아래 여백: 방에 있으면 떠 있는 카드 높이 + 위아래 18 (디자인 hListPB, 카드를 재서)
+    const int padBottom = shell && dockH > 0 ? dockH + metric::padX * 2 : pad;
     // 스크롤 막대가 필요할 때만 그 폭을 뺀다
     int contentW = viewW, colW = 0;
     std::vector<std::vector<juce::String>> cols;
@@ -698,7 +707,7 @@ void HomeScreen::layoutRooms()
             for (auto& id : cl)
                 for (auto* c : roomList->cards)
                     if (c->room.id == id) h += c->preferredHeight() + gap;
-            tallest = juce::jmax (tallest, h - gap + pad);
+            tallest = juce::jmax (tallest, h - gap + padBottom);
         }
         if (tallest <= roomViewport.getHeight() || pass == 1) break;
         contentW = viewW - roomViewport.getScrollBarThickness();
@@ -714,7 +723,7 @@ void HomeScreen::layoutRooms()
                     c->setBounds (pad + (int) ci * (colW + gap), y, colW, c->preferredHeight());
                     y += c->preferredHeight() + gap;
                 }
-        bottom = juce::jmax (bottom, y - gap + pad);
+        bottom = juce::jmax (bottom, y - gap + padBottom);
     }
     roomList->setSize (contentW, juce::jmax (roomViewport.getHeight(), bottom));
 }
@@ -1108,6 +1117,15 @@ juce::Component* HomeScreen::devRoomBar() const { return roomBar.get(); }
 Button* HomeScreen::devRoomBarLeave() const     { return roomBar != nullptr ? &roomBar->leave : nullptr; }
 int HomeScreen::devRoomBarUnread() const        { return roomBar != nullptr ? roomBar->unreadChats() : -1; }
 
+juce::Component* HomeScreen::devRoomList() const { return roomList.get(); }
+
+std::vector<juce::Component*> HomeScreen::devRoomCardComps() const
+{
+    std::vector<juce::Component*> out;
+    for (auto* c : roomList->cards) out.push_back (c);
+    return out;
+}
+
 std::vector<std::pair<core::Room, juce::Button*>> HomeScreen::devRoomCards() const
 {
     std::vector<std::pair<core::Room, juce::Button*>> out;
@@ -1202,12 +1220,18 @@ void HomeScreen::timerCallback()
     refreshHeader();
     if (bannersHeight() != before) resized();
     if (showUpdate()) repaint (0, headerLine(), getWidth(), bannersHeight() + 1);
-    if (! sendGain.isDragging()) refreshAudio();
+    // 홈의 내 오디오 카드는 사이드바 안(공개 방)에서는 숨어 있다: 0.5초마다 화면 전체를 다시 배치·그리지 않는다
+    // (예전에는 숨은 카드 때문에 공개 방 목록 전체가 0.5초마다 다시 그려졌다. 방 안이면 떠 있는 내 오디오·모니터 카드까지)
+    if (! sendGain.isDragging() && audioCard.isVisible()) refreshAudio();
 }
 
 //==============================================================================
+int HomeScreen::devRoomCardPaints = 0, HomeScreen::devPaints = 0;
+
 void HomeScreen::paint (juce::Graphics& g)
 {
+    ++devPaints;
+    devprobe::note (*this, g, "HomeScreen");
     const int x0 = shell ? shellInset : 0;   // 사이드바 안이면 왼쪽 사이드바 자리는 그리지 않는다
     g.setColour (col::white);
     g.fillRect (x0, 0, getWidth() - x0, getHeight());
@@ -1335,6 +1359,18 @@ void HomeScreen::resized()
             roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작
             if (! fold.isMoving (foldFriends)) layoutRooms();
         }
+        // 방에 있을 때 목록 위에 뜨는 내 오디오·모니터 자리: 목록 영역 안 왼쪽·오른쪽·아래 18 (디자인 hBar)
+        {
+            const auto list = roomViewport.getBounds();
+            juce::Rectangle<int> slot;
+            if (! shellHome && dockH > 0)
+                slot = { list.getX() + metric::padX, list.getBottom() - metric::padX - dockH, list.getWidth() - metric::padX * 2, dockH };
+            if (slot != dockSlotRect)
+            {
+                dockSlotRect = slot;
+                if (onDockSlotChanged) onDockSlotChanged();
+            }
+        }
         layoutOverlays();
         repaint();
         return;
@@ -1438,6 +1474,13 @@ void HomeScreen::resized()
 
     layoutOverlays();
     if (! fold.isMoving (foldFriends)) repaint();   // 움직이는 동안은 옮겨진 카드 자리만 다시 그린다
+}
+
+void HomeScreen::setDockHeight (int h)
+{
+    if (h == dockH) return;
+    dockH = h;
+    resized();   // 목록 아래 여백·카드 자리
 }
 
 void HomeScreen::previewFold (float e)

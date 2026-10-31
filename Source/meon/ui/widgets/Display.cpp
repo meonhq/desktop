@@ -1,4 +1,5 @@
 #include "Display.h"
+#include "../dev/RepaintProbe.h"
 #include "../theme/Hairline.h"
 #include "../theme/Icons.h"
 
@@ -164,6 +165,8 @@ void Card::resized()
 
 void Card::paint (juce::Graphics& g)
 {
+    ++devPaintCount;
+    devprobe::note (*this, g, "Card");
     auto r = getLocalBounds().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (r, metric::radius);
@@ -240,10 +243,8 @@ void Modal::resized()
         content->setBounds (box.withTrimmedTop (showHeader ? 49 : 0));
 }
 
-void Modal::paint (juce::Graphics& g)
+void Modal::paintDialog (juce::Graphics& g)
 {
-    g.setColour (col::overlay);
-    g.fillRect (insets.subtractedFrom (getLocalBounds()));
     const auto box = boxBounds().toFloat();
     g.setColour (col::white);
     g.fillRoundedRectangle (box, metric::radius);

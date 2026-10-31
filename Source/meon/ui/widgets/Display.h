@@ -4,6 +4,7 @@
 #include "../theme/Tokens.h"
 #include "../theme/PopoverSurface.h"
 #include "Button.h"
+#include "ModalBase.h"
 
 namespace meon::ui
 {
@@ -95,6 +96,7 @@ public:
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+    int devPaintCount = 0;   // 개발용 (다시 그리기 확인)
 
 private:
     juce::String title;
@@ -105,8 +107,9 @@ private:
 };
 
 /** 모달: 덮개(rgba 26,26,26,0.4) + 가운데 흰 상자(모서리 6). 머리말 12·18, 제목 600 15/24px, 닫기 24px.
-    덮개를 누르거나 Esc 를 누르면 onClose. 본문은 content 로 넣는다 (머리말 아래 구분선부터) */
-class Modal : public juce::Component
+    덮개를 누르거나 Esc 를 누르면 onClose. 본문은 content 로 넣는다 (머리말 아래 구분선부터).
+    열고 닫는 애니메이션은 공통 래퍼(ModalBase) */
+class Modal : public ModalBase
 {
 public:
     Modal (const juce::String& title, int width);
@@ -123,12 +126,15 @@ public:
     void setOverlayInsets (juce::BorderSize<int> b) { insets = b; resized(); }
 
     juce::Rectangle<int> boxBounds() const;
-    void paint (juce::Graphics&) override;
+    juce::Rectangle<int> dialogBounds() const override { return boxBounds(); }
+    juce::Rectangle<int> dimBounds() const override { return insets.subtractedFrom (getLocalBounds()); }
+    void paintDialog (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
 private:
+    friend class UiSelfTest;   // 개발용 화면 자가 테스트 (닫기 버튼)
     juce::String title;
     int width, contentH = 100;
     bool showHeader = true, showClose = true;
