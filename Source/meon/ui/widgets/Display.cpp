@@ -1,4 +1,5 @@
 #include "Display.h"
+#include "../theme/Avatars.h"
 #include "../dev/RepaintProbe.h"
 #include "../theme/Hairline.h"
 #include "../theme/Icons.h"
@@ -27,7 +28,8 @@ void PingBadge::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-Avatar::Avatar (float s, float i) : size (s), iconPx (i) {}
+Avatar::Avatar (float s, float i) : size (s), iconPx (i) { avatars::changes().addChangeListener (this); }
+Avatar::~Avatar() { avatars::changes().removeChangeListener (this); }
 
 juce::Colour Avatar::statusColour (Status s)
 {
@@ -45,8 +47,7 @@ juce::Colour Avatar::statusColour (Status s)
 void Avatar::paint (juce::Graphics& g)
 {
     auto r = juce::Rectangle<float> (size, size).withCentre (getLocalBounds().toFloat().getCentre());
-    // 아이콘은 이름과 같은 색 (박힌 #1A1A1A 를 쓰지 않는다). 흐린 상태도 이름의 #AAAAAA 와 같게
-    paintCircle (g, r, part, iconPx, dimmed ? col::inkFaint : ink, false);
+    avatars::paint (g, r, user, dimmed ? 0.4f : 1.0f);
     if (status != Status::none)
     {
         // 기본: right:-1 bottom:-1, 9×9, 흰 테두리 2px. 프로필 창: right:0 bottom:0, 12×12 (setLargeStatusDot)
@@ -59,18 +60,9 @@ void Avatar::paint (juce::Graphics& g)
     }
 }
 
-void Avatar::paintCircle (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& partKey, float iconPx,
-                          juce::Colour inkColour, bool whiteFill)
+void Avatar::paintPhoto (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& userId, float opacity)
 {
-    if (whiteFill)
-    {
-        g.setColour (col::white);
-        g.fillEllipse (r);
-    }
-    g.setColour (col::borderSubtle);   // 아바타 원 테두리 (곡선이라 늘 부드럽게 그려진다: 물리 픽셀 맞춤은 하지 않는다)
-    g.drawEllipse (r.reduced (0.5f), 1.0f);
-    if (partKey.isNotEmpty())
-        icons::drawPart (g, partKey, r, iconPx, inkColour);   // 얇은 아이콘 (PartWeight::thin)
+    avatars::paint (g, r, userId, opacity);
 }
 
 void Avatar::mouseUp (const juce::MouseEvent& e)

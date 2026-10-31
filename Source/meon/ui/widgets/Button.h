@@ -46,6 +46,8 @@ public:
 
     /** 비활성 모양 (클릭은 막지 않는다. 막으려면 setEnabled) */
     void setDimmed (bool);
+    /** 흐린 모양이어도 누르면 onPress (디자인: 친구 추가 '요청' 은 비어 있으면 흐리지만 누르면 안내 문구) */
+    void setClickableWhenDimmed (bool b) { clickWhenDimmed = b; }
 
     /** 두 번 눌러 확정: 첫 클릭에 armedText 와 빨간(또는 포인트 색) 면으로 바뀌고, 다시 누르면 onClick.
         다른 곳을 누르거나 3초가 지나면 되돌아간다. */
@@ -78,6 +80,7 @@ protected:
 private:
     Kind kind;
     bool on = false, pending = false, dimmed = false, armed = false, confirm = false, confirmAccent = false, flashing = false;
+    bool clickWhenDimmed = false;
     juce::String normalText, armedText;
     int fixedWidth = 0;
 

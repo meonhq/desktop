@@ -68,7 +68,7 @@ void Button::disarm()
 
 void Button::clicked()
 {
-    if (dimmed) return;   // 디자인: 조건이 안 되면 눌러도 아무 일 없음
+    if (dimmed && ! clickWhenDimmed) return;   // 디자인: 조건이 안 되면 눌러도 아무 일 없음 (안내를 띄우는 버튼은 예외)
     if (confirm && ! armed)
     {
         normalText = getButtonText();

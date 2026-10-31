@@ -211,6 +211,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/theme/Hairline.cpp
     Source/meon/ui/theme/PopoverSurface.h
     Source/meon/ui/theme/PopoverSurface.cpp
+    Source/meon/ui/theme/Avatars.h
+    Source/meon/ui/theme/Avatars.cpp
     Source/meon/ui/theme/Icons.h
     Source/meon/ui/theme/Icons.cpp
     Source/meon/ui/theme/LookAndFeel.h
@@ -685,6 +687,7 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         images/brand/part-icons/part-other-thin.svg
         images/brand/part-icons/part-vocal.svg
         images/brand/part-icons/part-vocal-thin.svg
+        images/brand/avatar/avatar-default.png
         LICENSE
         LICENSE_EXCEPTION
         Source/meon/resources/ThirdPartyNotices.txt

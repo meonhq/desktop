@@ -51,6 +51,7 @@ void UiSelfTest::start()
     if (which == "reducedmotion") addReducedMotionTests();   // MEON_REDUCE_MOTION=1 로 돌린다 (all 에 없음)
     if (want ("profilefooter")) addProfileFooterTests();
     if (want ("codeinput")) addCodeInputTests();
+    if (want ("friendadd")) addFriendAddTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -1399,7 +1400,7 @@ void UiSelfTest::addSidebarTests()
     add ([this]
     {
         expect (home().modal != nullptr && dynamic_cast<CreateRoomModal*> (home().modal.get()) == nullptr
-                && findButton (*home().modal, TXT ("요청 보내기")) != nullptr, TXT ("친구 추가 아이콘 → 친구 추가 창"));
+                && findButton (*home().modal, TXT ("요청")) != nullptr, TXT ("친구 추가 아이콘 → 친구 추가 창"));
         home().closeOverlays();
     }, 400);
     enterNewRoom (true);
@@ -3844,6 +3845,143 @@ void UiSelfTest::addCodeInputTests()
         fx->room.reset();
         fx->digits.reset();
     }, 300);
+}
+
+//==============================================================================
+// 친구 추가 창 (합주 최종 v2): 340, 빈 칸 요청 → "아이디를 입력해 주세요" 빨강, 입력하면 문구가 사라진다,
+// Enter = 요청 (한글 조합 중 Enter 는 아님), 보냄 → 회색 "@아이디님에게 친구 요청을 보냈어요" + 입력 비움,
+// 없는 아이디 → 원래 앱 문구 빨강, 취소 → 닫힘, 받은 요청 줄 = 받은 친구 요청 수 (수락하면 줄어든다)
+void UiSelfTest::addFriendAddTests()
+{
+    begin (TXT ("친구 추가 창"));
+    auto modal = [this]() -> Modal* { return home().modal.get(); };
+    auto inputOf = [] (juce::Component& c) -> TextInput*
+    {
+        std::function<TextInput* (juce::Component&)> f = [&f] (juce::Component& x) -> TextInput*
+        {
+            if (auto* t = dynamic_cast<TextInput*> (&x)) return t;
+            for (auto* ch : x.getChildren()) if (auto* r = f (*ch)) return r;
+            return nullptr;
+        };
+        return f (c);
+    };
+    // 보이는 결과 문구 (설명 글은 빼고)
+    auto noteOf = [] (juce::Component& c) -> Text*
+    {
+        std::function<Text* (juce::Component&)> f = [&f] (juce::Component& x) -> Text*
+        {
+            if (auto* t = dynamic_cast<Text*> (&x); t != nullptr && t->isVisible() && t->getText().isNotEmpty()
+                && t->getText() != TXT ("친구의 아이디를 입력하면 친구 요청을 보내요")) return t;
+            for (auto* ch : x.getChildren()) if (auto* r = f (*ch)) return r;
+            return nullptr;
+        };
+        return f (c);
+    };
+    auto returnKey = [inputOf, modal]
+    {
+        if (auto* m = modal()) if (auto* in = inputOf (*m)) in->editor().keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    };
+    auto sentCount = std::make_shared<int> (0);
+    add ([this, sentCount]
+    {
+        if (inRoom()) core.home().leaveRoom();
+        if (auto* f = core.fakeServer())
+            f->onRequestForTest = [sentCount] (const core::HttpRequest& q) { if (q.method == "POST" && q.path == "/friends/requests") ++*sentCount; };
+    }, 0);
+    waitUntil (TXT ("공개 방"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    add ([this] { home().openAddFriend(); }, 400);
+    add ([this, modal, inputOf]
+    {
+        auto* m = modal();
+        expect (m != nullptr && m->boxBounds().getWidth() == 340, TXT ("친구 추가 창 폭 340"));
+        if (m == nullptr) return;
+        auto* in = inputOf (*m);
+        expect (in != nullptr && in->getHeight() == 36, TXT ("아이디 칸 높이 36"));
+        expect (in != nullptr && in->hasKeyboardFocus (true), TXT ("열면 아이디 칸에 포커스"));
+        if (auto* b = findButton (*m, TXT ("요청"))) click (*b);   // 빈 칸에서 요청
+    }, 0);
+    add ([this, modal, noteOf, sentCount]
+    {
+        auto* n = modal() != nullptr ? noteOf (*modal()) : nullptr;
+        expect (n != nullptr && n->getText() == TXT ("아이디를 입력해 주세요") && n->getColour() == col::danger,
+                TXT ("빈 칸 요청 → 빨강 \"아이디를 입력해 주세요\""));
+        expect (*sentCount == 0, TXT ("빈 칸이면 서버에 보내지 않음"));
+    }, 100);
+    add ([modal, inputOf] { if (auto* m = modal()) if (auto* in = inputOf (*m)) in->setText ("harin", true); }, 50);
+    add ([this, modal, noteOf]
+    {
+        expect (modal() != nullptr && noteOf (*modal()) == nullptr, TXT ("입력하면 결과 문구가 사라진다"));
+    }, 0);
+    // 한글 조합 중 Enter: 보내지 않는다
+    add ([modal, inputOf, returnKey]
+    {
+        if (auto* m = modal()) if (auto* in = inputOf (*m)) in->editor().setTemporaryUnderlining ({ juce::Range<int> (0, 1) });
+        returnKey();
+    }, 200);
+    add ([this, sentCount, modal, inputOf]
+    {
+        expect (*sentCount == 0, TXT ("한글 조합 중 Enter 는 요청이 아니다"));
+        if (auto* m = modal()) if (auto* in = inputOf (*m)) in->editor().setTemporaryUnderlining ({});   // 조합 끝
+    }, 200);
+    add ([returnKey] { returnKey(); }, 400);   // 조합이 끝나고 0.2초 뒤 Enter = 요청
+    add ([this, sentCount, modal, noteOf, inputOf]
+    {
+        expect (*sentCount == 1, TXT ("Enter = 요청 (") + juce::String (*sentCount) + ")");
+        auto* n = modal() != nullptr ? noteOf (*modal()) : nullptr;
+        expect (n != nullptr && n->getColour() == col::inkSub && n->getText().contains (TXT ("친구 요청을 보냈어요")),
+                TXT ("보냄 → 회색 결과 (") + (n != nullptr ? n->getText() : juce::String ("-")) + ")");
+        auto* in = modal() != nullptr ? inputOf (*modal()) : nullptr;
+        expect (in != nullptr && in->getText().isEmpty(), TXT ("보내면 입력 비움"));
+        if (in != nullptr) in->setText ("nobody_here_x", true);
+        if (auto* m = modal()) if (auto* b = findButton (*m, TXT ("요청"))) click (*b);
+    }, 400);
+    add ([this, modal, noteOf]
+    {
+        auto* n = modal() != nullptr ? noteOf (*modal()) : nullptr;
+        expect (n != nullptr && n->getColour() == col::danger && n->getText() == TXT ("그런 아이디를 찾지 못했어요"),
+                TXT ("없는 아이디 → 원래 앱 문구 빨강 (") + (n != nullptr ? n->getText() : juce::String ("-")) + ")");
+        if (auto* m = modal()) if (auto* b = findButton (*m, TXT ("취소"))) click (*b);
+    }, 400);
+    waitUntil (TXT ("취소 → 닫힘"), [this] { return home().modal == nullptr; }, 2000);
+    // 받은 요청: 가짜 사용자가 요청을 하나 더 보낸 뒤 연다. 수락은 그 요청만 (뒤의 친구 요청 시험이 처음 두 요청을 쓴다)
+    auto before = std::make_shared<juce::StringArray>();
+    add ([this, before]
+    {
+        for (auto& r : core.store().state().friendRequests) before->add (r.id);
+        if (auto* f = core.fakeServer()) f->devFriendRequest();
+    }, 0);
+    waitUntil (TXT ("새 친구 요청"), [this, before] { return (int) core.store().state().friendRequests.size() > before->size(); }, 3000);
+    add ([this] { home().openAddFriend(); }, 400);
+    add ([this, modal, before]
+    {
+        auto* m = modal();
+        const int n = (int) core.store().state().friendRequests.size();
+        int rows = 0;
+        std::function<void (juce::Component&)> count = [&] (juce::Component& c)
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == TXT ("수락") && b->isVisible()) ++rows;
+            for (auto* ch : c.getChildren()) count (*ch);
+        };
+        if (m != nullptr) count (*m);
+        expect (rows == n && n > 0, TXT ("받은 요청 줄 = 받은 친구 요청 수 (") + juce::String (rows) + " / " + juce::String (n) + ")");
+        for (auto& r : core.store().state().friendRequests)
+            if (! before->contains (r.id)) { core.home().acceptFriendRequest (r.id); break; }
+    }, 0);
+    add ([this, modal]
+    {
+        const int n = (int) core.store().state().friendRequests.size();
+        int rows = 0;
+        std::function<void (juce::Component&)> count = [&] (juce::Component& c)
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == TXT ("수락") && b->isVisible()) ++rows;
+            for (auto* ch : c.getChildren()) count (*ch);
+        };
+        if (auto* m = modal()) count (*m);
+        expect (rows == n, TXT ("수락하면 줄이 줄어든다 (") + juce::String (rows) + " / " + juce::String (n) + ")");
+        if (auto* f = core.fakeServer()) f->onRequestForTest = nullptr;
+        key (juce::KeyPress (juce::KeyPress::escapeKey));   // 포커스(아이디 칸)에서 Esc
+    }, 600);
+    waitUntil (TXT ("Esc → 닫힘"), [this] { return home().modal == nullptr; }, 2000);
 }
 
 } // namespace meon::ui

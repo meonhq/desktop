@@ -106,7 +106,7 @@ struct JamScreen::MemberRow : juce::Component
 {
     MemberRow (JamScreen& o, const core::JamSession::Member& m) : owner (o), member (m), meter (TXT ("레벨"))
     {
-        avatar.setPart (m.part.isNotEmpty() ? m.part : juce::String ("other"));
+        avatar.setUser (m.userId);
         avatar.setInterceptsMouseClicks (false, false);
         for (auto* c : std::initializer_list<juce::Component*> { &avatar, &mute, &volume, &pan, &reset, &ping, &meter })
             addAndMakeVisible (c);
@@ -202,7 +202,7 @@ struct JamScreen::MemberRow : juce::Component
         manage.setVisible (host && ! member.isMe);
         hostLayout = host;
         avatar.setDimmed (muted);
-        avatar.setPart (member.part.isNotEmpty() ? member.part : juce::String ("other"));   // 가짜 기간: 프로필은 입장 뒤에 온다
+        avatar.setUser (member.userId);
         if (member.isMe) ping.setText (TXT ("나"));
         else ping.setPing (member.pingMs);
         meter.meter.setActive (! muted);
@@ -499,11 +499,11 @@ struct JamScreen::ChatView : juce::Component
             }
             else
             {
-                // 아바타: 테두리 1px #EBEBEB, 흰 면, 얇은 파트 아이콘 16px. 눌러도 아무 동작 없음.
-                // 파트·이름은 받은 순간의 값 (보낸 사람이 바꾸거나 나가도 그대로. 모르면 빈 원·"멤버")
-                Avatar::paintCircle (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
-                                                                (float) avatarSize, (float) avatarSize),
-                                     m.senderPart, 16.0f, col::ink, true);
+                // 아바타: 보낸 사람의 프로필 사진 (없으면 기본 이미지, 테두리 1px #EBEBEB). 눌러도 아무 동작 없음.
+                // 이름은 받은 순간의 값 (보낸 사람이 바꾸거나 나가도 그대로. 모르면 "멤버")
+                Avatar::paintPhoto (g, juce::Rectangle<float> ((float) (it.bounds.getX() - avatarGap - avatarSize), (float) it.bounds.getY(),
+                                                               (float) avatarSize, (float) avatarSize),
+                                    m.fromUser);
                 g.setColour (col::inkSub);
                 g.setFont (font (600, 13.0f));
                 g.drawText (senderName (m), it.bounds.withHeight (16), juce::Justification::centredLeft, true);
@@ -643,7 +643,7 @@ struct JamScreen::FriendList : juce::Component
         {
             using S = Avatar::Status;
             const auto st = fr.status == "in_room" ? S::inRoom : (fr.status == "online" ? S::online : S::offline);
-            avatar.setPart (fr.user.part.value_or ("other"));
+            avatar.setUser (fr.user.id);
             avatar.setStatus (st);
             avatar.setDimmed (st == S::offline);
             avatar.setInterceptsMouseClicks (false, false);

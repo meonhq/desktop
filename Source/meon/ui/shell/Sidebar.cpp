@@ -45,7 +45,7 @@ struct Sidebar::Body : public juce::Component
         juce::String text, sub;
         icons::Id icon = icons::Id::navHome;
         bool active = false, dot = false, open = true, plus = false;
-        juce::String part;
+        juce::String part, userId;        // userId: 아바타 (프로필 사진, 없으면 기본 이미지)
         juce::Rectangle<int> plusR;
         std::function<void()> act, plusAct;
         float angle = 0.0f;               // 머리말 화살표 (펼침 0, 접힘 -90°): 섹션 높이와 같이 움직인다
@@ -206,6 +206,7 @@ struct Sidebar::Body : public juce::Component
                     const int h = 1 + 9 + 34 + 9 + metric::smallH + 9 + 1;   // 82
                     Row r { Kind::invite, { x, y, rw, h }, inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요"), inv.room.title };
                     r.part = inv.from.part.value_or ("other");
+                    r.userId = inv.from.id;
                     add (std::move (r));
                     liveInvites.add (inv.id);
                     auto& b = inviteButtons[inv.id];
@@ -233,6 +234,7 @@ struct Sidebar::Body : public juce::Component
             {
                 Row r { Kind::friendOn, { x, y, rw, 32 }, nameOf (f->user) };
                 r.part = f->user.part.value_or ("other");
+                r.userId = f->user.id;
                 const bool jam = f->status == "in_room";
                 const bool here = jam && f->room && f->room->id == myRoom;
                 if (jam && ! here) r.sub = TXT ("합주 중");
@@ -303,6 +305,7 @@ struct Sidebar::Body : public juce::Component
                 {
                     Row r { Kind::friendOff, { x, y, rw, 32 }, nameOf (f->user) };
                     r.part = f->user.part.value_or ("other");
+                    r.userId = f->user.id;
                     const auto user = f->user;
                     r.act = [this, user] { if (owner.onOpenFriend) owner.onOpenFriend (user); };
                     add (std::move (r));
@@ -445,7 +448,7 @@ struct Sidebar::Body : public juce::Component
                     hairline::roundedBorder (g, *this, rf, 6.0f);
                     // v2.1: 안쪽 10 (테두리 1 + 9), 아바타 줄 34 (아바타 32 가운데), 제목 17 · 간격 2 · 보조 16
                     const auto av = juce::Rectangle<float> (rf.getX() + 10.0f, rf.getY() + 11.0f, 32.0f, 32.0f);
-                    Avatar::paintCircle (g, av, r.part, 16.0f, col::ink, true);
+                    Avatar::paintPhoto (g, av, r.userId);
                     const auto t = juce::Rectangle<float> (av.getRight() + 9.0f, rf.getY() + 10.0f, rf.getRight() - 10.0f - av.getRight() - 9.0f, 34.0f);
                     g.setColour (col::ink);
                     g.setFont (font (600, 13.0f));
@@ -468,7 +471,7 @@ struct Sidebar::Body : public juce::Component
                     {
                         juce::Graphics::ScopedSaveState s2 (g);
                         if (off) g.beginTransparencyLayer (0.6f);
-                        Avatar::paintCircle (g, av, r.part, 12.0f, off ? col::inkSub : col::ink, true);
+                        Avatar::paintPhoto (g, av, r.userId);
                         if (off) g.endTransparencyLayer();
                     }
                     if (! off)
@@ -782,7 +785,7 @@ void Sidebar::paint (juce::Graphics& g)
     const auto& me = core.store().state().me;
     const juce::String part = me ? me->part.value_or ("other") : juce::String ("other");
     const auto av = juce::Rectangle<float> (pb.getX() + 5.0f, pb.getCentreY() - 14.0f, 28.0f, 28.0f);
-    Avatar::paintCircle (g, av, part, 16.0f, col::ink, true);
+    Avatar::paintPhoto (g, av, me ? me->id : juce::String());
     // v2: 친구 요청·초대가 있으면 내 프로필 아바타에 점 (지름 8, 흰 테두리 1.5, 아바타 오른쪽 위 top -1 right -2)
     {
         const auto& st = core.store().state();

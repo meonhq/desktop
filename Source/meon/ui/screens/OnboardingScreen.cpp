@@ -901,7 +901,7 @@ struct DoneView : StepView
         if (! meonCore().isPlugin()) addAndMakeVisible (note);
         const bool login = auth().cameFromLogin();
         const auto& me = state().me;
-        icon.setPart (me && me->part ? *me->part : juce::String ("other"));
+        icon.setUser (me ? me->id : juce::String());
         title.setText (login ? TXT ("다시 오셨네요") : TXT ("준비됐어요, ") + (me && me->nickname ? *me->nickname : juce::String()) + TXT ("님"));
         desc.setText (login ? TXT ("마지막으로 쓰던 설정 그대로 이어서 합주할 수 있어요")
                             : TXT ("공개 방에 들어가거나 직접 방을 만들어 합주를 시작해 보세요"));

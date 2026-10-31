@@ -111,6 +111,7 @@ public:
     std::function<void()> onDockSlotChanged;
     /** 친구 추가 (사이드바의 +) */
     void openAddFriend();
+    void devAddFriendState (const juce::String& state);   // 개발용 (디자인 비교): empty·typing·sent·error·requests
 
     static constexpr int sideWidthApp = 320, sideWidthPlugin = 240;
     /** 개발용 (다시 그리기 확인): 이 화면·방 카드 paint 횟수 */

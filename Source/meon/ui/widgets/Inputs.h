@@ -43,6 +43,9 @@ public:
     void setChatScrollbar (bool);
 
     juce::TextEditor& editor() { return ed; }
+    /** 한글 입력기가 글자를 조합하는 중이거나 방금(같은 키 누름에서) 조합을 끝냈다. 이때의 Enter 는 보내기가 아니다
+        (브라우저 KeyboardEvent.isComposing 과 같은 뜻. 맥 한글 입력기는 조합 중 Enter 에 글자를 확정하고 Enter 도 넘긴다) */
+    bool isComposing() const;
 
     std::function<void()> onChange, onReturn, onEscape, onFocusLost;
 
@@ -52,7 +55,20 @@ public:
     void focusOfChildComponentChanged (FocusChangeType) override { repaint(); }   // 포커스 테두리
 
 private:
-    juce::TextEditor ed;
+    /** 입력기 조합 상태를 기억하는 TextEditor (조합 중인 글자에 밑줄을 그을 때 = 조합 중) */
+    struct Editor : juce::TextEditor
+    {
+        bool composing = false;
+        juce::uint32 composeEndMs = 0;
+        void setTemporaryUnderlining (const juce::Array<juce::Range<int>>& r) override
+        {
+            const bool was = composing;
+            composing = ! r.isEmpty();
+            if (was && ! composing) composeEndMs = juce::Time::getMillisecondCounter();
+            juce::TextEditor::setTemporaryUnderlining (r);
+        }
+    };
+    Editor ed;
     juce::String placeholder;
     bool error = false, multi, borderless = false, shiftEnter = false, chatBar = false;
     float lineHeightPx = 0.0f;

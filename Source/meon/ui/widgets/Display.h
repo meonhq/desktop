@@ -25,13 +25,17 @@ private:
 
 /** 파트 아이콘 원. size 41(멤버 행)·32(친구 목록)·…, 테두리 #EBEBEB.
     상태 점(9px, 흰 테두리 2px): 온라인 포인트 #FFD8E4, 방에 있음 #1A1A1A, 오프라인 #D5D5D5 */
-class Avatar : public juce::Component
+class Avatar : public juce::Component,
+               private juce::ChangeListener
 {
 public:
     enum class Status { none, online, inRoom, offline };
     Avatar (float size, float iconPx);
-    void setPart (const juce::String& partKey) { part = partKey; repaint(); }
-    void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 아이콘을 흐린 글자색(#AAAAAA)으로, 옆 이름과 같게
+    ~Avatar() override;
+    /** 이 사용자의 프로필 사진 (없으면 디자인 기본 이미지). 파트 아이콘은 그리지 않는다 (2026-10-31 사용자 지시) */
+    void setUser (const juce::String& userId) { if (user != userId) { user = userId; repaint(); } }
+    void setPart (const juce::String& partKey) { part = partKey; }   // 예전 이름 (그리지 않는다)
+    void setDimmed (bool d) { dimmed = d; repaint(); }   // 오프라인·소리 꺼짐: 사진을 흐리게 (불투명도 0.4, 디자인 iconOp)
     void setInk (juce::Colour c) { ink = c; repaint(); } // 아이콘 색 = 주변 글자색 (기본 #1A1A1A)
     void setStatus (Status s) { status = s; repaint(); }
     /** 프로필 창: 상태 점 12×12 (아바타 오른쪽 아래에 붙임) */
@@ -46,13 +50,13 @@ public:
     }
 
     static juce::Colour statusColour (Status);
-    /** 원 + 파트 아이콘만 그린다 (채팅처럼 구성 요소 없이 직접 그리는 곳). partKey 가 비면 아이콘 없는 빈 원.
-        whiteFill: 원 안을 흰색으로 (나중에 프로필 사진이 생기면 이 자리에 들어간다) */
-    static void paintCircle (juce::Graphics&, juce::Rectangle<float> circle, const juce::String& partKey, float iconPx,
-                             juce::Colour ink, bool whiteFill);
+    /** 구성 요소 없이 직접 그리는 곳 (채팅·사이드바·방 카드): 사용자 사진 (없으면 기본 이미지)을 원으로 */
+    static void paintPhoto (juce::Graphics&, juce::Rectangle<float> circle, const juce::String& userId, float opacity = 1.0f);
 
 private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
     float size, iconPx;
+    juce::String user;
     juce::String part { "other" };
     bool dimmed = false;
     juce::Colour ink { col::ink };
@@ -221,6 +225,7 @@ public:
     const juce::String& getText() const { return text; }
     void setStyle (int weight, float px, juce::Colour ink);
     void setColour (juce::Colour c) { ink = c; repaint(); }
+    juce::Colour getColour() const { return ink; }
     void setJustification (juce::Justification j) { just = j; repaint(); }
     void setLineHeight (float px) { lineH = px; repaint(); }   // 0 이면 한 줄
     void setEllipsis (bool e) { ellipsis = e; repaint(); }

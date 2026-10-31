@@ -600,6 +600,8 @@ void MeonEditor::applyHomePreview()
         if (auto* sb = appRoot->getSidebar(); sb != nullptr && sb->onProfileMenu) sb->onProfileMenu();
     }
     else if (p == "rooms")  { if (home->onShowRooms) home->onShowRooms(); }   // 공개 방 쪽 (홈·사이드바 디자인)
+    else if (p.startsWith ("addfriend"))   // 친구 추가 창 상태 (addfriend=empty|typing|sent|error|requests, 디자인 비교)
+        home->devAddFriendState (p.fromFirstOccurrenceOf ("=", false, false).isEmpty() ? juce::String ("empty") : p.fromFirstOccurrenceOf ("=", false, false));
     else if (p.startsWith ("sidebar="))   // 사이드바가 접히는 중 e 에 멈춘 화면 (sidebar=0.5, 펼치는 중은 sidebar=open:0.5)
     {
         const bool open = p.contains ("open:");

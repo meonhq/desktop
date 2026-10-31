@@ -197,7 +197,7 @@ void RoomSettingsModal::submit()
 ManageMemberModal::ManageMemberModal (core::MeonCore& c, const core::JamSession::Member& m)
     : Modal (TXT ("멤버 관리"), 340), core (c), member (m)
 {
-    avatar.setPart (m.part.isNotEmpty() ? m.part : juce::String ("other"));
+    avatar.setUser (m.userId);
     for (auto* comp : std::initializer_list<juce::Component*> { &avatar, &hand, &kick })
         body.addAndMakeVisible (comp);
     hand.setConfirm (TXT ("한 번 더 누르면 넘겨요"), true);
@@ -238,7 +238,7 @@ struct JoinRequestList::Row : juce::Component
 {
     Row (JoinRequestList& o, const core::JoinRequest& r) : owner (o), req (r)
     {
-        avatar.setPart (r.user.part.value_or ("other"));
+        avatar.setUser (r.user.id);
         avatar.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (avatar);
         addAndMakeVisible (decline);
@@ -342,7 +342,7 @@ void JoinRequestList::resized()
 ProfileModal::ProfileModal (core::MeonCore& c, const core::UserPublic& u, bool jam)
     : Modal (TXT ("프로필"), 340), core (c), user (u), inJam (jam)
 {
-    avatar.setPart (u.part.value_or ("other"));
+    avatar.setUser (u.id);
     avatar.setLargeStatusDot (true);
     for (auto* comp : std::initializer_list<juce::Component*> { &avatar, &friendTag, &remove, &block, &unblock, &footer })
         body.addChildComponent (comp);
@@ -532,7 +532,7 @@ void ProfileModal::refresh()
     using S = Avatar::Status;
     const auto st = profile && isFriend ? profile->status.value_or ("offline") : juce::String();
     avatar.setStatus (st == "in_room" ? S::inRoom : (st == "online" ? S::online : (st == "offline" ? S::offline : S::none)));
-    avatar.setPart (user.part.value_or ("other"));
+    avatar.setUser (user.id);
 
     // 아래 버튼 (Q28): 요청 보냄 = 비활성, 요청 받음 = 거절·수락, 친구가 다른 공개 방에 있으면 참여·요청 (버그 27)
     const bool canRequest = profile && (rel == "none" || rel == "request_sent");

@@ -261,6 +261,11 @@ void TextInput::textEditorTextChanged (juce::TextEditor&)
 }
 
 void TextInput::textEditorReturnKeyPressed (juce::TextEditor&) { if (onReturn) onReturn(); }
+
+bool TextInput::isComposing() const
+{
+    return ed.composing || (ed.composeEndMs != 0 && juce::Time::getMillisecondCounter() - ed.composeEndMs < 60);
+}
 void TextInput::textEditorEscapeKeyPressed (juce::TextEditor&)
 {
     if (onEscape) { onEscape(); return; }

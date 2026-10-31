@@ -220,7 +220,7 @@ struct HomeScreen::FriendList : juce::Component
         {
             using S = Avatar::Status;
             const auto st = fr.status == "in_room" ? S::inRoom : (fr.status == "online" ? S::online : S::offline);
-            avatar.setPart (fr.user.part.value_or ("other"));
+            avatar.setUser (fr.user.id);
             avatar.setStatus (st);
             avatar.setDimmed (st == S::offline);
             avatar.setInterceptsMouseClicks (false, false);
@@ -854,78 +854,226 @@ bool HomeScreen::hitTest (int x, int y)
 
 namespace
 {
-    /** 친구 추가 (사이드바 +): 아이디 입력 + 요청. 결과는 입력 아래 한 줄 (홈 친구 추가 카드와 같은 문구) */
-    class AddFriendModal : public Modal
+    /** 친구 추가 (사이드바 +, 합주 최종 v2 디자인): 340 · 머리말(제목·닫기) · 받은 요청(있을 때) · 본문(설명·아이디 입력·결과 한 줄) · 아래 취소·요청.
+        결과: 빈 칸 → "아이디를 입력해 주세요" (빨강), 보냄 → "@아이디님에게 친구 요청을 보냈어요" (회색, 입력 비움).
+        디자인에 없는 결과(이미 친구·없는 아이디·내 아이디·이미 보냄·연결 오류)는 원래 앱 문구 그대로 같은 자리·같은 모양
+        (실패는 빨강, 알림은 회색). Enter 는 요청 (한글 조합 중 Enter 는 제외), Esc·바깥 누름은 닫기 */
+    class AddFriendModal : public Modal,
+                           private core::AppStore::Listener
     {
     public:
-        explicit AddFriendModal (core::MeonCore& c) : Modal (TXT ("친구 추가"), 400), core (c)
+        static constexpr int boxW = 340;
+        explicit AddFriendModal (core::MeonCore& c) : Modal (TXT ("친구 추가"), boxW), core (c)
         {
-            body.owner = this;
-            body.addAndMakeVisible (input);
-            body.addAndMakeVisible (send);
-            body.addChildComponent (note);
+            content.owner = this;
+            content.addAndMakeVisible (desc);
+            content.addAndMakeVisible (input);
+            content.addChildComponent (note);
+            content.addAndMakeVisible (footer);
+            footer.setButtons ({ &cancel, &send });
+            desc.setLineHeight (19.5f);   // 400 13/1.5
+            note.setLineHeight (14.0f);   // 400 12px, 줄 높이 normal (디자인 측정 14)
             input.setFontPx (14.0f);
             input.setMaxLength (16);
             input.transform = [] (const juce::String& t) { return t.toLowerCase(); };
-            input.onReturn = [this] { submit(); };
-            input.onChange = [this] { if (note.isVisible()) { note.setVisible (false); layoutHeight(); } };
+            input.onReturn = [this] { if (! input.isComposing()) submit(); };
+            input.onChange = [this] { refreshSend(); if (note.isVisible()) show ({}, false); };
+            cancel.onPress = [this] { if (onClose) onClose(); };
+            send.setClickableWhenDimmed (true);   // 비어 있으면 흐리지만 누르면 "아이디를 입력해 주세요"
             send.onPress = [this] { submit(); };
-            note.setLineHeight (15.0f);
-            layoutHeight();
+            core.store().addListener (this);
+            rebuildRequests();
+            refreshSend();
         }
+        ~AddFriendModal() override { core.store().removeListener (this); }
         void focus() { input.grabKeyboardFocus(); }
 
+        // 개발용 (화면 자가 테스트·디자인 비교 스냅숏)
+        TextInput& devInput() { return input; }
+        Button& devSend() { return send; }
+        Button& devCancel() { return cancel; }
+        const Text& devNote() const { return note; }
+        int devRequestRows() const { return requests.size(); }
+
     private:
-        struct Body : juce::Component
+        /** 받은 요청 한 줄 (높이 47.5): 패딩 6·9, 아바타 32, 이름 600 13/1.3 · 파트 400 12/1.3 #767676 (사이 3, 글 기둥 35.5 가 줄 높이를 정한다),
+            거절·수락 미니 버튼 (사이 9) */
+        struct RequestRow : juce::Component
         {
-            AddFriendModal* owner = nullptr;
+            RequestRow (AddFriendModal& o, const core::FriendRequest& r) : owner (o), request (r)
+            {
+                name = r.from.nickname.value_or (r.from.username);
+                part = icons::partLabel (r.from.part.value_or ("other"));
+                avatar.setUser (r.from.id);
+                avatar.setInterceptsMouseClicks (false, false);
+                addAndMakeVisible (avatar);
+                addAndMakeVisible (decline);
+                addAndMakeVisible (accept);
+                // id 를 먼저 복사한다: 수락·거절하면 목록이 다시 만들어지며 이 줄이 지워진다
+                decline.onPress = [this] { const auto id = request.id; owner.core.home().declineFriendRequest (id); };
+                accept.onPress = [this] { const auto id = request.id; owner.core.home().acceptFriendRequest (id); };
+            }
+            void paint (juce::Graphics& g) override
+            {
+                const int x = 9 + 32 + 9, right = decline.getX() - 9;
+                const float lh = 13.0f * 1.3f, lh2 = 12.0f * 1.3f, top = ((float) getHeight() - (lh + 3.0f + lh2)) * 0.5f;
+                g.setColour (col::ink);
+                g.setFont (font (600, 13.0f));
+                g.drawText (name, juce::Rectangle<float> ((float) x, top, (float) (right - x), lh), juce::Justification::centredLeft, true);
+                g.setColour (col::inkSub);
+                g.setFont (font (400, 12.0f));
+                g.drawText (part, juce::Rectangle<float> ((float) x, top + lh + 3.0f, (float) (right - x), lh2), juce::Justification::centredLeft, true);
+            }
             void resized() override
             {
-                if (owner == nullptr) return;
-                auto r = getLocalBounds().reduced (metric::padX);
-                auto row = r.removeFromTop (metric::buttonH);
-                const int sw = owner->send.getIdealWidth();
-                owner->send.setBounds (row.removeFromRight (sw));
-                row.removeFromRight (metric::gap);
-                owner->input.setBounds (row);
-                r.removeFromTop (6);
-                owner->note.setBounds (r.withHeight (juce::jmax (15, owner->note.getHeightForWidth (r.getWidth()))));
+                auto r = getLocalBounds().reduced (9, 0);
+                avatar.setBounds (r.removeFromLeft (32).withSizeKeepingCentre (32, 32));
+                const int aw = accept.getIdealWidth(), dw = decline.getIdealWidth();
+                accept.setBounds (r.removeFromRight (aw).withSizeKeepingCentre (aw, metric::smallH));
+                r.removeFromRight (9);
+                decline.setBounds (r.removeFromRight (dw).withSizeKeepingCentre (dw, metric::smallH));
             }
-        } body;
+            AddFriendModal& owner;
+            core::FriendRequest request;
+            juce::String name, part;
+            Avatar avatar { 32.0f, 16.0f };
+            Button decline { Button::Kind::small, TXT ("거절") }, accept { Button::Kind::smallPrimary, TXT ("수락") };
+        };
+
+        static constexpr int reqPad = 9, reqLabelH = 28, reqGap = 2;
+        static constexpr float reqRowH = 6.0f + 13.0f * 1.3f + 3.0f + 12.0f * 1.3f + 6.0f;   // 47.5
+        static constexpr int bodyPad = 18, bodyGap = 9, inputH = 36;
+
+        struct Content : juce::Component
+        {
+            AddFriendModal* owner = nullptr;
+            void paint (juce::Graphics& g) override
+            {
+                if (owner == nullptr) return;
+                const int rh = owner->requestsHeight();
+                if (rh > 0)
+                {
+                    g.setColour (col::inkSub);
+                    g.setFont (font (500, 12.0f));
+                    g.drawText (TXT ("받은 요청 ") + juce::String (owner->requests.size()), reqPad + 9, reqPad, getWidth() - 2 * (reqPad + 9), reqLabelH,
+                                juce::Justification::centredLeft, true);
+                    g.setColour (col::borderSubtle);
+                    hairline::horizontal (g, *this, 0.0f, (float) rh, (float) getWidth());   // 본문 위 구분선
+                }
+            }
+            void resized() override { if (owner != nullptr) owner->layout(); }
+        } content;
+
         core::MeonCore& core;
+        juce::OwnedArray<RequestRow> requests;
+        Text desc { TXT ("친구의 아이디를 입력하면 친구 요청을 보내요"), 400, 13.0f, col::inkSub };
         TextInput input { TXT ("친구 아이디 입력") };
-        Button send { Button::Kind::primary, TXT ("요청 보내기") };
         Text note { {}, 400, 12.0f, col::inkSub };
+        Button cancel { Button::Kind::cancel, TXT ("취소") }, send { Button::Kind::primary, TXT ("요청") };
+        ModalFooter footer;
         std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 
-        void layoutHeight()
+        int innerW() const { return boxW - 2 * bodyPad; }
+        /** 줄 수 × 줄 높이 (디자인: 설명 13/1.5 = 19.5, 결과 12px 줄 높이 normal = 14) */
+        static int linesHeight (const juce::String& text, const juce::Font& f, int w, float lineH)
         {
-            const int w = 400 - metric::padX * 2;
-            const int nh = note.isVisible() ? 6 + juce::jmax (15, note.getHeightForWidth (w)) : 0;
-            setContent (&body, metric::padX * 2 + metric::buttonH + nh);
+            // 줄 수: 글자 높이 fh, 줄 사이 s 로 쌓인 높이 h = n·fh + (n-1)·s 에서 n 을 구한다
+            const float fh = f.getHeight(), sp = juce::jmax (0.0f, lineH - fh);
+            const float h = meon::paragraphHeightWithEmoji (text, f, (float) w, lineH);
+            const int lines = juce::jmax (1, juce::roundToInt ((h + sp) / (fh + sp)));
+            return juce::roundToInt ((float) lines * lineH);
         }
-        void show (const juce::String& t)
+        int descH() const { return linesHeight (desc.getText(), font (400, 13.0f), innerW(), 19.5f); }
+        int noteH() const { return linesHeight (note.getText(), font (400, 12.0f), innerW(), 14.0f); }
+        int requestsHeight() const
+        {
+            if (requests.isEmpty()) return 0;
+            return juce::roundToInt ((float) (reqPad + reqLabelH + reqPad + 1) + (float) requests.size() * ((float) reqGap + reqRowH));   // + 구분선 1
+        }
+        int bodyHeight() const
+        {
+            int h = bodyPad + descH() + bodyGap + inputH;
+            if (note.isVisible()) h += bodyGap + noteH();
+            return h + bodyPad;
+        }
+        void layout()
+        {
+            const int w = content.getWidth();
+            int y = 0;
+            if (! requests.isEmpty())
+            {
+                float fy = (float) (reqPad + reqLabelH);
+                for (auto* r : requests)
+                {
+                    fy += (float) reqGap;
+                    const int top = juce::roundToInt (fy), bottom = juce::roundToInt (fy + reqRowH);
+                    r->setBounds (reqPad, top, w - 2 * reqPad, bottom - top);
+                    fy += reqRowH;
+                }
+                y = requestsHeight();
+            }
+            y += bodyPad;
+            const int dh = descH();
+            desc.setBounds (bodyPad, y, innerW(), dh);
+            y += dh + bodyGap;
+            input.setBounds (bodyPad, y, innerW(), inputH);
+            y += inputH;
+            if (note.isVisible())
+            {
+                y += bodyGap;
+                note.setBounds (bodyPad, y, innerW(), noteH());
+            }
+            footer.setBounds (0, content.getHeight() - ModalFooter::height, w, ModalFooter::height);
+        }
+        void relayout()
+        {
+            setContent (&content, requestsHeight() + bodyHeight() + ModalFooter::height);
+            layout();
+            content.repaint();
+        }
+        void rebuildRequests()
+        {
+            requests.clear();
+            for (auto& r : core.store().state().friendRequests)
+                content.addAndMakeVisible (requests.add (new RequestRow (*this, r)));
+            relayout();
+        }
+        void stateChanged (core::StateKey k) override
+        {
+            if (k == core::StateKey::friendRequests) rebuildRequests();
+        }
+        void refreshSend()
+        {
+            const bool ok = input.getText().trim().trimCharactersAtStart ("@").isNotEmpty();
+            send.setDimmed (! ok);
+            footer.resized();
+        }
+        void show (const juce::String& t, bool error)
         {
             note.setText (t);
+            note.setColour (error ? col::danger : col::inkSub);
             note.setVisible (t.isNotEmpty());
-            layoutHeight();
-            body.resized();
+            relayout();
         }
         void submit()
         {
             const auto id = input.getText().trim().trimCharactersAtStart ("@");
-            if (id.isEmpty()) { show (TXT ("아이디를 입력해 주세요")); return; }
+            if (id.isEmpty()) { show (TXT ("아이디를 입력해 주세요"), true); return; }
             std::weak_ptr<bool> weak = alive;
             core.home().sendFriendRequest (id, [this, weak, id] (core::Result<juce::String> r)
             {
                 if (weak.expired()) return;
                 if (r.ok())
                 {
-                    show (msg::friendRequestResult (r.get(), id.toLowerCase()));
-                    if (r.get() == "sent" || r.get() == "accepted") input.setText ({});
+                    const auto& res = r.get();
+                    // 보냄·친구 됨·이미 친구·이미 보냄 = 알림 (회색), 없는 아이디·내 아이디 = 실패 (빨강)
+                    const bool fail = res == "not_found" || res == "self";
+                    if (res == "sent" || res == "accepted") input.setText ({});
+                    refreshSend();
+                    show (msg::friendRequestResult (res, id.toLowerCase()), fail);
                 }
                 else
-                    show (msg::friendRequestError (r.err()));
+                    show (msg::friendRequestError (r.err()), true);
             });
         }
     };
@@ -937,6 +1085,40 @@ void HomeScreen::openAddFriend()
     auto* raw = m.get();
     showModal (std::move (m));
     raw->focus();
+}
+
+void HomeScreen::devAddFriendState (const juce::String& state)
+{
+    // 개발용 (디자인 비교 스냅숏 --screen=home:addfriend=empty|typing|sent|error|requests): 친구 추가 창을 그 상태로.
+    // requests 가 아니면 받은 요청을 먼저 거절해 비운다 (디자인 기본값: 받은 요청 없음)
+    juce::Component::SafePointer<HomeScreen> safe (this);
+    auto clearRequests = [safe, state]
+    {
+        if (safe != nullptr && state != "requests")
+            for (auto r : safe->core.store().state().friendRequests) safe->core.home().declineFriendRequest (r.id);
+    };
+    clearRequests();
+    juce::Timer::callAfterDelay (1200, clearRequests);   // 가짜 서버의 받은 요청이 늦게 오면 한 번 더
+    juce::Timer::callAfterDelay (1600, [safe, state]
+    {
+        if (safe == nullptr) return;
+        safe->openAddFriend();
+        auto* m = dynamic_cast<AddFriendModal*> (safe->modal.get());
+        if (m == nullptr) return;
+        if (state == "typing" || state == "sent") m->devInput().setText ("minjun", true);
+        if (state == "sent") m->devSend().triggerClick();
+        if (state == "error") m->devSend().triggerClick();   // 빈 칸에서 요청
+        juce::Timer::callAfterDelay (500, [safe]
+        {
+            if (safe == nullptr) return;
+            if (auto* mm = dynamic_cast<AddFriendModal*> (safe->modal.get()))
+            {
+                mm->devInput().grabKeyboardFocus();   // 디자인처럼 입력 칸에 포커스
+                const auto b = mm->boxBounds() + mm->getScreenPosition();
+                std::cerr << "MEON dev: addfriend box " << b.getX() << " " << b.getY() << " " << b.getWidth() << " " << b.getHeight() << std::endl;
+            }
+        });
+    });
 }
 
 void HomeScreen::showModal (std::unique_ptr<Modal> m)

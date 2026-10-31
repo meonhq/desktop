@@ -496,7 +496,7 @@ struct NotificationList::Row : juce::Component
         inviteId = inv.id;
         title = inv.from.nickname.value_or (inv.from.username) + TXT ("님이 초대했어요");
         sub = inv.room.title;
-        avatar.setPart (inv.from.part.value_or ("other"));
+        avatar.setUser (inv.from.id);
         avatar.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (avatar);
         addAndMakeVisible (decline);
@@ -520,7 +520,7 @@ struct NotificationList::Row : juce::Component
     {
         title = r.from.nickname.value_or (r.from.username);
         sub = TXT ("친구 요청 · ") + icons::partLabel (r.from.part.value_or ("other"));
-        avatar.setPart (r.from.part.value_or ("other"));
+        avatar.setUser (r.from.id);
         avatar.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (avatar);
         addAndMakeVisible (decline);

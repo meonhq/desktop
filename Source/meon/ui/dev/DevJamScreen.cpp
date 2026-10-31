@@ -53,7 +53,7 @@ struct DevJamScreen::Row : juce::Component
 
     void update (const JamSession::Member& m)
     {
-        avatar.setPart (m.part);
+        avatar.setUser (m.userId);
         avatar.setDimmed (! me && (m.muted || m.state != PeerState::State::connected));
         name.setText ((m.nickname.isNotEmpty() ? m.nickname : m.userId.substring (0, 10)) + (m.isHost ? TXT (" · 방장") : juce::String())
                       + (me ? TXT (" · 나") : juce::String()) + "  " + icons::partLabel (m.part));

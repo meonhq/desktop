@@ -486,7 +486,7 @@ void HomePage::paint (juce::Graphics& g)
                 const auto row = rows.removeFromTop (recentRowH);
                 rows.removeFromTop (recentGap);
                 const auto av = juce::Rectangle<float> ((float) row.getX() + 9.0f, (float) row.getCentreY() - 16.0f, 32.0f, 32.0f);
-                Avatar::paintCircle (g, av, r.part, 16.0f, col::ink, true);
+                Avatar::paintPhoto (g, av, {});   // 목 데이터 (사용자 id 없음): 기본 이미지
                 if (r.friend_)
                 {
                     const auto d = juce::Rectangle<float> (av.getRight() + 1.0f - 10.0f, av.getBottom() + 1.0f - 10.0f, 10.0f, 10.0f);
@@ -534,7 +534,7 @@ void HomePage::paint (juce::Graphics& g)
         const int x0 = l.profileCard.getX() + pad;
         const int y0 = l.profileCard.getY() + cardHeadH + 1 + pad;
         const auto av = juce::Rectangle<float> ((float) x0, (float) y0, 48.0f, 48.0f);
-        Avatar::paintCircle (g, av, part, 24.0f, col::ink, true);
+        Avatar::paintPhoto (g, av, me ? me->id : juce::String());
         const int tx = x0 + 48 + 12, right = copyBtn.getX() - 9;
         label (g, me ? me->nickname.value_or (me->username) : juce::String(), { tx, y0 + 4, right - tx, 20 }, 600, 16.0f, col::ink);
         const auto pf = font (400, 12.0f);
@@ -651,7 +651,7 @@ void HomePage::paint (juce::Graphics& g)
                     const auto av = juce::Rectangle<float> (ax, (float) row.getCentreY() - 14.0f, 28.0f, 28.0f);
                     g.setColour (col::white);
                     g.fillEllipse (av.expanded (2.0f));   // 흰 테두리 2 (겹친 아바타 사이)
-                    Avatar::paintCircle (g, av, gr.friends[(size_t) i].user.part.value_or ("other"), 14.0f, col::ink, true);
+                    Avatar::paintPhoto (g, av, gr.friends[(size_t) i].user.id);
                     ax += 28.0f - 8.0f;
                 }
                 const int tx = (int) (ax + 8.0f) + 9;
