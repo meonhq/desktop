@@ -33,7 +33,7 @@ private:
 };
 
 /** 폭이 바뀌는 판의 그림자만 (공개 방 위 내 오디오·모니터 카드: 방 화면과 오가며 폭이 바뀐다). 진하기 opacity (0~1).
-    흐림은 판 높이·화면 배율이 바뀔 때만 한 번 계산하고, 폭은 왼쪽·오른쪽 끝을 그대로 두고 가운데 한 줄을 늘려 붙인다
+    흐림은 판 높이·화면 배율이 바뀔 때만 한 번 계산하고, 폭은 왼쪽·오른쪽 끝을 그대로 두고 가운데 한 줄을 타일로 이어 붙인다
     (판 가장자리에서 모서리 + 그림자 폭보다 안쪽은 가로로 같은 그림자라서 같은 그림이 된다) */
 class StretchShadow
 {
@@ -41,7 +41,7 @@ public:
     void paint (juce::Graphics&, const juce::Component& c, juce::Rectangle<int> panel, float opacity);
     int getBuildCount() const { return builds; }
 private:
-    juce::Image shadow;
+    juce::Image shadow, midTile;   // midTile: 가운데 한 줄을 가로로 32 번 (타일로 붙인다)
     int cachedH = 0, builds = 0;
     float cachedScale = 0.0f;
     PopoverSurface narrow;   // 끝끼리 겹칠 만큼 좁으면 (거의 없음) 보통 방식

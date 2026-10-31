@@ -595,6 +595,16 @@ void Sidebar::setCollapsed (bool b)
     syncSections();
 }
 
+void Sidebar::devToggleSection (const juce::String& name)
+{
+    if (name == "rooms") body->roomsOpen = ! body->roomsOpen;
+    else if (name == "friends") body->friendsOpen = ! body->friendsOpen;
+    else if (name == "offline") body->offlineOpen = ! body->offlineOpen;
+    else return;
+    syncSections();
+    body->rebuildAndLayout();
+}
+
 void Sidebar::setForcedCollapsed (bool b)
 {
     // AppRoot::resized 가 부른다: 그 안에서는 다시 배치하지 않는다 (부른 쪽이 곧 currentWidth 를 읽는다). 다음 프레임부터는 보통대로

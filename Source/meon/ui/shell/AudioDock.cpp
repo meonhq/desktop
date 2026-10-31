@@ -163,9 +163,19 @@ void AudioDock::resized()
     }
     const int sendW = ws.first, monW = ws.second;
     auto bottom = area;
+    const auto oldSend = sendCard.getBounds(), oldMon = monCard.getBounds();
     sendCard.setBounds (bottom.removeFromLeft (sendW));
     bottom.removeFromLeft (metric::gap);
     monCard.setBounds (bottom.removeFromLeft (monW));
+    // 그림자는 카드 바깥(그림자 폭)까지 그린다. JUCE 는 카드가 움직이면 카드의 이전·새 자리만 다시 그리므로,
+    // 그림자가 있으면 이전·새 자리를 합친 영역을 그림자 폭만큼 넓혀 다시 그린다 (없으면 바깥 그림자 끝이 잔상으로 남는다).
+    // 크기·자리가 바뀔 때만: 미터만 움직일 때는 여기를 지나지 않는다
+    if (shadow > 0.0f)
+    {
+        const int m = PopoverSurface::shadowMargin();
+        if (oldSend != sendCard.getBounds()) repaint (oldSend.getUnion (sendCard.getBounds()).expanded (m));
+        if (oldMon != monCard.getBounds()) repaint (oldMon.getUnion (monCard.getBounds()).expanded (m));
+    }
     sendCard.setOpen (sendOpen);
     sendCard.setFoldProgress (eSend);
     monCard.setOpen (monOpen);

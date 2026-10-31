@@ -197,31 +197,50 @@ void StretchShadow::paint (juce::Graphics& g, const juce::Component& c, juce::Re
     }
     const auto grid = hairline::gridFor (g, c);
     const float s = grid.scale;
+    // 물리 px: 그림 = 여백 pad + 판 + 여백. 왼쪽 [0, pad + E), 오른쪽 [W - pad - E, W), 가운데 한 줄 (pad + E)
+    const int pad = (int) std::ceil ((float) PopoverSurface::shadowMargin() * s - 0.001f);
+    const int E = juce::roundToInt ((float) edge * s);
     if (! shadow.isValid() || cachedH != panel.getHeight() || cachedScale != s)
     {
         shadow = PopoverSurface::renderShadow (refW, panel.getHeight(), s);
         cachedH = panel.getHeight(); cachedScale = s;
         ++builds;
+        // 가운데 한 줄을 가로로 이어 붙인 타일. 늘려 그리면(크기 변환) JUCE 가 픽셀을 고를 때 소수 오차로 한 줄씩 어긋나
+        // 다시 그린 영역의 원점에 따라 결과가 달라진다(일부만 다시 그리면 이음매). 타일은 옮겨 붙이기만 해서 늘 같다
+        midTile = {};
+        if (shadow.isValid() && pad + E < shadow.getWidth())
+        {
+            const int th = shadow.getHeight();
+            midTile = juce::Image (juce::Image::ARGB, 32, th, false);
+            const juce::Image::BitmapData src (shadow, juce::Image::BitmapData::readOnly);
+            juce::Image::BitmapData dst (midTile, juce::Image::BitmapData::writeOnly);
+            for (int y = 0; y < th; ++y)
+            {
+                const auto px = *reinterpret_cast<const juce::PixelARGB*> (src.getPixelPointer (pad + E, y));
+                for (int x = 0; x < 32; ++x) *reinterpret_cast<juce::PixelARGB*> (dst.getPixelPointer (x, y)) = px;
+            }
+        }
     }
     if (! shadow.isValid()) return;
-    // 물리 px: 그림 = 여백 pad + 판 + 여백. 왼쪽 [0, pad + E), 오른쪽 [W - pad - E, W), 가운데 한 줄 (pad + E)
     const int W = shadow.getWidth(), H = shadow.getHeight();
-    const int pad = (int) std::ceil ((float) PopoverSurface::shadowMargin() * s - 0.001f);
-    const int E = juce::roundToInt ((float) edge * s);
     const int targetPw = juce::roundToInt ((float) panel.getWidth() * s);
     const float x0 = grid.snapX ((float) panel.getX()) - (float) pad / s, y0 = grid.snapY ((float) panel.getY()) - (float) pad / s;
     const auto base = juce::AffineTransform::scale (1.0f / s).translated (x0, y0);
     const auto left = shadow.getClippedImage ({ 0, 0, pad + E, H });
     const auto right = shadow.getClippedImage ({ W - pad - E, 0, pad + E, H });
-    const auto mid = shadow.getClippedImage ({ pad + E, 0, 1, H });
-    const int midW = targetPw - 2 * E;   // 늘려 붙일 물리 px
+    const int midW = targetPw - 2 * E;   // 가운데 물리 px
     juce::Graphics::ScopedSaveState ss (g);
-    g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);   // 물리 픽셀 그대로 (가운데 한 줄은 그대로 늘린다)
+    g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);   // 물리 픽셀 그대로
     g.setOpacity (opacity);
     g.drawImageTransformed (left, base);
-    if (midW > 0)
-        g.drawImageTransformed (mid, juce::AffineTransform::scale ((float) midW, 1.0f).translated ((float) (pad + E), 0.0f).followedBy (base));
     g.drawImageTransformed (right, juce::AffineTransform::translation ((float) (pad + E + juce::jmax (0, midW)), 0.0f).followedBy (base));
+    if (midW > 0 && midTile.isValid())
+    {
+        juce::FillType tile (midTile, juce::AffineTransform::translation ((float) (pad + E), 0.0f).followedBy (base));
+        tile.setOpacity (opacity);
+        g.setFillType (tile);
+        g.fillRect (juce::Rectangle<float> (x0 + (float) (pad + E) / s, y0, (float) midW / s, (float) H / s));
+    }
 }
 
 void SurfaceComponent::paintSurface (juce::Graphics& g, juce::Colour fill) { surface.paint (g, *this, panel(), fill); }

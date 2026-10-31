@@ -13,8 +13,17 @@ inline juce::RectangleList<int> watch;
 inline int hits = 0;
 inline juce::StringArray hitNames;
 
+// 이름이 unionName 인 구성 요소가 그린 영역을 모두 합친다 (화면 좌표): 접는 동안 그림자 자리까지 다시 그렸는지 (--uitest=dock)
+inline juce::String unionName;
+inline juce::Rectangle<int> unionClip;
+
 inline void note (const juce::Component& c, const juce::Graphics& g, const char* name)
 {
+    if (unionName.isNotEmpty() && unionName == name)
+    {
+        const auto area = c.localAreaToGlobal (g.getClipBounds());
+        unionClip = unionClip.isEmpty() ? area : unionClip.getUnion (area);
+    }
     if (watch.isEmpty()) return;
     const auto clip = c.localAreaToGlobal (g.getClipBounds());
     if (! clip.isEmpty() && watch.containsRectangle (clip)) { ++hits; hitNames.addIfNotAlreadyThere (name); }

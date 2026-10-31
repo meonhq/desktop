@@ -2415,6 +2415,7 @@ void UiSelfTest::addDockTests()
     {
         juce::Rectangle<int> roomCards, roomsCards, mid;
         float midShadow = -1.0f;
+        juce::Rectangle<int> foldOld;   // 접기 전 내 오디오 카드 (화면 좌표)
         int toasts = 0;
         bool retry = false;
         juce::uint32 countFrom = 0;
@@ -2667,6 +2668,29 @@ void UiSelfTest::addDockTests()
         devprobe::watch.clear();
         expect (d->devShadow (0).getBuildCount() == 1 && d->devShadow (1).getBuildCount() == 1, TXT ("그림자: 한 번만 계산 (") + juce::String (d->devShadow (0).getBuildCount()) + ")");
     }, 0);
+    // 공개 방에서 카드를 접는 동안: 카드 밖 그림자 자리(이전·새 자리를 합친 영역 + 그림자 폭)까지 다시 그린다.
+    // 카드 자리만 다시 그리면 이전 그림자 끝이 잔상으로 남는다 (2026-10-31 잔상 버그)
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        sh->foldOld = d->sendCard.getScreenBounds();
+        devprobe::unionName = "AudioDock";
+        devprobe::unionClip = {};
+        d->devToggleFold ("send");
+    }, 300);
+    add ([this, sh]
+    {
+        auto* d = root.dock.get();
+        const int m = PopoverSurface::shadowMargin();
+        // 이전 카드 아래 그림자 (창 밖으로 나간 부분은 뺀다)
+        const auto below = juce::Rectangle<int> (sh->foldOld.getX(), sh->foldOld.getBottom(), sh->foldOld.getWidth(), m).getIntersection (root.getScreenBounds());
+        std::cerr << "UITEST INFO dock fold repaint: old card " << sh->foldOld.toString() << " shadow below " << below.toString()
+                  << " dock painted " << devprobe::unionClip.toString() << std::endl;
+        expect (devprobe::unionClip.contains (below), TXT ("공개 방 카드 접기: 이전 카드 아래 그림자 자리까지 다시 그린다 (") + devprobe::unionClip.toString() + ")");
+        devprobe::unionName = {};
+        d->devToggleFold ("send");   // 되돌림
+    }, 500);
+    add ([] {}, 400);
     // 방 화면도
     add ([clickRoom] { clickRoom(); }, 110);
     add ([this, sh]

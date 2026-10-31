@@ -69,6 +69,8 @@ public:
     SectionInfo devSection (const juce::String& name) const;
     /** 개발용: 섹션 머리말("참여 중"·"친구"·"오프라인")의 사이드바 안 위치 (펼쳤을 때만) */
     juce::Rectangle<int> devSectionHeader (const juce::String& text) const;
+    /** 개발용: 섹션("rooms"·"friends"·"offline") 머리말을 누른 것처럼 접거나 편다 (--anim-seq) */
+    void devToggleSection (const juce::String& name);
     /** 개발용 스냅숏: 접히는(open=false)·펼쳐지는 중 e 에 멈춘다 (--screen=home:sidebar=0.5) */
     void previewFold (bool open, float e);
 

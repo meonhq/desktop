@@ -95,6 +95,9 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
     devMockChrome = ! pluginMode && meon::devOptions()["chrome"] == "mac";
     devMockWin = ! pluginMode && meon::devOptions()["chrome"] == "win";
     devJam = meon::devOptions().getAllKeys().contains ("dev-jam");
+    // --global-scale=1.25: 화면 배율이 정수가 아닐 때(윈도우 125%·150%)처럼 그린다. 리눅스에서 다시 그리기 확인용
+    if (const auto gs = meon::devOptions()["global-scale"]; gs.isNotEmpty())
+        juce::Desktop::getInstance().setGlobalScaleFactor (juce::jlimit (0.5f, 3.0f, gs.getFloatValue()));
     {
         const auto scr = meon::devOptions()["screen"];
         if (scr == "home" || scr.startsWith ("home:"))
@@ -527,6 +530,31 @@ void MeonEditor::applyHomePreview()
         appRoot->getSidebar()->setCollapsed (true);   // 실제로 접는다 (멈춘 미리 보기는 프레임마다 다시 그려 다시 그리기 확인을 흐린다)
     auto* home = appRoot->getHome();
     const auto p = devHomePreview;
+    // --anim-seq=sidebar,rooms,send,min,...: 화면이 준비된 뒤(2.5초) 1초 간격으로 하나씩 움직이고, 0.7초 뒤 창 전체를 다시 그린다.
+    // 녹화해서 다시 그리기 직전·직후 프레임이 다르면 그 자리가 잔상이다 (다시 그리기 확인용)
+    if (const auto seq = juce::StringArray::fromTokens (meon::devOptions()["anim-seq"], ",", ""); ! seq.isEmpty())
+    {
+        juce::Component::SafePointer<MeonEditor> safe (this);
+        for (int k = 0; k < seq.size(); ++k)
+        {
+            const auto act = seq[k].trim();
+            juce::Timer::callAfterDelay (2500 + 1000 * k, [safe, act]
+            {
+                if (safe == nullptr || safe->appRoot == nullptr) return;
+                auto& root = *safe->appRoot;
+                auto* sb = root.getSidebar();
+                if (act == "sidebar") sb->toggleCollapsed();
+                else if (act == "rooms" || act == "friends" || act == "offline") sb->devToggleSection (act);
+                else if (act == "send" || act == "mon" || act == "chat") { if (auto* s = root.getJamScreen()) s->devToggleFold (act); }
+                else if (act == "min" || act == "unmin") root.setMinimized (act == "min");
+                else if (act == "modal") { if (sb->onAddFriend) sb->onAddFriend(); }
+                else if (act == "close") { if (auto* h = root.getHome()) h->closeOverlays(); if (auto* s = root.getJamScreen()) s->closeOverlays(); }
+                std::cerr << "MEON dev: anim " << act << std::endl;
+            });
+            juce::Timer::callAfterDelay (2500 + 1000 * k + 700, [safe] { if (safe != nullptr) safe->repaint(); });
+            juce::Timer::callAfterDelay (2500 + 1000 * k + 850, [safe] { if (safe != nullptr) safe->repaint(); });   // 두 번째: 그리기 자체의 흔들림과 구별
+        }
+    }
     if (p == "uitest")
     {
         // 화면 자가 테스트: 끝나면 앱을 닫고 실패 수를 종료 코드로 (linux.yml)
