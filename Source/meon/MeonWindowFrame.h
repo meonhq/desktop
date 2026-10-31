@@ -10,6 +10,7 @@
 //                윈도우 10 = 0 (내용이 창 전체, 운영체제 테두리 #707070 은 없고 앱이 네 변 1px #EBEBEB, 그림자는 DwmExtendFrameIntoClientArea 1px).
 //                최대화: 화면 밖으로 나간 크기 조절 두께. JUCE 는 틀 두께를 자기 크기 변경 때만 다시 읽으므로, 상태가 바뀌면
 //                앱이 창을 움직이지 않고 다시 읽게 한다 (holdPosition, MeonEditor::checkJuceFrame)
+//     상태 바뀜  WM_WINDOWPOSCHANGED (JUCE 처리 뒤)에서 본다. JUCE 가 이 메시지에서 DefWindowProc 를 부르지 않아 WM_SIZE 는 오지 않는다
 //     크기       보통 창의 내용 크기는 배율에서 논리 px 정수로 떨어지는 물리 px 의 배수 (125% 5, 150% 3): JUCE 가 아는 크기 = 실제
 //     크기 조절  창 바깥 끝에서 크기 조절 두께 안쪽 (윈도우 10 은 내용 끝, 위는 내용 맨 위 줄). 최대화·전체 화면은 없음
 //     창 버튼    운영체제 창 버튼은 어떤 상태에서도 그려지지 않는다: 최소화·닫기는 늘 앱 화면(HTCLIENT), 최대화는 윈도우 11 에서만
@@ -87,6 +88,7 @@ struct Probe
     int pixelStep = 1;                // 내용 크기 단위 (논리 px 정수로 떨어지는 물리 px)
     long shadowResult = 1;            // DwmExtendFrameIntoClientArea 결과 (0 = 됨)
     int bandPaints = 0;               // 윈도우 10 가장자리 1px 을 불투명으로 다시 놓은 횟수
+    int modeChanges = 0;              // 상태(보통·최대화·전체 화면·최소화)가 바뀐 것을 본 횟수 (WM_WINDOWPOSCHANGED)
     int maxFrameMatchesWork = -1;     // 최대화: 창 - 크기 조절 두께 = 작업 영역 (1 같음, 0 다름, -1 최대화 아님)
     std::string os;
 };
@@ -119,6 +121,8 @@ void devAltSpace();
 void devKey (int virtualKey);
 /** 개발용: 창에 키 누름을 직접 보낸다 (앞 창이 아니어도. F11 시험) */
 void devPostKey (void* hwnd, int virtualKey);
+/** 개발용: 이 창보다 위에 있는 보이는 창들이 이 창을 덮는 자리 (화면 물리 px, x·y·w·h 씩). 화면 비교에서 남의 픽셀을 빼려고 */
+std::vector<int> devWindowsAbove (void* hwnd);
 /** 개발용: 창 전체를 WM_PAINT 로 바로 다시 그린다 (창 프로시저를 거친다: 화면 비교 전에) */
 void devRedrawNow (void* hwnd);
 void devEscape();

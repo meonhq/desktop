@@ -1954,10 +1954,17 @@ void UiSelfTest::addWinChromeTests()
         expect (row0 == "EBEBEB", TXT ("위 테두리 #EBEBEB 1px (") + juce::String (row0) + ")");
         const int cy = p.client[1] + p.client[3] / 2;
         const auto edge = [&] (int x, int y) { return juce::String (meon::winframe::devScreenPixels (x, y, 1, 1).substr (0, 6)); };
-        const auto l = p.win11 ? edge (p.client[0] - 1, cy) : edge (p.client[0], cy);
-        const auto r = p.win11 ? edge (p.client[0] + p.client[2], cy) : edge (p.client[0] + p.client[2] - 1, cy);
-        const auto b = p.win11 ? edge (midX, p.client[1] + p.client[3]) : edge (midX, p.client[1] + p.client[3] - 1);
-        expect (l == "EBEBEB" && r == "EBEBEB" && b == "EBEBEB", TXT ("왼쪽·오른쪽·아래 테두리 #EBEBEB 1px (") + l + " " + r + " " + b + ")");
+        // 모니터 밖(창이 모니터 끝에 붙어 테두리가 화면 밖)인 변은 읽을 수 없어 세지 않는다
+        const auto onMonitor = [&] (int x, int y) { return x >= p.monitor[0] && y >= p.monitor[1] && x < p.monitor[0] + p.monitor[2] && y < p.monitor[1] + p.monitor[3]; };
+        const auto edgeOr = [&] (int x, int y) { return onMonitor (x, y) ? edge (x, y) : juce::String ("off"); };
+        const auto l = p.win11 ? edgeOr (p.client[0] - 1, cy) : edgeOr (p.client[0], cy);
+        const auto r = p.win11 ? edgeOr (p.client[0] + p.client[2], cy) : edgeOr (p.client[0] + p.client[2] - 1, cy);
+        const auto b = p.win11 ? edgeOr (midX, p.client[1] + p.client[3]) : edgeOr (midX, p.client[1] + p.client[3] - 1);
+        const auto okEdge = [] (const juce::String& c) { return c == "EBEBEB" || c == "off"; };
+        if (l == "off" || r == "off" || b == "off")
+            std::cerr << "UITEST INFO winchrome border: 모니터 밖 변은 세지 않음 (" << l << " " << r << " " << b << ")" << std::endl;
+        expect (okEdge (l) && okEdge (r) && okEdge (b) && ! (l == "off" && r == "off" && b == "off"),
+                TXT ("왼쪽·오른쪽·아래 테두리 #EBEBEB 1px (") + l + " " + r + " " + b + ")");
         if (! p.win11)
         {
             // 윈도우 10: 운영체제 테두리(#707070)는 내용이 덮어 보이지 않는다 → 테두리 바로 안쪽은 앱 화면 (선이 두 줄이 아니다)
@@ -3292,8 +3299,21 @@ bool UiSelfTest::checkWindowFrame (juce::Component& editor, const juce::String& 
         const int vx0 = juce::jmax (0, area[0] - p.client[0]), vy0 = juce::jmax (0, area[1] - p.client[1]);
         const int vx1 = juce::jmin (cw, area[0] + area[2] - p.client[0]), vy1 = juce::jmin (ch, area[1] + area[3] - p.client[1]);
         const bool showTop = vy0 == 0, showBottom = vy1 == ch, showLeft = vx0 == 0, showRight = vx1 == cw;
-        // 다른 창이 덮은 자리는 세지 않는다 (비활성 시험의 앞 창)
-        const auto covered = [&] (int x, int y) { return frameCheckIgnore.contains (p.client[0] + x, p.client[1] + y); };
+        // 다른 창이 덮은 자리는 세지 않는다: 비활성 시험의 앞 창(frameCheckIgnore), 그리고 이 창보다 위에 있는 보이는 창
+        // (CI 의 콘솔 창, 앞 창이 아닌 전체 화면 위의 작업 표시줄 등. 운영체제가 그 창을 위에 그리므로 우리 픽셀이 아니다). 뺀 수는 로그에
+        std::vector<juce::Rectangle<int>> above;
+        {
+            const auto q = meon::winframe::devWindowsAbove (h);
+            for (size_t i = 0; i + 3 < q.size(); i += 4) above.push_back ({ q[i], q[i + 1], q[i + 2], q[i + 3] });
+        }
+        int coveredCount = 0;
+        const auto covered = [&] (int x, int y)
+        {
+            const int sx = p.client[0] + x, sy = p.client[1] + y;
+            if (frameCheckIgnore.contains (sx, sy)) return true;
+            for (auto& r : above) if (r.contains (sx, sy)) { ++coveredCount; return true; }
+            return false;
+        };
         // 다른 픽셀 몇 개를 로그에 (아티팩트를 받지 못할 때 원인을 보려고): 자리, 화면, 앱 그림, 화면 바깥 1px
         juce::StringArray samples;
         const auto sample = [&] (const char* edgeName, int x, int y)
@@ -3325,8 +3345,20 @@ bool UiSelfTest::checkWindowFrame (juce::Component& editor, const juce::String& 
             {
                 const auto r = (cb->getBounds().toFloat() * s).getSmallestIntegerContainer().getIntersection ({ 0, 1, cw, ch - 1 });
                 for (int y = r.getY(); y < r.getBottom(); ++y)
-                    for (int x = r.getX(); x < r.getRight(); ++x) { ++capArea; if (differs (x, y)) { ++capDiff; if (capDiff % 499 == 1) sample ("C", x, y); } }
+                    for (int x = r.getX(); x < r.getRight(); ++x)
+                    {
+                        if (covered (x, y)) continue;
+                        ++capArea;
+                        if (differs (x, y)) { ++capDiff; if (capDiff % 499 == 1) sample ("C", x, y); }
+                    }
             }
+        if (coveredCount > 0)
+        {
+            juce::StringArray rects;
+            for (auto& r : above) rects.add (r.toString());
+            std::cerr << "UITEST INFO winstates " << label << ": 위에 있는 다른 창이 덮은 픽셀 " << coveredCount << "개는 세지 않음 ("
+                      << (p.active ? "active" : "inactive") << ", " << rects.joinIntoString (" | ") << ")" << std::endl;
+        }
         if (! samples.isEmpty())
             std::cerr << "UITEST INFO winstates " << label << " samples: " << samples.joinIntoString (" | ") << std::endl;
         const auto pct = [] (int n, int len) { return len > 0 ? (double) n * 100.0 / (double) len : 0.0; };
@@ -3369,7 +3401,7 @@ bool UiSelfTest::checkWindowFrame (juce::Component& editor, const juce::String& 
               << " work " << rs (p.work) << " monitor " << rs (p.monitor) << " insets " << p.insets[0] << "/" << p.insets[1] << "/" << p.insets[2] << "/" << p.insets[3]
               << " edgeDiff T" << edgeTop << " R" << edgeRight << " B" << edgeBottom << " L" << edgeLeft << " caption " << capDiff << "/" << capArea
               << " blocked " << p.captionPaintsBlocked << " step " << p.pixelStep << " shadow " << p.shadowResult << " band " << p.bandPaints
-              << " maxFrame " << p.maxFrameMatchesWork << " juceFrame " << juce::String (editor.getPeer()->getFrameSize().getLeft()) << "/" << juce::String (editor.getPeer()->getFrameSize().getTop())
+              << " maxFrame " << p.maxFrameMatchesWork << " modes " << p.modeChanges << " juceFrame " << juce::String (editor.getPeer()->getFrameSize().getLeft()) << "/" << juce::String (editor.getPeer()->getFrameSize().getTop())
               << (fails.isEmpty() ? "" : " FAIL: ") << detail << std::endl;
     return fails.isEmpty();
 }

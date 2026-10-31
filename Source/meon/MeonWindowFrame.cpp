@@ -32,6 +32,7 @@ void normalFrameInsets (void*, int out[4]) { out[0] = out[1] = out[2] = out[3] =
 void holdPosition (void*, bool) {}
 void devPostKey (void*, int) {}
 void devRedrawNow (void*) {}
+std::vector<int> devWindowsAbove (void*) { return {}; }
 bool unmaximiseForSave (void*) { return false; }
 std::vector<unsigned> devCaptureScreen (int, int, int, int) { return {}; }
 int devScaleSteps (int, bool) { return 0; }

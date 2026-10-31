@@ -56,6 +56,8 @@ namespace
         bool holdPosition = false;          // JUCE 가 틀 두께를 다시 읽는 동안 창을 움직이지 않는다 (holdPosition)
         long shadowResult = 1;              // DwmExtendFrameIntoClientArea 결과 (윈도우 10 그림자)
         int bandPaints = 0;                 // 윈도우 10 가장자리 1px 다시 놓은 횟수 (개발용)
+        int lastMode = -1;                  // 마지막으로 맞춘 상태 (Mode). 바뀌면 afterPositionChanged 가 다시 맞춘다
+        int modeChanges = 0;                // 상태가 바뀐 횟수 (개발용)
         WINDOWPLACEMENT savedPlacement {};  // 켜기 전 자리·크기·최대화
         LONG savedStyle = 0;
     };
@@ -396,6 +398,22 @@ namespace
         });
     }
 
+    /** 창 자리·크기가 바뀐 뒤 (WM_WINDOWPOSCHANGED, JUCE 처리 뒤). 상태(보통·최대화·전체 화면·최소화)가 바뀌었거나 틀을 다시 계산했으면
+        그림자 틀(윈도우 10)·가장자리 1px 을 다시 맞추고, JUCE 가 틀 두께를 다시 읽게 알린다 (onStateChange → MeonEditor::checkJuceFrame).
+        WM_SIZE 에서 하면 안 된다: JUCE 는 WM_WINDOWPOSCHANGED 를 직접 처리하고 DefWindowProc 를 부르지 않아(juce_Windowing_windows.cpp
+        WM_WINDOWPOSCHANGED → handlePositionChanged → return 0) 운영체제가 WM_SIZE 를 보내지 않는다 */
+    void afterPositionChanged (HWND h, UINT flags)
+    {
+        const int m = (int) modeOf (h);
+        const bool modeChanged = m != st.lastMode;
+        st.lastMode = m;
+        if (! modeChanged && (flags & SWP_FRAMECHANGED) == 0) return;
+        if (modeChanged) ++st.modeChanges;
+        st.shadowResult = applyShadow (h);   // 그림자 틀 1px 은 윈도우 10 보통일 때만
+        if (! isWin11()) RedrawWindow (h, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);   // 가장자리 1px 다시 (WM_PAINT)
+        notifyLater();
+    }
+
     LRESULT hitTest (HWND h, LPARAM lParam)
     {
         const int x = GET_X_LPARAM (lParam), y = GET_Y_LPARAM (lParam);
@@ -487,8 +505,13 @@ namespace
                 return r;
             }
             case WM_WINDOWPOSCHANGED:
-                if (st.fullscreen && (reinterpret_cast<WINDOWPOS*> (lParam)->flags & SWP_NOSIZE) == 0) clipToClient (h);
-                break;
+            {
+                const UINT flags = reinterpret_cast<WINDOWPOS*> (lParam)->flags;
+                if (st.fullscreen && (flags & SWP_NOSIZE) == 0) clipToClient (h);
+                const LRESULT r = DefSubclassProc (h, msg, wParam, lParam);   // JUCE 가 먼저 (자리·크기). 이 뒤로 WM_SIZE 는 오지 않는다
+                if (st.hwnd == h) afterPositionChanged (h, flags);
+                return r;
+            }
 
             // 운영체제 제목 줄·창 버튼 그리기 막기
             case wmNcUahDrawCaption:
@@ -581,9 +604,8 @@ namespace
                 if (HIWORD (lParam) != 0) ++st.sysMenuOpened;   // 창 메뉴 (개발용 확인)
                 break;
 
-            case WM_SIZE:
-                st.shadowResult = applyShadow (h);   // 보통 ↔ 최대화: 그림자 틀 1px 은 보통일 때만
-                notifyLater();
+            case WM_SIZE:   // 보통은 오지 않는다 (위 WM_WINDOWPOSCHANGED). 오면 같은 처리 (상태가 그대로면 아무것도 안 함)
+                afterPositionChanged (h, 0);
                 break;
             case WM_ACTIVATE:
             case WM_ACTIVATEAPP:
@@ -658,6 +680,7 @@ bool install (void* handle, Hooks hooks)
     if (! SetWindowSubclass (h, proc, subclassId, 0)) { st.hwnd = nullptr; return false; }
     st.borderColourResult = applyBorderColour (h);
     st.shadowResult = applyShadow (h);
+    st.lastMode = (int) modeOf (h);
 
     if (zoomed (h) || IsIconic (h))
     {
@@ -857,6 +880,7 @@ Probe probe (void* handle)
     p.pixelStep = pixelStep (h);
     p.shadowResult = st.shadowResult;
     p.bandPaints = st.bandPaints;
+    p.modeChanges = st.modeChanges;
     normalFrameInsets (handle, p.normalInsets);
     if (zoomed (h) && ! st.fullscreen)
     {
@@ -868,6 +892,38 @@ Probe probe (void* handle)
     }
     p.os = juce::SystemStats::getOperatingSystemName().toStdString();
     return p;
+}
+
+std::vector<int> devWindowsAbove (void* handle)
+{
+    // 이 창보다 위에 있는 보이는 창들이 이 창과 겹치는 자리 (화면 물리 px: x, y, w, h 씩). 작업 표시줄·다른 프로그램 창 등.
+    // 보이는 틀(DWMWA_EXTENDED_FRAME_BOUNDS, 투명한 크기 조절 자리 빼고)로 잰다. 숨은(cloaked) 창은 뺀다
+    std::vector<int> out;
+    auto h = static_cast<HWND> (handle);
+    if (h == nullptr || ! IsWindow (h)) return out;
+    RECT mine {};
+    GetWindowRect (h, &mine);
+    auto getAttr = dwmapi<HRESULT (WINAPI*) (HWND, DWORD, PVOID, DWORD)> ("DwmGetWindowAttribute");
+    constexpr DWORD dwmCloaked = 14;   // DWMWA_CLOAKED
+    for (HWND w = GetWindow (h, GW_HWNDPREV); w != nullptr; w = GetWindow (w, GW_HWNDPREV))
+    {
+        if (! IsWindowVisible (w) || IsIconic (w)) continue;
+        RECT r {};
+        if (getAttr != nullptr)
+        {
+            DWORD cloaked = 0;
+            if (SUCCEEDED (getAttr (w, dwmCloaked, &cloaked, sizeof (cloaked))) && cloaked != 0) continue;
+            if (FAILED (getAttr (w, dwmExtendedFrameBounds, &r, sizeof (r)))) GetWindowRect (w, &r);
+        }
+        else
+        {
+            GetWindowRect (w, &r);
+        }
+        RECT both {};
+        if (! IntersectRect (&both, &r, &mine)) continue;
+        out.insert (out.end(), { (int) both.left, (int) both.top, (int) (both.right - both.left), (int) (both.bottom - both.top) });
+    }
+    return out;
 }
 
 FrameInfo frameInfo (void* handle)
