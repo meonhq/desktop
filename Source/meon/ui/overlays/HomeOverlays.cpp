@@ -636,7 +636,7 @@ Toast::Toast (const juce::String& t, const juce::String& s, const juce::String& 
     addAndMakeVisible (close);
     close.setTooltip (TXT ("닫기"));
     close.onClick = [this] { if (onClose) onClose(); };
-    setSize (width, height);
+    setPanelBounds (0, 0, width, height);
 }
 
 namespace
@@ -656,8 +656,10 @@ void Toast::setSecondary (const juce::String& label)
 
 int Toast::textRight (int w) const
 {
-    if (secondary != nullptr) return secondary->getX() - 9;
-    if (action != nullptr) return action->getX() - 9;
+    // 판 기준 x (버튼 자리는 구성 요소 기준이라 판 왼쪽만큼 뺀다)
+    const int px = panel().getX();
+    if (secondary != nullptr) return secondary->getX() - px - 9;
+    if (action != nullptr) return action->getX() - px - 9;
     return (close.isVisible() ? w - 12 - 19 : w - 12) - 9;
 }
 
@@ -677,17 +679,16 @@ int Toast::heightForWidth (int w) const
 
 void Toast::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    g.setColour (kind == Kind::warning ? col::accentSoft : col::white);
-    g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
-    const int right = textRight (getWidth());
+    // 면 색은 종류대로 (경고는 연한 핑크), 테두리·그림자는 팝오버와 같은 표면
+    paintSurface (g, kind == Kind::warning ? col::accentSoft : popoverStyle::background);
+    const auto p = panel();
+    g.setOrigin (p.getPosition());   // 아래는 판 기준 좌표
+    const int right = textRight (p.getWidth());
     g.setColour (col::ink);
     g.setFont (toastTitleFont());
     if (sub.isEmpty())   // 보조 줄이 없으면 한 줄로 가운데
     {
-        g.drawText (title, toastPadX, 0, right - toastPadX, getHeight(), juce::Justification::centredLeft, true);
+        g.drawText (title, toastPadX, 0, right - toastPadX, p.getHeight(), juce::Justification::centredLeft, true);
         return;
     }
     g.drawText (title, toastPadX, toastTitleY, right - toastPadX, toastTitleH, juce::Justification::centredLeft, true);
@@ -695,7 +696,7 @@ void Toast::paint (juce::Graphics& g)
     if (kind == Kind::warning)   // 설명은 자르지 않고 줄바꿈
     {
         drawParagraphWithEmoji (g, sub, toastSubFont(), col::inkSub,
-                                juce::Rectangle<float> ((float) toastPadX, (float) subY, (float) (right - toastPadX), subHeight (getWidth())),
+                                juce::Rectangle<float> ((float) toastPadX, (float) subY, (float) (right - toastPadX), subHeight (p.getWidth())),
                                 (float) toastSubLineH, juce::Justification::topLeft);
         return;
     }
@@ -706,15 +707,16 @@ void Toast::paint (juce::Graphics& g)
 
 void Toast::resized()
 {
-    auto r = getLocalBounds().reduced (12, 0);
+    const auto p = panel();
+    auto r = p.reduced (12, 0);
     // 경고는 설명이 여러 줄일 수 있어서 닫기 버튼을 제목 줄에 맞춘다
     auto closeArea = r.removeFromRight (19);
     close.setBounds (kind == Kind::warning && sub.isNotEmpty()
-                         ? juce::Rectangle<int> (closeArea.getX(), toastTitleY + (toastTitleH - 19) / 2, 19, 19)
+                         ? juce::Rectangle<int> (closeArea.getX(), p.getY() + toastTitleY + (toastTitleH - 19) / 2, 19, 19)
                          : closeArea.withSizeKeepingCentre (19, 19));
     // 닫기 없이 두 버튼 (입장 요청, 디자인: 오른쪽 여백 12, 사이 9)
     const bool twoButtons = ! close.isVisible() && secondary != nullptr;
-    if (twoButtons) r = getLocalBounds().withTrimmedLeft (toastPadX).withTrimmedRight (12);
+    if (twoButtons) r = p.withTrimmedLeft (toastPadX).withTrimmedRight (12);
     if (action != nullptr)
     {
         if (! twoButtons) r.removeFromRight (9);

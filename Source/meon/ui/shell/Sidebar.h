@@ -79,6 +79,8 @@ public:
     std::function<void (const juce::String& inviteId)> onAcceptInvite, onDeclineInvite;
     /** 맨 윗줄(52)을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */
     std::function<void()> onTitleBarMouseDown;
+    /** 윈도우 창 영역 판정: hit(그 점의 맨 안쪽 구성 요소)가 사이드바 바탕이고 맨 윗줄이면 제목 줄 빈 곳 (mouseDown 과 같은 줄) */
+    bool titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const { return hit == this && p.y < headerH; }
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;

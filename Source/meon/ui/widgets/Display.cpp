@@ -396,11 +396,6 @@ void Popover::setContent (juce::Component* c, int h)
     resized();
 }
 
-void Popover::setPanelBounds (juce::Rectangle<int> r)
-{
-    setBounds (r.expanded (PopoverSurface::shadowMargin()));
-}
-
 void Popover::resized()
 {
     const auto p = panel();
@@ -410,9 +405,8 @@ void Popover::resized()
 
 void Popover::paint (juce::Graphics& g)
 {
-    const auto p = panel();
-    surface.paint (g, *this, p);
-    const auto r = p.toFloat();
+    paintSurface (g);
+    const auto r = panel().toFloat();
     const auto tf = font (600, 15.0f);
     g.setColour (col::ink);
     g.setFont (tf);

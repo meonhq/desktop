@@ -61,12 +61,15 @@ jobs:
         run: |
           APP=build/MEON_artefacts/RelWithDebInfo/Standalone/meon
           status=0
-          for mode in app plugin; do
+          # wingui: 윈도우 독립 앱 배치 미리 보기 (--chrome=win: 창 버튼 138×51 맨 위, 제목 줄 오른쪽 여백 150, 제목 줄 영역 판정. 실제 창 동작은 windows.yml)
+          for mode in app plugin wingui; do
             export HOME="$RUNNER_TEMP/uitest-$mode"
             mkdir -p "$HOME"
+            which=all
             if [ "$mode" = plugin ]; then args="--as-plugin --window=0,0,900,600"; else args="--window=0,0,1280,800"; fi
+            if [ "$mode" = wingui ]; then args="--chrome=win --window=0,0,1280,800"; which=winchrome; fi
             code=0
-            timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --fake-script=0 --uitest=all $args > "uitest-$mode.log" 2>&1 || code=$?
+            timeout 600 xvfb-run -a -s "-screen 0 1600x1000x24" "$APP" --allow-multi --no-input --fake-script=0 --uitest=$which $args > "uitest-$mode.log" 2>&1 || code=$?
             grep "^UITEST" "uitest-$mode.log" || true
             if [ $code -ne 0 ] || ! grep -q "^UITEST DONE .* 0 failed" "uitest-$mode.log"; then
               echo "::error::화면 자가 테스트 실패 ($mode, 종료 코드 $code)"

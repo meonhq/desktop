@@ -248,6 +248,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/AppRoot.h
     Source/meon/ui/shell/Sidebar.h
     Source/meon/ui/shell/Sidebar.cpp
+    Source/meon/ui/shell/WindowChromeView.h
+    Source/meon/ui/shell/WindowChromeView.cpp
     Source/meon/ui/AppRoot.cpp
     Source/meon/ui/dev/WidgetGallery.h
     Source/meon/ui/dev/WidgetGallery.cpp
@@ -465,6 +467,9 @@ function(sono_add_custom_plugin_target target_name product_name formats is_instr
         Source/meon/MeonReduceMotion.cpp
         Source/meon/MeonWindowChrome.h
         Source/meon/MeonWindowChrome.cpp
+        Source/meon/MeonWindowFrame.h
+        Source/meon/MeonWindowFrame.cpp
+        Source/meon/MeonWindowFrame_win.cpp
         Source/meon/MeonParts.cpp
         Source/meon/MeonParts.h
         Source/meon/MeonEarGuard.cpp

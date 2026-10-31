@@ -81,6 +81,13 @@ public:
     std::function<void()> onOverlayChanged;
     /** 윗줄의 빈 곳·방 이름을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */
     std::function<void()> onTitleBarMouseDown;
+    /** 윗줄의 빈 곳·방 이름인지 (mouseDown 의 맥 창 끌기와 같은 조건. 윈도우는 이 자리를 운영체제 제목 줄로 판정한다) */
+    bool titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const
+    {
+        return (hit == this || hit == &roomTitle) && sidebarShown && modal == nullptr && p.y < headerLine();
+    }
+    /** 제목 줄 오른쪽 여백 (디자인 hdPR: 보통 18, 윈도우 독립 앱은 창 버튼 + 12 = 150) */
+    void setHeaderRightInset (int);
     void mouseDown (const juce::MouseEvent&) override;
     void childrenChanged() override { if (onOverlayChanged) onOverlayChanged(); }
 
@@ -90,7 +97,7 @@ private:
     core::JamSession& jam;
     const bool plugin;
     bool sidebarShown = false;
-    int headerInset = metric::padX;
+    int headerInset = metric::padX, headerRightInset = metric::padX;
     /** 윗줄 아래 선의 y: 사이드바가 옆에 있으면 사이드바·홈 머리말과 같은 51 (높이 52), 아니면 예전 58 (로고 높이) */
     int headerLine() const { return sidebarShown ? 51 : metric::headerH; }
 

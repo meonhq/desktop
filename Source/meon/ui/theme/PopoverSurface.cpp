@@ -139,6 +139,11 @@ juce::Image PopoverSurface::renderShadow (int w, int h, float scale)
 
 void PopoverSurface::paint (juce::Graphics& g, const juce::Component& c, juce::Rectangle<int> panel)
 {
+    paint (g, c, panel, popoverStyle::background);
+}
+
+void PopoverSurface::paint (juce::Graphics& g, const juce::Component& c, juce::Rectangle<int> panel, juce::Colour fill)
+{
     if (panel.isEmpty()) return;
     const auto grid = hairline::gridFor (g, c);
     const float s = grid.scale;
@@ -161,10 +166,13 @@ void PopoverSurface::paint (juce::Graphics& g, const juce::Component& c, juce::R
     }
 
     // 면: 테두리와 같은 물리 픽셀 경계에 맞춰 채운다 (가장자리 반 픽셀이 테두리 밖으로 비치지 않게)
-    g.setColour (popoverStyle::background);
+    g.setColour (fill);
     g.fillRoundedRectangle (grid.snap (panel.toFloat()), popoverStyle::radius);
     g.setColour (popoverStyle::border);
     hairline::roundedBorder (g, c, panel.toFloat(), popoverStyle::radius);
 }
+
+void SurfaceComponent::paintSurface (juce::Graphics& g, juce::Colour fill) { surface.paint (g, *this, panel(), fill); }
+void SurfaceComponent::paintSurface (juce::Graphics& g) { surface.paint (g, *this, panel()); }
 
 } // namespace meon::ui

@@ -123,6 +123,18 @@ jobs:
             grep -E "^UITEST (INFO room sidebar|FAIL|DONE)" "uitest-$w.log" || { echo "결과 없음 (폭 $w)"; tail -20 "uitest-$w.log"; }
           done
 
+      - name: 윈도우 창 윗부분 확인 (화면 자가 테스트)
+        # 운영체제 창 틀은 두고 제목 줄 자리만 앱 내용으로 덮었는지 (MeonWindowFrame: WM_NCCALCSIZE·WM_NCHITTEST).
+        # 영역 판정(위 가장자리·제목 줄 빈 곳·최대화 버튼 HTMAXBUTTON·최소화/닫기·옆·아래 가장자리), 맨 위 줄 픽셀(1px 색 선),
+        # 최대화(내용이 작업 영역 안에 딱, 닫기 버튼이 오른쪽 위 모서리), 버튼 마우스 올림 색, 더블클릭 최대화·복원, Alt+Space 창 메뉴,
+        # 제목 줄 끌기, 최소화. 입력은 SendInput (--uitest=winchrome, 빌드 0 전용). 결과는 "UITEST" 줄. 빌드를 막지는 않는다
+        if: env.RELEASE != 'true'
+        continue-on-error: true
+        run: |
+          EXE=build/MEON_artefacts/Release/Standalone/Meon.exe
+          timeout 300 "$EXE" --allow-multi --no-input --fake-script=0 --uitest=winchrome --window=0,0,1024,700 > uitest-winchrome.log 2>&1 || true
+          grep -E "^UITEST (INFO|PASS|FAIL|DONE)" uitest-winchrome.log || { echo "결과 없음"; tail -30 uitest-winchrome.log; }
+
       - name: 화면 확인용 스냅숏
         # 개발용 실행 옵션은 빌드 번호 0 에서만 켜지므로 릴리스 빌드에서는 찍지 않는다
         if: env.RELEASE != 'true'

@@ -8,6 +8,8 @@
 #include "shell/ShellHooks.h"
 #include "core/MeonCore.h"
 #include "ui/overlays/SettingsModal.h"
+#include "ui/shell/WindowChromeView.h"
+#include "MeonWindowFrame.h"
 
 namespace meon
 {
@@ -80,6 +82,8 @@ private:
         void timerCallback() override;
     };
     Fader fader;
+    // 창 윗부분 구성 요소 (아래 설명). 툴팁 창보다 먼저 만든다: 툴팁 창이 에디터에 붙을 때 childrenChanged 가 이것을 본다
+    std::unique_ptr<ui::WindowChromeView> chromeView;
     juce::TooltipWindow tooltipWindow { this, 500 };
 
     std::unique_ptr<juce::Component> settingsOverlay;
@@ -91,12 +95,24 @@ private:
     std::unique_ptr<ui::OnboardingScreen> onboarding;
     std::unique_ptr<ui::AppRoot> appRoot;   // 로그인 뒤: 홈 ↔ 합주
 
-    // 맥 독립 앱 창 (MeonWindowChrome): 제목 줄 없이 내용이 창 맨 위까지. 창이 뜨기 전에 붙여서 온보딩부터 앱을 끌 때까지 같다
-    bool chromeTried = false, chromeInstalled = false;
+    // 독립 앱 창 윗부분: 제목 줄 없이 내용이 창 맨 위까지. 창이 뜨기 전에 붙여서 온보딩부터 앱을 끌 때까지 같다.
+    //   맥 (MeonWindowChrome): 빈 툴바 + unified, 신호등은 macOS 가 그린다
+    //   윈도우 (MeonWindowFrame): 운영체제 창 틀은 두고 제목 줄 자리만 내용으로 (WM_NCCALCSIZE·WM_NCHITTEST), 창 버튼은 앱이 그린다
+    // 운영체제별 창 윗부분 구성 요소(chromeView: 맥 신호등 자리 / 윈도우 창 버튼)는 에디터 맨 위 (설정·방 만들기 팝업 위에서도 보이고 눌러진다)
+    bool chromeTried = false, chromeInstalled = false, winFrameInstalled = false;
     bool devMockChrome = false;   // 개발용 --chrome=mac: 맥이 아닌 곳에서 온보딩도 맥 창 배치로 (가짜 신호등)
+    bool devMockWin = false;      // 개발용 --chrome=win: 윈도우가 아닌 곳에서 윈도우 창 버튼 배치 미리 보기
     void ensureWindowChrome();
-    void windowChromeChanged();   // 붙은 뒤·전체 화면에 들어가고 나온 뒤
-    /** 맨 위 신호등 줄 높이: 맥 창 모드면 52, 아니면(윈도우·플러그인·맥 전체 화면) 0 */
+    void windowChromeChanged();   // 붙은 뒤·전체 화면에 들어가고 나온 뒤·최대화·활성 바뀜
+    void syncChromeView();        // 운영체제별 창 윗부분 구성 요소: 만들기·자리·상태·맨 위로
+    /** 윈도우 창 영역 판정 (화면 물리 좌표): 창 버튼(최대화는 운영체제 영역) · 제목 줄 빈 곳 · 그 밖 */
+    winframe::Region windowRegionAt (int screenX, int screenY);
+    void childrenChanged() override;
+    /** 화면 배치 자리: 윈도우 최대화 때 화면 밖으로 나간 위쪽(hiddenTop)을 뺀 나머지. 그 밖에는 에디터 전체 */
+    juce::Rectangle<int> contentBounds() const;
+    int hiddenTopLogical() const;
+    int lastHiddenTop = 0;
+    /** 맨 위 창 버튼 줄 높이: 맥 창 모드·윈도우 독립 앱이면 52, 아니면(플러그인·맥 전체 화면) 0 */
     int titleBarInset() const;
     void titleBarMouseDown();
     void authStepChanged (core::AuthController::Step) override;

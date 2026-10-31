@@ -70,6 +70,11 @@ public:
     std::function<void()> onOverlayChanged;
     /** 맨 윗줄(제목 줄)의 빈 곳을 눌렀다 (맥 창 모드: 창 끌기·더블클릭) */
     std::function<void()> onTitleBarMouseDown;
+    /** 제목 줄의 빈 곳인지 (mouseDown 의 맥 창 끌기와 같은 조건. 윈도우는 이 자리를 운영체제 제목 줄로 판정한다) */
+    bool titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const
+    {
+        return hit == this && shell && ! hasOverlay() && p.y < headerLine() && p.x >= shellInset;
+    }
     void mouseDown (const juce::MouseEvent&) override;
     void childrenChanged() override { if (onOverlayChanged) onOverlayChanged(); }
 
@@ -81,7 +86,7 @@ public:
     /** 사이드바 안에 들어간 홈 (홈·사이드바 디자인). 창 전체를 덮되 왼쪽 leftInset(사이드바 폭)은 그리지도 받지도 않는다
         (모달·확인 창은 창 전체를 덮는다). 머리말은 52 높이의 쪽 제목, 로고·알림·설정과 오른쪽 친구 패널은 사이드바로 옮겨 숨긴다.
         titleInset: 쪽 제목 왼쪽 여백 (디자인 hdPL: 보통 18, 맥 창 모드에서 사이드바를 접으면 72) */
-    void setShell (int leftInset, const juce::String& title, bool homePage = true, int titleInset = metric::padX);
+    void setShell (int leftInset, const juce::String& title, bool homePage = true, int titleInset = metric::padX, int titleRight = metric::padX);
     /** 사이드바 안 홈 쪽 (HomePage) 이 쓰는 연결 */
     std::function<void (int tab)> onOpenSettingsTab;
     std::function<void()> onShowRooms;
@@ -99,7 +104,7 @@ private:
     UpdateHooks update;
     const bool plugin;
     bool shell = false, shellHome = true;
-    int shellInset = 0, titleInset = metric::padX;
+    int shellInset = 0, titleInset = metric::padX, titleRightInset = metric::padX;   // 제목 줄 오른쪽 여백: 윈도우 독립 앱 150 (창 버튼 + 12)
     std::unique_ptr<juce::Component> homePage;   // 사이드바 안 "홈" (HomePage)
     juce::String pageTitle;
     int headerLine() const;   // 헤더 아래 구분선 y (사이드바 안이면 51)

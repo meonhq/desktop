@@ -198,8 +198,10 @@ private:
 };
 
 //==============================================================================
-/** 토스트 (280, 테두리 #D5D5D5, 여백 12 12 12 18). 굵은 줄 + 보조 줄, 선택 버튼(입장), 닫기 */
-class Toast : public juce::Component
+/** 토스트 (280, 여백 12 12 12 18). 굵은 줄 + 보조 줄, 선택 버튼(입장), 닫기.
+    겉모양은 팝오버와 같은 표면 (SurfaceComponent: 테두리 1px #EBEBEB, 그림자 두 겹, 그려 둔 그림자 재사용).
+    구성 요소는 판보다 그림자 폭만큼 크다: 자리는 setPanelBounds, 크기 값(width·heightForWidth)은 판 기준 */
+class Toast : public SurfaceComponent
 {
 public:
     /** normal: 흰 면 (초대·알림). warning: 연한 핑크 면(col::accentSoft), 제목(굵게) + 설명, 설명은 줄바꿈 */

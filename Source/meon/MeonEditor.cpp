@@ -10,6 +10,8 @@
 #include "ui/theme/LookAndFeel.h"
 #include "ui/overlays/SettingsModal.h"
 #include "MeonWindowChrome.h"
+#include "MeonWindowFrame.h"
+#include <optional>
 
 namespace meon
 {
@@ -90,6 +92,7 @@ MeonEditor::MeonEditor (SonobusAudioProcessor& p)
 
    #if MEON_DEV_OPTIONS
     devMockChrome = ! pluginMode && meon::devOptions()["chrome"] == "mac";
+    devMockWin = ! pluginMode && meon::devOptions()["chrome"] == "win";
     devJam = meon::devOptions().getAllKeys().contains ("dev-jam");
     {
         const auto scr = meon::devOptions()["screen"];
@@ -176,6 +179,7 @@ MeonEditor::~MeonEditor()
 {
     stopTimer();
     if (chromeInstalled) chrome::detach();   // 창 모양은 그대로 (앱을 끄는 중). 창 크기는 창이 먼저 저장했다
+    if (winFrameInstalled) winframe::detach();   // 창 프로시저를 원래대로 (창은 곧 닫힌다)
     core.store().removeListener (this);
     core.auth().removeListener (this);
     appRoot.reset();
@@ -202,7 +206,7 @@ void MeonEditor::openSettings (int tab)
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closeSettings(); });
     };
     settingsOverlay = std::move (modal);
-    settingsOverlay->setBounds (getLocalBounds());
+    settingsOverlay->setBounds (contentBounds());
     addAndMakeVisible (*settingsOverlay);
     settingsOverlay->toFront (false);
     fader.fade (settingsOverlay.get(), 0.0f, 1.0f, metric::fadeMs);
@@ -372,7 +376,7 @@ void MeonEditor::updateOnboarding()
             onboarding->setTitleBarInset (titleBarInset());
             onboarding->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
             addAndMakeVisible (*onboarding);
-            onboarding->setBounds (getLocalBounds());
+            onboarding->setBounds (contentBounds());
         }
         onboarding->toFront (true);
         return;
@@ -386,7 +390,7 @@ void MeonEditor::updateOnboarding()
             devScreen = std::make_unique<ui::DevJamScreen> (core);
             devScreen->setLookAndFeel (newLookAndFeel.get());
             addAndMakeVisible (*devScreen);
-            devScreen->setBounds (getLocalBounds());
+            devScreen->setBounds (contentBounds());
         }
         return;
     }
@@ -434,8 +438,9 @@ void MeonEditor::showAppRoot()
     appRoot->setLookAndFeel (newLookAndFeel.get());
     appRoot->onOpenSettings = [this] (int tab) { openSettings (tab); };
     addAndMakeVisible (*appRoot);
-    appRoot->setBounds (getLocalBounds());
+    appRoot->setBounds (contentBounds());
     if (settingsOverlay != nullptr) settingsOverlay->toFront (false);
+    windowChromeChanged();   // 창 윗부분 (제목 줄 오른쪽 여백·창 버튼을 맨 위로)
     if (devHomePreview.isNotEmpty())
     {
         juce::Component::SafePointer<MeonEditor> safe (this);
@@ -468,9 +473,9 @@ void MeonEditor::applyHomePreview()
 {
     // 개발용 스냅숏: 홈의 겹침 요소를 열어 둔다
     if (appRoot == nullptr) return;
-    // --chrome=mac|flat: 창 윗부분 배치 미리 보기 (홈·사이드바 디자인 v2.1 chromeVals). mac = 맥 창 모드 (가짜 신호등을 그린다),
-    // flat = 신호등 없음 (맥 전체 화면·윈도우·플러그인). 없으면 실제 창을 따른다
-    if (const auto ch = meon::devOptions()["chrome"]; ch == "mac" || ch == "flat")
+    // --chrome=mac|flat|win: 창 윗부분 배치 미리 보기 (홈·사이드바 디자인 v2.1 chromeVals). mac = 맥 창 모드 (가짜 신호등을 그린다),
+    // flat = 신호등 없음 (맥 전체 화면·플러그인), win = 윈도우 독립 앱 (사이드바는 flat, 창 버튼 + 제목 줄 오른쪽 150). 없으면 실제 창을 따른다
+    if (const auto ch = meon::devOptions()["chrome"]; ch == "mac" || ch == "flat" || ch == "win")
         appRoot->devForceChrome (ch == "mac" ? ui::Sidebar::Chrome::macWindow : ui::Sidebar::Chrome::flat);
     // --sidebar=collapsed: 다른 미리 보기와 같이 사이드바를 접은 채로 (홈·사이드바 디자인 v2.1 접힌 상태 확인)
     if (meon::devOptions()["sidebar"] == "collapsed")
@@ -844,7 +849,7 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
                 onboarding->setTitleBarInset (titleBarInset());
                 onboarding->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
                 addAndMakeVisible (*onboarding);
-                onboarding->setBounds (getLocalBounds());
+                onboarding->setBounds (contentBounds());
             }
             devPreview = true;
             if (st.second == Step::outdated && ! pluginMode)
@@ -861,7 +866,7 @@ void MeonEditor::applyDevOptions (const juce::StringPairArray& o)
     {
         devScreen = std::make_unique<ui::WidgetGallery>();
         addAndMakeVisible (*devScreen);
-        devScreen->setBounds (getLocalBounds());
+        devScreen->setBounds (contentBounds());
         return;
     }
     // 홈·합주 미리 보기(--screen=home…|jam)는 가입이 끝난 뒤 showAppRoot 가 연다
@@ -873,11 +878,8 @@ void MeonEditor::paint (juce::Graphics& g)
     g.fillAll (col::white);
 }
 
-void MeonEditor::paintOverChildren (juce::Graphics& g)
+void MeonEditor::paintOverChildren (juce::Graphics&)
 {
-    // 개발용 (--chrome=mac): 온보딩에도 신호등 자리를 그린다 (앱 화면은 AppRoot 가 그린다)
-    if (devMockChrome && onboarding != nullptr && onboarding->isVisible())
-        ui::AppRoot::drawMockLights (g);
 }
 
 //==============================================================================
@@ -901,6 +903,37 @@ void MeonEditor::ensureWindowChrome()
     chromeTried = true;
     juce::Component::SafePointer<MeonEditor> safe (this);
     chromeInstalled = chrome::install (peer->getNativeHandle(), [safe] { if (safe != nullptr) safe->windowChromeChanged(); });
+   #if JUCE_WINDOWS
+    {
+        winframe::Hooks hooks;
+        hooks.hitTest = [safe] (int x, int y) { return safe != nullptr ? safe->windowRegionAt (x, y) : winframe::Region::client; };
+        hooks.onStateChange = [safe] { if (safe != nullptr) safe->windowChromeChanged(); };
+        hooks.onMaxButton = [safe] (int st)
+        {
+            if (safe != nullptr)
+                if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (safe->chromeView.get())) cb->setMaxButtonState (st);
+        };
+        const auto clientBefore = peer->getBounds();   // JUCE 가 아는 내용 자리 (창 틀을 바꾸기 전, 맞는 값)
+        winFrameInstalled = winframe::install (peer->getNativeHandle(), std::move (hooks));
+        if (winFrameInstalled && ! winframe::isMaximised (peer->getNativeHandle()))
+        {
+            // JUCE 는 창 틀 두께를 크기가 바뀔 때만 다시 읽는다 (HWNDComponentPeer::updateBorderSize). 옛 두께(제목 줄 포함)를 쓰면
+            // 내용 자리·마우스 좌표가 제목 줄 높이만큼 어긋나므로, 크기를 1px 바꿨다 되돌려 새 두께(위 0)를 읽게 하고 내용 자리를 그대로 둔다
+            peer->setBounds (clientBefore.withHeight (clientBefore.getHeight() + 1), false);
+            peer->setBounds (clientBefore, false);
+        }
+       #if MEON_DEV_OPTIONS
+        // 화면 자가 테스트(--uitest): 켠 직후 (창이 뜨기 전에 붙었는지, 창·내용 사각형)
+        if (meon::devOptions().containsKey ("uitest"))
+        {
+            const auto p = winframe::probe (peer->getNativeHandle());
+            std::cerr << "UITEST INFO winchrome launch: installed " << (winFrameInstalled ? 1 : 0) << " showing " << (peer->getComponent().isShowing() ? 1 : 0)
+                      << " window " << p.window[0] << "," << p.window[1] << " " << p.window[2] << "x" << p.window[3]
+                      << " client " << p.client[0] << "," << p.client[1] << " " << p.client[2] << "x" << p.client[3] << " dpi " << p.dpi << std::endl;
+        }
+       #endif
+    }
+   #endif
     windowChromeChanged();
    #if MEON_DEV_OPTIONS
     // 화면 자가 테스트(--uitest): 켠 직후 신호등 자리 (아무것도 움직이기 전, 온보딩 화면)
@@ -916,16 +949,137 @@ void MeonEditor::ensureWindowChrome()
    #endif
 }
 
+int MeonEditor::hiddenTopLogical() const
+{
+    // 윈도우 최대화: 창 위가 화면 밖으로 나간 만큼 (물리 px → 논리 px, 올림). 그 밖은 0
+    if (! winFrameInstalled) return 0;
+    auto* peer = getPeer();
+    if (peer == nullptr) return 0;
+    const int px = winframe::hiddenTop (peer->getNativeHandle());
+    if (px <= 0) return 0;
+    const double s = juce::jmax (0.5, peer->getPlatformScaleFactor());
+    return (int) std::ceil ((double) px / s - 0.001);
+}
+
+juce::Rectangle<int> MeonEditor::contentBounds() const
+{
+    return getLocalBounds().withTrimmedTop (hiddenTopLogical());
+}
+
 void MeonEditor::windowChromeChanged()
 {
+    if (const int ht = hiddenTopLogical(); ht != lastHiddenTop) { lastHiddenTop = ht; resized(); }   // 최대화·복원: 내용 자리
+    syncChromeView();
     if (onboarding != nullptr) onboarding->setTitleBarInset (titleBarInset());
-    if (appRoot != nullptr) appRoot->windowChromeChanged();
+    if (appRoot != nullptr)
+    {
+        appRoot->setTitleRightInset (chromeView != nullptr ? juce::jmax (ui::metric::padX, chromeView->titleRightInset()) : ui::metric::padX);
+        appRoot->windowChromeChanged();
+    }
     repaint();
+}
+
+void MeonEditor::syncChromeView()
+{
+    using Kind = ui::WindowChromeView::Kind;
+    std::optional<Kind> kind;
+    if (winFrameInstalled || devMockWin) kind = Kind::windows;
+    else if (chromeInstalled || devMockChrome) kind = Kind::mac;
+    if (! kind.has_value()) { chromeView.reset(); return; }
+    if (chromeView == nullptr || chromeView->kind() != *kind)
+    {
+        chromeView = ui::createWindowChromeView (*kind);
+        chromeView->setMock (devMockChrome);
+        if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (chromeView.get()))
+        {
+            // 운영체제 창 버튼과 같은 길 (WM_SYSCOMMAND). 미리 보기(--chrome=win, 윈도우 밖)는 JUCE 창 동작으로
+            juce::Component::SafePointer<MeonEditor> safe (this);
+            auto handle = [safe]() -> void* { return safe != nullptr && safe->getPeer() != nullptr ? safe->getPeer()->getNativeHandle() : nullptr; };
+            cb->onMinimise = [safe, handle]
+            {
+                if (safe == nullptr) return;
+                if (safe->winFrameInstalled) winframe::minimise (handle());
+                else if (auto* p = safe->getPeer()) p->setMinimised (true);
+            };
+            cb->onToggleMaximise = [safe, handle]
+            {
+                if (safe == nullptr) return;
+                if (safe->winFrameInstalled) winframe::toggleMaximise (handle());
+                else if (auto* p = safe->getPeer()) p->setFullScreen (! p->isFullScreen());
+            };
+            cb->onClose = [safe, handle]
+            {
+                if (safe == nullptr) return;
+                if (safe->winFrameInstalled) winframe::close (handle());
+                else if (auto* app = juce::JUCEApplicationBase::getInstance()) app->systemRequestedQuit();
+            };
+        }
+        addAndMakeVisible (*chromeView);
+    }
+    chromeView->place (contentBounds());
+    if (chromeView->kind() == Kind::windows)
+    {
+        auto* peer = getPeer();
+        void* h = peer != nullptr ? peer->getNativeHandle() : nullptr;
+        bool maxed = winFrameInstalled && winframe::isMaximised (h), active = ! winFrameInstalled || winframe::isActive (h);
+       #if MEON_DEV_OPTIONS
+        if (devMockWin)   // 미리 보기: --winstate=max|inactive|max+inactive (디자인 winState·winActive)
+        {
+            const auto ws = meon::devOptions()["winstate"];
+            maxed = ws.contains ("max");
+            active = ! ws.contains ("inactive");
+        }
+       #endif
+        chromeView->setWindowState (maxed, active);
+        chromeView->setVisible (true);   // 윈도우는 전체 화면 기능이 없다 (JUCE 의 전체 화면 = 최대화): 늘 보인다
+    }
+    else
+    {
+        chromeView->setVisible (titleBarInset() > 0);   // 맥 전체 화면이면 신호등이 없다
+    }
+    childrenChanged();   // 맨 위로 (툴팁 창 아래)
+}
+
+void MeonEditor::childrenChanged()
+{
+    // 창 윗부분은 늘 맨 위: 화면(온보딩·앱·설정 팝업)이 새로 붙거나 앞으로 와도 그 위. 툴팁 창(에디터의 자식)만 그보다 위
+    if (chromeView == nullptr) return;
+    const int n = getNumChildComponents();
+    const bool tipOnTop = tooltipWindow.getParentComponent() == this && getIndexOfChildComponent (&tooltipWindow) == n - 1;
+    const int want = tipOnTop ? n - 2 : n - 1;
+    if (getIndexOfChildComponent (chromeView.get()) == want) return;
+    if (tipOnTop) chromeView->toBehind (&tooltipWindow);
+    else chromeView->toFront (false);
+}
+
+winframe::Region MeonEditor::windowRegionAt (int sx, int sy)
+{
+    // 화면 물리 좌표 → 에디터 좌표 (모니터 배율 반영)
+    const auto logical = juce::Desktop::getInstance().getDisplays().physicalToLogical (juce::Point<int> (sx, sy));
+    const auto p = getLocalPoint (nullptr, logical);
+    const auto content = contentBounds();
+    if (! content.contains (p) || p.y >= content.getY() + chrome::barHeight) return winframe::Region::client;
+    if (auto* cb = dynamic_cast<ui::WinCaptionButtons*> (chromeView.get()); cb != nullptr && cb->isVisible())
+    {
+        const auto which = cb->buttonAt (cb->getLocalPoint (this, p));
+        if (which == ui::WinCaptionButtons::maximise) return winframe::Region::maxButton;   // 윈도우 11 스냅 레이아웃
+        if (which != ui::WinCaptionButtons::none) return winframe::Region::client;          // 최소화·닫기는 앱이 받는다
+    }
+    // 맨 위에 뜬 것(설정 팝업·개발 화면)이 있으면 그 자리는 앱 화면 (맥에서 팝업이 떠 있으면 끌리지 않는 것과 같다)
+    auto* hit = getComponentAt (p);
+    if (hit == nullptr) return winframe::Region::client;
+    if (hit == this) return winframe::Region::caption;
+    if (onboarding != nullptr && onboarding->isVisible() && (hit == onboarding.get() || onboarding->isParentOf (hit)))
+        return onboarding->titleBarDragAt (hit, onboarding->getLocalPoint (this, p)) ? winframe::Region::caption : winframe::Region::client;
+    if (appRoot != nullptr && appRoot->isVisible() && (hit == appRoot.get() || appRoot->isParentOf (hit)))
+        return appRoot->titleBarDragAt (appRoot->getLocalPoint (this, p)) ? winframe::Region::caption : winframe::Region::client;
+    return winframe::Region::client;
 }
 
 int MeonEditor::titleBarInset() const
 {
-    if (devMockChrome) return chrome::barHeight;
+    if (devMockChrome || devMockWin) return chrome::barHeight;
+    if (winFrameInstalled) return chrome::barHeight;   // 윈도우: 최대화해도 창 버튼 줄 그대로
     auto* peer = getPeer();
     return chromeInstalled && peer != nullptr && chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen() ? chrome::barHeight : 0;
 }
@@ -940,15 +1094,16 @@ void MeonEditor::titleBarMouseDown()
 void MeonEditor::resized()
 {
     if (settingsOverlay != nullptr)
-        settingsOverlay->setBounds (getLocalBounds());
+        settingsOverlay->setBounds (contentBounds());
     if (settingsFadingOut != nullptr)
-        settingsFadingOut->setBounds (getLocalBounds());
+        settingsFadingOut->setBounds (contentBounds());
     if (devScreen != nullptr)
-        devScreen->setBounds (getLocalBounds());
+        devScreen->setBounds (contentBounds());
     if (appRoot != nullptr)
-        appRoot->setBounds (getLocalBounds());
+        appRoot->setBounds (contentBounds());
     if (onboarding != nullptr)
-        onboarding->setBounds (getLocalBounds());
+        onboarding->setBounds (contentBounds());
+    if (chromeView != nullptr) chromeView->place (contentBounds());
     processor.setLastPluginBounds (getLocalBounds());
 }
 

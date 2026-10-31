@@ -46,7 +46,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
         juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->core.home().dismissInvite (id); });
     };
     home = std::make_unique<HomeScreen> (core, update);
-    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms);
+    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, metric::padX, titleRight);
     home->onTitleBarMouseDown = [this] { titleBarMouseDown(); };
     home->onOverlayChanged = [this] { syncToggle(); };
     home->onOpenSettingsTab = [this] (int tab) { if (onOpenSettings) onOpenSettings (tab); };
@@ -101,32 +101,12 @@ void AppRoot::paint (juce::Graphics& g)
     g.fillAll (col::white);
 }
 
-void AppRoot::paintOverChildren (juce::Graphics& g)
-{
-    if (hasForcedChrome && forcedChrome == Sidebar::Chrome::macWindow)
-        drawMockLights (g);
-}
-
-void AppRoot::drawMockLights (juce::Graphics& g)
-{
-    // 52px 윗줄의 세로 가운데. 자리는 macOS 가 정한다 (빈 툴바 + unified): macOS 26 러너에서 잰 버튼 틀 (mac #224)
-    const juce::uint32 fills[] = { 0xFFFF5F57, 0xFFFEBC2E, 0xFF28C840 }, rims[] = { 0xFFE2463F, 0xFFE1A116, 0xFF1AAB29 };
-    for (int i = 0; i < 3; ++i)
-    {
-        const juce::Rectangle<float> c (19.0f + 23.0f * (float) i, 19.0f, 14.0f, 14.0f);
-        g.setColour (juce::Colour (fills[i]));
-        g.fillEllipse (c);
-        g.setColour (juce::Colour (rims[i]));
-        g.drawEllipse (c.reduced (0.25f), 0.5f);
-    }
-}
-
 Sidebar::Chrome AppRoot::chromeMode() const
 {
     if (hasForcedChrome) return forcedChrome;
     if (core.isPlugin()) return Sidebar::Chrome::flat;   // 플러그인: 독립 앱의 전체 화면·윈도우와 같은 배치 (사용자 결정 2026-10-31)
     // 맥 독립 앱 창 모드: 신호등이 있다. 전체 화면이면 신호등이 사라지므로 디자인 fullscreen 켜짐 배치.
-    // 윈도우·리눅스는 제목 줄을 그대로 두고 사이드바 윗부분은 신호등이 없는 배치 (사용자 결정 2026-10-30)
+    // 윈도우는 사이드바 윗부분이 전체 화면 배치 그대로 (디자인 v2.1 os = 윈도우: 창 버튼은 오른쪽 끝, 제목 줄 오른쪽 여백 150)
     if (auto* peer = getPeer(); peer != nullptr && meon::chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen())
         return Sidebar::Chrome::macWindow;
     return Sidebar::Chrome::flat;
@@ -147,6 +127,23 @@ void AppRoot::titleBarMouseDown()
     if (chromeMode() == Sidebar::Chrome::macWindow)
         if (auto* peer = getPeer())
             meon::chrome::titleBarMouseDown (peer->getNativeHandle());
+}
+
+bool AppRoot::titleBarDragAt (juce::Point<int> p)
+{
+    // 그 점의 맨 안쪽 구성 요소가 화면 바탕(사이드바·본문·방 화면)이고 그 화면의 제목 줄이면. 버튼·아이콘·겹침(메뉴·토스트·덮개)은 아니다
+    auto* hit = getComponentAt (p);
+    if (hit == nullptr) return false;
+    if (hit == this) return p.y < Sidebar::headerH;
+    auto* screen = hit;
+    while (screen != nullptr && screen->getParentComponent() != this) screen = screen->getParentComponent();
+    if (screen == nullptr) return false;
+    const auto local = screen->getLocalPoint (this, p);
+    if (screen == sidebar.get()) return sidebar->titleBarDragAt (hit, local);
+    if (screen == home.get())    return home->titleBarDragAt (hit, local);
+    if (screen == jam.get())
+        if (auto* j = getJamScreen()) return j->titleBarDragAt (hit, local);
+    return false;
 }
 
 void AppRoot::syncToggle()
@@ -210,7 +207,7 @@ void AppRoot::syncSidebar()
 {
     const bool inRoomView = core.store().state().currentRoom && ! minimized;
     sidebar->setPage (inRoomView ? Sidebar::Page::room : page);
-    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, sidebar->headerInset());
+    home->setShell (sidebar->currentWidth(), page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, sidebar->headerInset(), titleRight);
 }
 
 void AppRoot::showPage (Sidebar::Page p)
@@ -520,7 +517,7 @@ void AppRoot::layoutToasts()
     {
         const int h = t->heightForWidth (Toast::width);
         y -= h;
-        t->setBounds (getWidth() - 12 - Toast::width, y, Toast::width, h);
+        t->setPanelBounds (getWidth() - 12 - Toast::width, y, Toast::width, h);   // 구성 요소는 그림자 폭만큼 더 크다
         t->toFront (false);
         y -= metric::gap;
     }
@@ -584,9 +581,9 @@ void AppRoot::resized()
     // 사이드바가 옆에 있으면 방 화면 윗줄의 옛 앱 버튼(로고·로비 보기·알림·설정)을 뺀다. 숨으면(좁은 플러그인 창) 예전 윗줄 (갈 곳이 없어지지 않게)
     // 본문 제목 줄 왼쪽 여백 (디자인 hdPL): 맥 창 모드에서 사이드바를 접으면 접기 버튼 x - 12 (디자인 72), 접는 동안 같이 움직인다
     const int titleInset = hideSidebar ? metric::padX : sidebar->headerInset();
-    if (auto* screen = getJamScreen()) { screen->setSidebarShown (! hideSidebar); screen->setHeaderInset (titleInset); }
+    if (auto* screen = getJamScreen()) { screen->setSidebarShown (! hideSidebar); screen->setHeaderInset (titleInset); screen->setHeaderRightInset (titleRight); }
     sidebar->setBounds (0, 0, juce::jmax (sw, Sidebar::closedW), getHeight());
-    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, titleInset);
+    home->setShell (sw, page == Sidebar::Page::rooms ? TXT ("공개 방") : TXT ("홈"), page != Sidebar::Page::rooms, titleInset, titleRight);
     home->setBounds (getLocalBounds());
     if (jam != nullptr) jam->setBounds (getLocalBounds().withTrimmedLeft (sw));
     if (profileMenu != nullptr)

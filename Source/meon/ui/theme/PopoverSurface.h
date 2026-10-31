@@ -15,7 +15,9 @@ public:
     /** 판 바깥으로 그림자가 번지는 폭 (논리 px, 사방 같음) */
     static int shadowMargin();
 
-    /** panel: 구성 요소 c 안의 판 자리. 그림자·면·테두리를 그린다 (안쪽 내용은 부르는 쪽이 이어서 그린다) */
+    /** panel: 구성 요소 c 안의 판 자리. 그림자·면·테두리를 그린다 (안쪽 내용은 부르는 쪽이 이어서 그린다).
+        fill: 면 색 (기본 popoverStyle::background. 경고 토스트는 연한 핑크) */
+    void paint (juce::Graphics&, const juce::Component& c, juce::Rectangle<int> panel, juce::Colour fill);
     void paint (juce::Graphics&, const juce::Component& c, juce::Rectangle<int> panel);
 
     /** 그림자 그림을 새로 만든 횟수 (개발용 확인: 크기가 그대로면 늘지 않아야 한다) */
@@ -28,6 +30,25 @@ private:
     juce::Image shadow;
     int cachedW = 0, cachedH = 0, builds = 0;
     float cachedScale = 0.0f;
+};
+
+/** 판 둘레에 그림자를 그리는 떠 있는 판 (팝오버·토스트, 앞으로 생길 팝오버도 이것을 쓴다).
+    구성 요소는 판보다 그림자 폭만큼 사방으로 크고(그림자가 잘리지 않게), 그 자리는 마우스를 받지 않는다.
+    자리는 setPanelBounds 로 판 기준으로 정하고, 안쪽은 panel() 기준으로 배치·그리기 */
+class SurfaceComponent : public juce::Component
+{
+public:
+    void setPanelBounds (juce::Rectangle<int> panelInParent) { setBounds (panelInParent.expanded (PopoverSurface::shadowMargin())); }
+    void setPanelBounds (int x, int y, int w, int h) { setPanelBounds ({ x, y, w, h }); }
+    juce::Rectangle<int> getPanelBounds() const { return getBounds().reduced (PopoverSurface::shadowMargin()); }
+    const PopoverSurface& getSurface() const { return surface; }
+    bool hitTest (int x, int y) override { return panel().contains (x, y); }
+protected:
+    juce::Rectangle<int> panel() const { return getLocalBounds().reduced (PopoverSurface::shadowMargin()); }
+    void paintSurface (juce::Graphics& g, juce::Colour fill);
+    void paintSurface (juce::Graphics& g);
+private:
+    PopoverSurface surface;
 };
 
 } // namespace meon::ui

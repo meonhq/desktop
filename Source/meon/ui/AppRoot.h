@@ -4,6 +4,7 @@
 
 #include "screens/HomeScreen.h"
 #include "shell/Sidebar.h"
+#include "shell/WindowChromeView.h"
 #include "overlays/HomeOverlays.h"
 #include "../core/MeonCore.h"
 
@@ -38,11 +39,13 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
-    void paintOverChildren (juce::Graphics&) override;   // 개발용 미리 보기의 가짜 신호등
-    /** 개발용 (--chrome=mac): 맥 창 모드의 신호등 자리에 가짜 신호등 (맥 밖에서 배치를 미리 본다).
-        자리는 macOS 26 러너에서 잰 기본 버튼 틀 (14×14, x 19·42·65, y 19). 오른쪽 끝 79 */
-    static void drawMockLights (juce::Graphics&);
-    static constexpr int mockLightsRight = 65 + 14;
+    /** 개발용 (--chrome=mac): 맥 창 모드의 가짜 신호등 오른쪽 끝 (그리기는 에디터 맨 위의 MacTrafficLights). macOS 26 러너에서 잰 값 */
+    static constexpr int mockLightsRight = MacTrafficLights::mockRight;
+    /** 본문 제목 줄 오른쪽 여백 (디자인 hdPR): 보통 18, 윈도우 독립 앱은 창 버튼 138 + 12 = 150 (에디터가 정한다) */
+    void setTitleRightInset (int px) { if (px != titleRight) { titleRight = px; resized(); } }
+    int getTitleRightInset() const { return titleRight; }
+    /** 윈도우 창 영역 판정: 이 점(AppRoot 좌표)이 제목 줄의 빈 곳인지 (끌기·더블클릭 = 운영체제 제목 줄). 맥에서 누르면 창을 끄는 자리와 같다 */
+    bool titleBarDragAt (juce::Point<int>);
     /** 맥 창 모드의 사이드바 접기 버튼 x: 신호등(확대 버튼) 오른쪽 끝 + 12. 모르면 디자인 84 */
     int macToggleX() const;
     /** 맥 창 제목 줄이 붙거나 전체 화면에 들어가고 나온 뒤 (에디터가 부른다): 창 윗부분 배치를 다시 */
@@ -67,6 +70,7 @@ private:
     void syncToggle();
     // 맥 독립 앱: 제목 줄 없이 내용이 창 맨 위까지 (MeonWindowChrome). 붙이는 것은 에디터 (온보딩부터 같은 창 처리)
     bool hasForcedChrome = false;
+    int titleRight = metric::padX;
     Sidebar::Chrome forcedChrome = Sidebar::Chrome::flat;
     void titleBarMouseDown();
     Sidebar::Page page = Sidebar::homeMenu ? Sidebar::Page::home : Sidebar::Page::rooms;   // 방 밖(또는 최소화)에서 보는 쪽: 공개 방 (홈은 꺼 둠)

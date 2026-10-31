@@ -799,9 +799,9 @@ void HomeScreen::sendFriendRequest()
 //==============================================================================
 int HomeScreen::headerLine() const { return shell ? 51 : metric::headerH; }
 
-void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePageShown, int titlePad)
+void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePageShown, int titlePad, int titleRight)
 {
-    const bool changed = ! shell || leftInset != shellInset || title != pageTitle || homePageShown != shellHome || titlePad != titleInset;
+    const bool changed = ! shell || leftInset != shellInset || title != pageTitle || homePageShown != shellHome || titlePad != titleInset || titleRight != titleRightInset;
     if (! shell)
     {
         // 공개 방 쪽 (디자인): 카드 없이 쪽 머리말에 필터·방 만들기, 그 아래 방 목록. 코드로 입장은 사이드바 메뉴에 있다
@@ -823,6 +823,7 @@ void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePa
     shellHome = homePageShown;
     shellInset = leftInset;
     titleInset = titlePad;
+    titleRightInset = titleRight;
     pageTitle = title;
     setOpaque (false);   // 왼쪽 사이드바 자리는 비워 둔다
     if (changed && getWidth() > 0) { resized(); repaint(); }
@@ -831,7 +832,7 @@ void HomeScreen::setShell (int leftInset, const juce::String& title, bool homePa
 void HomeScreen::mouseDown (const juce::MouseEvent& e)
 {
     // 쪽 제목 줄의 빈 곳 (맥 창 모드: 끌면 창이 옮겨지고 더블클릭은 시스템 설정대로. AppRoot 가 모드를 본다)
-    if (shell && ! hasOverlay() && e.eventComponent == this && e.y < headerLine() && e.x >= shellInset && onTitleBarMouseDown)
+    if (titleBarDragAt (e.eventComponent, e.getPosition()) && onTitleBarMouseDown)
         onTitleBarMouseDown();
 }
 
@@ -1301,7 +1302,7 @@ void HomeScreen::resized()
         {
             const int titleW = (int) std::ceil (textWidth (font (600, 16.0f), pageTitle));
             filterButton->setBounds (shellInset + titleInset + titleW + 6, (headerLine() - 24) / 2, 24, 24);
-            createIcon.setBounds (getWidth() - metric::padX - 32, (headerLine() - 32) / 2, 32, 32);
+            createIcon.setBounds (getWidth() - titleRightInset - 32, (headerLine() - 32) / 2, 32, 32);   // 윈도우: 창 버튼 왼쪽 12
             roomViewport.setBounds (area.expanded (metric::padX));   // 본문 전체 (홈 쪽과 같은 자리). 카드는 안쪽 metric::pagePad 에서 시작
             if (! fold.isMoving (foldFriends)) layoutRooms();
         }

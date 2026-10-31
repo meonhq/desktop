@@ -1193,8 +1193,13 @@ void OnboardingScreen::setTitleBarInset (int inset)
 void OnboardingScreen::mouseDown (const juce::MouseEvent& e)
 {
     // 맨 윗줄(신호등 줄)의 빈 곳: 창 끌기·더블클릭 (내용은 그 아래 viewport 안이라 여기로 오지 않는다)
-    if (e.eventComponent == this && e.y < titleInset && onTitleBarMouseDown)
+    if (titleBarDragAt (e.eventComponent, e.getPosition()) && onTitleBarMouseDown)
         onTitleBarMouseDown();
+}
+
+bool OnboardingScreen::titleBarDragAt (const juce::Component* hit, juce::Point<int> p) const
+{
+    return hit == this && p.y < titleInset;
 }
 
 void OnboardingScreen::paint (juce::Graphics& g)

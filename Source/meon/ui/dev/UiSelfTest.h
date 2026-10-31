@@ -98,6 +98,7 @@ private:
     void addSidebarTests();
     void addChromeTests();        // 맥 창 신호등 (--uitest=chrome, mac.yml)
     void addPopoverTests();       // 팝오버 그림자 자리·마우스·그림자 다시 그리기 (--uitest=popover)
+    void addWinChromeTests();     // 윈도우 창 윗부분: 창 버튼·제목 줄 영역 판정·최대화·끌기 (--uitest=winchrome, windows.yml)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

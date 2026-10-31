@@ -1296,10 +1296,15 @@ void JamScreen::setHeaderInset (int px)
 void JamScreen::mouseDown (const juce::MouseEvent& e)
 {
     // 윗줄의 빈 곳이나 방 이름 (버튼은 각자 받는다)
-    if (e.eventComponent != this && e.eventComponent != &roomTitle) return;
-    const auto p = e.getEventRelativeTo (this).getPosition();
-    if (sidebarShown && modal == nullptr && p.y < headerLine() && onTitleBarMouseDown)
+    if (titleBarDragAt (e.eventComponent, e.getEventRelativeTo (this).getPosition()) && onTitleBarMouseDown)
         onTitleBarMouseDown();
+}
+
+void JamScreen::setHeaderRightInset (int px)
+{
+    if (px == headerRightInset) return;
+    headerRightInset = px;
+    resized();
 }
 
 void JamScreen::setSidebarShown (bool b)
@@ -1357,7 +1362,7 @@ void JamScreen::resized()
     // 헤더
     {
         const float logoW = meon::logoWidth (metric::logoDrawH);
-        auto h = area.withHeight (headerLine()).reduced (metric::padX, 0);
+        auto h = area.withHeight (headerLine()).withTrimmedLeft (metric::padX).withTrimmedRight (headerRightInset);   // 윈도우: 오른쪽 150 (창 버튼 + 12)
         // 오른쪽부터: 방 나가기 · 로비 · 설정 · 알림 · 입장 요청(방장) · 입장 코드(비공개), 간격 9. 버튼은 줄지 않고 방 이름이 먼저 줄어든다
         leave.setBounds (h.removeFromRight (32).withSizeKeepingCentre (32, 32));
         for (auto* b : { &lobby, &settings, &bell })
