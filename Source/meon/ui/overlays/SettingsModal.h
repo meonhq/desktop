@@ -37,6 +37,10 @@ public:
     std::function<void()> onClose;
     void showTab (Tab);
     Tab currentTab() const { return tab; }
+    /** 개발용 (화면 자가 테스트): 프로필 탭에서 파일을 고른 것처럼 (파일 선택 창 없이) */
+    void devPickPhoto (const juce::File&);
+    /** 개발용: 프로필 사진 줄의 설명·버튼 글자 ("설명|올리기|기본 이미지로 보임 0/1") */
+    juce::String devPhotoRow() const;
 
     juce::Rectangle<int> dialogBounds() const override { return box(); }
     void paintDialog (juce::Graphics&) override;   // 덮개·애니메이션은 공통 래퍼 (ModalBase)

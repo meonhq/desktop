@@ -88,6 +88,10 @@ void setMine (const juce::String& userId, const juce::Image& photo)
     for (auto it = s.scaled.begin(); it != s.scaled.end();)
         it = it->first.first == "default" ? std::next (it) : s.scaled.erase (it);   // 예전 내 사진 그림은 버린다
     s.changes.sendChangeMessage();
+    // 목록(사이드바·채팅·멤버 줄)은 Avatar 구성 요소 없이 paintPhoto 로 바로 그린다: 창을 통째로 다시 그린다 (사진을 바꿀 때·로그인할 때만)
+    auto& desktop = juce::Desktop::getInstance();
+    for (int i = 0; i < desktop.getNumComponents(); ++i)
+        if (auto* c = desktop.getComponent (i)) c->repaint();
 }
 
 juce::String myId() { return store().mine; }

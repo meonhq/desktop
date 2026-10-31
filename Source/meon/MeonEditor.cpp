@@ -890,6 +890,16 @@ void MeonEditor::applyHomePreview()
         const auto name = p.fromFirstOccurrenceOf (":", false, false);
         for (int i = 0; i < 8; ++i) if (name == tabNames[i]) tab = i;
         openSettings (tab);
+        // --pick-photo=<파일>: 설정 › 프로필에서 그 파일을 고른 것처럼 (사진 있음·오류 화면 캡처)
+        if (const auto pick = meon::devOptions()["pick-photo"]; pick.isNotEmpty())
+        {
+            juce::Component::SafePointer<MeonEditor> safe (this);
+            juce::Timer::callAfterDelay (800, [safe, pick]
+            {
+                if (safe != nullptr && safe->settingsOverlay != nullptr)
+                    safe->settingsOverlay->devPickPhoto (juce::File (pick));
+            });
+        }
     }
     else if (p.startsWith ("disc") || p.startsWith ("roomlost"))
     {

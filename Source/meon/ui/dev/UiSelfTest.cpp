@@ -15,6 +15,8 @@
 #include "RepaintProbe.h"
 #include "../../shell/ShellHooks.h"
 #include "../../MeonEditor.h"
+#include "../ProfilePhoto.h"
+#include "../theme/Avatars.h"
 #include <climits>
 
 namespace meon::ui
@@ -52,6 +54,7 @@ void UiSelfTest::start()
     if (want ("profilefooter")) addProfileFooterTests();
     if (want ("codeinput")) addCodeInputTests();
     if (want ("friendadd")) addFriendAddTests();
+    if (want ("photo"))     addPhotoTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -4012,6 +4015,151 @@ void UiSelfTest::addFriendAddTests()
         key (juce::KeyPress (juce::KeyPress::escapeKey));   // 포커스(아이디 칸)에서 Esc
     }, 600);
     waitUntil (TXT ("Esc → 닫힘"), [this] { return home().modal == nullptr; }, 2000);
+}
+
+//==============================================================================
+// 프로필 사진 (합주 최종 v2 설정 › 프로필): 이 컴퓨터에만. 처리·오류·설정 줄·저장·지우기
+void UiSelfTest::addPhotoTests()
+{
+    begin (TXT ("프로필 사진"));
+    struct Shared { juce::TemporaryFile dir { ".meonphoto" }; juce::File png, jpgRot, gif, big, bad; };
+    auto sh = std::make_shared<Shared>();
+    auto writeImage = [] (const juce::Image& img, const juce::File& f, bool jpeg)
+    {
+        f.deleteFile();
+        juce::FileOutputStream os (f);
+        if (jpeg) { juce::JPEGImageFormat j; j.setQuality (0.95f); j.writeImageToStream (img, os); }
+        else juce::PNGImageFormat().writeImageToStream (img, os);
+    };
+    auto settings = [this]() -> SettingsModal*
+    {
+        if (auto* e = root.getParentComponent())
+            for (auto* c : e->getChildren()) if (auto* s = dynamic_cast<SettingsModal*> (c)) return s;
+        return nullptr;
+    };
+    auto near = [] (juce::Colour a, juce::Colour b, int tol)
+    {
+        return std::abs ((int) a.getRed() - (int) b.getRed()) <= tol && std::abs ((int) a.getGreen() - (int) b.getGreen()) <= tol
+            && std::abs ((int) a.getBlue() - (int) b.getBlue()) <= tol;
+    };
+    add ([this, sh, writeImage]
+    {
+        auto folder = sh->dir.getFile();
+        folder.createDirectory();
+        // PNG 300×200: 왼쪽 절반 투명, 오른쪽 절반 빨강 → 가운데 200×200 → 256 (왼쪽 흰색, 오른쪽 빨강)
+        juce::Image a (juce::Image::ARGB, 300, 200, true);
+        { juce::Graphics g (a); g.setColour (juce::Colours::red); g.fillRect (150, 0, 150, 200); }
+        sh->png = folder.getChildFile ("a.png");
+        writeImage (a, sh->png, false);
+        // JPEG 200×100: 왼쪽 파랑·오른쪽 초록 + EXIF 회전 6 (시계 90°) + GPS 표시 글자 → 세우면 위 파랑·아래 초록
+        juce::Image b (juce::Image::RGB, 200, 100, true);
+        { juce::Graphics g (b); g.setColour (juce::Colours::blue); g.fillRect (0, 0, 100, 100); g.setColour (juce::Colours::lime); g.fillRect (100, 0, 100, 100); }
+        juce::MemoryOutputStream jm;
+        { juce::JPEGImageFormat j; j.setQuality (0.95f); j.writeImageToStream (b, jm); }
+        const auto* d = static_cast<const juce::uint8*> (jm.getData());
+        // APP1 Exif (리틀 엔디언 TIFF, IFD0 에 Orientation 하나) 를 SOI 뒤에 끼운다. 끝에 "GPSLatitude" 글자를 붙여 지워지는지 본다
+        const juce::uint8 tiff[] = { 'I','I', 0x2A,0, 8,0,0,0,  1,0,  0x12,0x01, 3,0, 1,0,0,0, 6,0,0,0,  0,0,0,0 };
+        const char gps[] = "GPSLatitude37.5";
+        juce::MemoryOutputStream app;
+        app.writeByte ((char) 0xFF); app.writeByte ((char) 0xE1);
+        const int len = 2 + 6 + (int) sizeof (tiff) + (int) sizeof (gps);
+        app.writeByte ((char) ((len >> 8) & 0xFF)); app.writeByte ((char) (len & 0xFF));
+        app.write ("Exif\0\0", 6);
+        app.write (tiff, sizeof (tiff));
+        app.write (gps, sizeof (gps));
+        juce::MemoryOutputStream all;
+        all.write (d, 2);
+        all.write (app.getData(), app.getDataSize());
+        all.write (d + 2, jm.getDataSize() - 2);
+        sh->jpgRot = folder.getChildFile ("rot.jpg");
+        sh->jpgRot.replaceWithData (all.getData(), all.getDataSize());
+        // 형식 아님 (GIF), 5MB 넘음 (PNG 머리 + 채움), 읽을 수 없음 (PNG 머리 + 쓰레기)
+        sh->gif = folder.getChildFile ("x.gif");
+        sh->gif.replaceWithText ("GIF89a not supported");
+        juce::MemoryBlock bigData ((size_t) profilephoto::maxBytes + 1, true);
+        std::memcpy (bigData.getData(), "\x89PNG\r\n\x1a\n", 8);
+        sh->big = folder.getChildFile ("big.png");
+        sh->big.replaceWithData (bigData.getData(), bigData.getSize());
+        sh->bad = folder.getChildFile ("bad.png");
+        sh->bad.replaceWithData ("\x89PNG\r\n\x1a\nGARBAGEGARBAGE", 22);
+    }, 0);
+    add ([this, sh, near]
+    {
+        const auto r = profilephoto::process (sh->png);
+        expect (r.error == profilephoto::Error::none && r.image.getWidth() == 256 && r.image.getHeight() == 256, TXT ("PNG → 256×256"));
+        if (r.image.isValid())
+        {
+            const auto l = r.image.getPixelAt (20, 128), rr = r.image.getPixelAt (236, 128);
+            expect (near (l, juce::Colours::white, 8), TXT ("투명한 곳은 흰색 (") + l.toDisplayString (false) + ")");
+            expect (near (rr, juce::Colours::red, 24), TXT ("가운데 정사각형 (오른쪽 빨강 ") + rr.toDisplayString (false) + ")");
+        }
+        expect (profilephoto::sniff (r.jpeg.getData(), r.jpeg.getSize()) == "jpeg", TXT ("JPEG 로 저장"));
+        const auto j = profilephoto::process (sh->jpgRot);
+        expect (j.error == profilephoto::Error::none, TXT ("회전 정보가 있는 JPEG 읽기"));
+        if (j.image.isValid())
+        {
+            const auto top = j.image.getPixelAt (128, 30), bottom = j.image.getPixelAt (128, 226);
+            expect (near (top, juce::Colours::blue, 40) && near (bottom, juce::Colours::lime, 40),
+                    TXT ("EXIF 회전 적용 (위 ") + top.toDisplayString (false) + TXT (", 아래 ") + bottom.toDisplayString (false) + ")");
+        }
+        const juce::String bytes (static_cast<const char*> (j.jpeg.getData()), (size_t) j.jpeg.getSize());
+        const bool noMeta = j.jpeg.getSize() > 0
+            && juce::String::fromUTF8 (static_cast<const char*> (j.jpeg.getData()), (int) j.jpeg.getSize()).indexOf ("GPSLatitude") < 0
+            && std::search (static_cast<const char*> (j.jpeg.getData()), static_cast<const char*> (j.jpeg.getData()) + j.jpeg.getSize(), "Exif", "Exif" + 4)
+                   == static_cast<const char*> (j.jpeg.getData()) + j.jpeg.getSize();
+        expect (noMeta, TXT ("다시 저장한 JPEG 에 EXIF·GPS 없음"));
+        expect (profilephoto::process (sh->gif).error == profilephoto::Error::format
+                && profilephoto::message (profilephoto::Error::format) == TXT ("JPG, PNG, WEBP 이미지만 올릴 수 있어요"), TXT ("GIF → 형식 오류 문구"));
+        expect (profilephoto::process (sh->big).error == profilephoto::Error::tooLarge
+                && profilephoto::message (profilephoto::Error::tooLarge) == TXT ("5MB 이하 이미지만 올릴 수 있어요"), TXT ("5MB 넘음 → 크기 오류 문구"));
+        expect (profilephoto::process (sh->bad).error == profilephoto::Error::unreadable
+                && profilephoto::message (profilephoto::Error::unreadable) == TXT ("이미지를 읽을 수 없어요"), TXT ("깨진 파일 → 읽을 수 없음 문구"));
+    }, 0);
+    // 설정 › 프로필: 올리기 → 변경·기본 이미지로, 오류는 빨강, 기본 이미지로 → 올리기
+    add ([this] { if (root.onOpenSettings) root.onOpenSettings ((int) SettingsModal::Tab::profile); }, 700);
+    add ([this, settings]
+    {
+        auto* s = settings();
+        expect (s != nullptr, TXT ("설정 열림"));
+        if (s == nullptr) return;
+        s->showTab (SettingsModal::Tab::profile);
+        const auto row = s->devPhotoRow();
+        std::cerr << "UITEST INFO photo row before: " << row << std::endl;
+        expect (row == TXT ("합주실과 친구 목록에 보여요 · JPG, PNG 5MB 이하|올리기|0|grey"), TXT ("사진 없음: 올리기, 기본 이미지로 없음 (") + row + ")");
+    }, 300);
+    add ([this, sh, settings]
+    {
+        if (auto* s = settings()) s->devPickPhoto (sh->png);
+        const auto& me = core.store().state().me;
+        const juce::String id = me ? me->id : juce::String();
+        expect (avatars::hasMyPhoto() && avatars::myId() == id && avatars::photoFor (id).isValid(), TXT ("올린 사진이 내 아바타"));
+        expect (profilephoto::fileFor (id).existsAsFile(), TXT ("이 컴퓨터에 저장 (") + profilephoto::fileFor (id).getFileName() + ")");
+        expect (! avatars::photoFor ("u_someone_else").isValid(), TXT ("다른 사람 자리는 기본 이미지"));
+        const auto row = settings() != nullptr ? settings()->devPhotoRow() : juce::String();
+        expect (row.endsWith (TXT ("|변경|1|grey")), TXT ("사진 있음: 변경 + 기본 이미지로 (") + row + ")");
+    }, 300);
+    add ([this, sh, settings]
+    {
+        if (auto* s = settings()) s->devPickPhoto (sh->gif);
+        const auto row = settings() != nullptr ? settings()->devPhotoRow() : juce::String();
+        expect (row == TXT ("JPG, PNG, WEBP 이미지만 올릴 수 있어요|변경|1|red"), TXT ("형식 오류: 설명 자리에 빨강, 사진은 그대로 (") + row + ")");
+    }, 300);
+    add ([this, settings]
+    {
+        auto* s = settings();
+        if (s == nullptr) return;
+        if (auto* b = findButton (*s, TXT ("기본 이미지로"))) click (*b);
+    }, 300);
+    add ([this, settings]
+    {
+        const auto& me = core.store().state().me;
+        const juce::String id = me ? me->id : juce::String();
+        expect (! avatars::hasMyPhoto() && ! profilephoto::fileFor (id).existsAsFile(), TXT ("기본 이미지로: 사진·파일 지움"));
+        const auto row = settings() != nullptr ? settings()->devPhotoRow() : juce::String();
+        expect (row.endsWith (TXT ("|올리기|0|grey")), TXT ("기본 이미지로 뒤: 올리기 (") + row + ")");
+        if (auto* s = settings()) s->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));   // 설정 창의 Esc (뒤 시험이 홈을 쓴다)
+    }, 0);
+    waitUntil (TXT ("설정 창 닫힘"), [settings] { return settings() == nullptr; });
 }
 
 } // namespace meon::ui

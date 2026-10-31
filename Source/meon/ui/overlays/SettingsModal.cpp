@@ -6,6 +6,8 @@
 #include "../../shell/ShellHooks.h"
 #include "../../MeonAudio.h"
 #include "../../MeonSettings.h"
+#include "../ProfilePhoto.h"
+#include "../theme/Avatars.h"
 
 namespace meon::ui
 {
@@ -574,10 +576,45 @@ namespace
 
     //==========================================================================
     // 프로필
-    struct ProfilePage : SettingsModal::Page
+    struct ProfilePage : SettingsModal::Page,
+                         private juce::ChangeListener
     {
+        /** 프로필 사진 줄 오른쪽 (디자인: 폭 220, 사진 40 · 사이 12 · 미니 버튼 사이 6) */
+        struct PhotoControl : juce::Component
+        {
+            Avatar photo { 40.0f, 20.0f };
+            Button pick { Button::Kind::small, TXT ("올리기") }, reset { Button::Kind::small, TXT ("기본 이미지로") };
+            PhotoControl()
+            {
+                addAndMakeVisible (photo);
+                addAndMakeVisible (pick);
+                addChildComponent (reset);
+                photo.setTitle (TXT ("프로필 사진 변경"));
+            }
+            void resized() override
+            {
+                photo.setBounds (0, 0, 40, 40);
+                int x = 40 + 12;
+                const int y = (40 - metric::smallH) / 2;
+                pick.setBounds (x, y, pick.getIdealWidth(), metric::smallH);
+                x += pick.getWidth() + 6;
+                reset.setBounds (x, y, reset.getIdealWidth(), metric::smallH);
+            }
+        };
+
         ProfilePage (SettingsModal& o, core::MeonCore& c) : Page (o), core (c)
         {
+            add (photoRow).setControl (&photoCtl, 220, 40);
+            photoCtl.photo.onClick = [this] { choosePhoto(); };   // 사진을 눌러도 고르기 (디자인 "프로필 사진 변경")
+            photoCtl.pick.onPress = [this] { choosePhoto(); };
+            photoCtl.reset.onPress = [this]
+            {
+                if (const auto& me = core.store().state().me) profilephoto::remove (me->id);
+                showPhotoDesc ({});
+                refreshPhoto();
+            };
+            avatars::changes().addChangeListener (this);
+            refreshPhoto();
             add (nickRow).setControl (&nick, 220, 32);
             add (partRow).setControl (&part, 220, 32);
             const auto& me = core.store().state().me;
@@ -589,6 +626,52 @@ namespace
                            { TXT ("기타"), TXT ("베이스"), TXT ("드럼"), TXT ("키보드"), TXT ("보컬"), TXT ("그 외") });
             part.setValue (me && me->part ? *me->part : juce::String ("other"));
             part.onValueChange = [this] (const juce::String& v) { core.account().setPart (v); };
+        }
+
+        ~ProfilePage() override { avatars::changes().removeChangeListener (this); }
+
+        void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshPhoto(); }
+
+        void refreshPhoto()
+        {
+            const auto& me = core.store().state().me;
+            const juce::String id = me ? me->id : juce::String();
+            photoCtl.photo.setUser (id);
+            const bool has = id.isNotEmpty() && avatars::myId() == id && avatars::hasMyPhoto();
+            photoCtl.pick.setButtonText (has ? TXT ("변경") : TXT ("올리기"));
+            photoCtl.reset.setVisible (has);
+            photoCtl.resized();
+        }
+
+        /** 빈 값이면 기본 설명 (디자인 파일 문구), 아니면 빨강 오류 */
+        void showPhotoDesc (const juce::String& error)
+        {
+            photoRow.desc = error.isNotEmpty() ? error : TXT ("합주실과 친구 목록에 보여요 · JPG, PNG 5MB 이하");
+            photoRow.descInk = error.isNotEmpty() ? col::danger : col::inkSub;
+            photoRow.repaint();
+        }
+
+        void choosePhoto()
+        {
+            chooser = std::make_unique<juce::FileChooser> (TXT ("프로필 사진"), juce::File(), "*.jpg;*.jpeg;*.png;*.webp");
+            juce::Component::SafePointer<ProfilePage> safe (this);
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [safe] (const juce::FileChooser& fc)
+                                  {
+                                      if (safe != nullptr && fc.getResult().existsAsFile()) safe->applyPickedFile (fc.getResult());
+                                  });
+        }
+
+        /** 고른 파일: 형식·크기 확인 → 256×256 JPEG 로 이 컴퓨터에 저장 (서버에 올리지 않는다) */
+        void applyPickedFile (const juce::File& f)
+        {
+            const auto& me = core.store().state().me;
+            if (! me) return;
+            const auto r = profilephoto::process (f);
+            if (r.error != profilephoto::Error::none) { showPhotoDesc (profilephoto::message (r.error)); return; }
+            if (! profilephoto::save (me->id, r)) { showPhotoDesc (profilephoto::message (profilephoto::Error::unreadable)); return; }
+            showPhotoDesc ({});
+            refreshPhoto();
         }
 
         void saveNick()
@@ -616,6 +699,9 @@ namespace
         }
 
         core::MeonCore& core;
+        SettingsModal::Row photoRow { TXT ("프로필 사진"), TXT ("합주실과 친구 목록에 보여요 · JPG, PNG 5MB 이하") };
+        PhotoControl photoCtl;
+        std::unique_ptr<juce::FileChooser> chooser;
         SettingsModal::Row nickRow { TXT ("닉네임"), TXT ("합주실과 친구 목록에 보이는 이름이에요") };
         SettingsModal::Row partRow { TXT ("파트"), TXT ("방에서 이름 옆에 표시돼요") };
         TextInput nick;
@@ -1372,6 +1458,19 @@ juce::String SettingsModal::tabTitle (Tab t)
         case Tab::keys:    return TXT ("단축키");
         case Tab::about:   return TXT ("정보");
     }
+    return {};
+}
+
+void SettingsModal::devPickPhoto (const juce::File& f)
+{
+    if (auto* p = dynamic_cast<ProfilePage*> (page.get())) p->applyPickedFile (f);
+}
+
+juce::String SettingsModal::devPhotoRow() const
+{
+    if (auto* p = dynamic_cast<ProfilePage*> (page.get()))
+        return p->photoRow.desc + "|" + p->photoCtl.pick.getButtonText() + "|" + juce::String (p->photoCtl.reset.isVisible() ? 1 : 0)
+               + "|" + juce::String (p->photoRow.descInk == col::danger ? "red" : "grey");
     return {};
 }
 

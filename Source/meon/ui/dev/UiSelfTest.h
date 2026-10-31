@@ -120,7 +120,8 @@ private:
     void addWinStatesTests();     // 윈도우 창 상태별 가장자리·창 버튼·크기 조절 (--uitest=winstates, windows.yml)
     void addProfileFooterTests(); // 친구 프로필 아래 줄: 보이는 버튼이 없으면 아래 줄(구분선 포함)도 없다 (--uitest=profilefooter)
     void addCodeInputTests();
-    void addFriendAddTests();     // 친구 추가 창 (합주 최종 v2): 크기·결과 문구·색·Enter(한글 조합 중 제외)·취소·받은 요청 (--uitest=friendadd)     // 6칸 코드 입력: 위 숫자 줄·숫자 키패드·붙여넣기·한글 자판 (방 코드 / 이메일 인증) (--uitest=codeinput)
+    void addFriendAddTests();
+    void addPhotoTests();         // 프로필 사진: 처리(정사각형·256·흰 바탕·회전·메타데이터 없음)·오류 문구·설정 줄·저장·지우기 (--uitest=photo)     // 친구 추가 창 (합주 최종 v2): 크기·결과 문구·색·Enter(한글 조합 중 제외)·취소·받은 요청 (--uitest=friendadd)     // 6칸 코드 입력: 위 숫자 줄·숫자 키패드·붙여넣기·한글 자판 (방 코드 / 이메일 인증) (--uitest=codeinput)
     /** parent 의 보이는 자식끼리 겹치지 않고 parent 안에 있는지 (겹치면 그 이름들) */
     static juce::String overlaps (juce::Component& parent);
 };

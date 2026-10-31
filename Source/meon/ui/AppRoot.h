@@ -95,6 +95,7 @@ private:
     std::unique_ptr<juce::Component> roomClosed;   // 내가 방을 닫은 뒤 덮개
     juce::OwnedArray<Toast> toasts;   // 아래에서 위로 (0 = 맨 아래)
     juce::String shownRoomId;
+    juce::String photoUser;   // 내 프로필 사진을 읽어 둔 사용자 (바뀌면 다시 읽는다)
     juce::StringArray seenJoinRequests;   // 알림을 한 번 띄운 입장 요청
     juce::StringArray seenInvites;        // 알림을 한 번 띄운 초대 (10초 뒤 닫히면 다시 띄우지 않는다. 사이드바 카드는 남는다)
     bool minimized = false;   // 방 안이면서 홈을 보는 중 (방에 있는지는 store.currentRoom)

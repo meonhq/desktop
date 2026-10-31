@@ -8,6 +8,7 @@
 #include "../MeonReduceMotion.h"
 #include "../shell/ShellHooks.h"
 #include "../core/util/Fold.h"
+#include "ProfilePhoto.h"
 
 namespace meon::ui
 {
@@ -62,6 +63,7 @@ AppRoot::AppRoot (core::MeonCore& c, HomeScreen::UpdateHooks u) : core (c), upda
     toggle->onPress = [this] { sidebar->toggleCollapsed(); syncToggle(); };
     addChildComponent (*toggle);
     core.store().addListener (this);
+    stateChanged (core::StateKey::me);   // 이미 로그인돼 있으면 내 프로필 사진을 읽는다
     core.connection().addListener (this);
     core.room().onActionFailed = [this] (core::ErrorCode code)
     {
@@ -457,6 +459,13 @@ void AppRoot::updateScreen()
 
 void AppRoot::stateChanged (core::StateKey k)
 {
+    if (k == core::StateKey::me)
+    {
+        // 내 프로필 사진 (이 컴퓨터에만): 로그인한 사람이 바뀌면 그 사람 것으로, 로그아웃이면 기본 이미지
+        const auto& me = core.store().state().me;
+        const juce::String id = me ? me->id : juce::String();
+        if (id != photoUser) { photoUser = id; profilephoto::loadFor (id); }
+    }
     if (k == core::StateKey::currentRoom)
     {
         const auto& room = core.store().state().currentRoom;
