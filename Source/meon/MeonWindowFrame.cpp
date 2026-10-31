@@ -28,6 +28,10 @@ void devKey (int) {}
 bool appDrawsBorder (void*) { return false; }
 bool clientPixelSize (void*, int&, int&) { return false; }
 void frameInsets (void*, int out[4]) { out[0] = out[1] = out[2] = out[3] = 0; }
+void normalFrameInsets (void*, int out[4]) { out[0] = out[1] = out[2] = out[3] = 0; }
+void holdPosition (void*, bool) {}
+void devPostKey (void*, int) {}
+void devRedrawNow (void*) {}
 bool unmaximiseForSave (void*) { return false; }
 std::vector<unsigned> devCaptureScreen (int, int, int, int) { return {}; }
 int devScaleSteps (int, bool) { return 0; }

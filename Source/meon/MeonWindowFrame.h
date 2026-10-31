@@ -2,13 +2,16 @@
 //   운영체제 창(크기 조절·그림자·화면 끝 붙이기·창 메뉴)은 그대로 두고, 제목 줄 자리만 앱 내용으로 덮는다. 창 버튼 셋은 앱이 그린다
 //   (ui/shell/WindowChromeView: 윈도우 11 모양). 창 프로시저는 서브클래스로 JUCE 앞에 끼운다. 맥·리눅스는 아무 일도 하지 않는다.
 //
-//   창 틀 계산은 이 파일의 한 곳에서만 한다 (clientFromWindow · windowForClient · 상태별 내용 자리):
-//     틀 두께    모든 상태에서 같다: 위 0, 왼쪽·오른쪽·아래는 크기 조절 두께. JUCE 는 이 두께를 처음에 한 번 읽어 두고 좌표·크기 계산에
-//                계속 쓰므로, 상태마다 바뀌면 내용이 작게 그려지고 마우스가 어긋난다 (전체 화면 오른쪽 여백 버그의 원인).
-//                윈도우 11: 크기 조절 두께 그대로 (운영체제 1px 테두리 = #EBEBEB, DWMWA_BORDER_COLOR).
-//                윈도우 10: 운영체제 1px 테두리(#707070, 색을 바꿀 수 없음) 자리까지 내용으로 덮고, 앱이 네 변에 1px #EBEBEB 를 그린다 (사용자 결정)
-//     내용 자리  보통 = 창 - 틀 / 최대화 = 작업 영역과 정확히 같게 (창을 틀 두께만큼 밖으로) / 전체 화면(F11) = 모니터와 정확히 같게
-//     크기 조절  창 바깥 끝에서 크기 조절 두께 안쪽 (위는 내용 맨 위 줄). 최대화·전체 화면은 없음
+//   창 틀 계산은 MeonWindowFrame_win.cpp 맨 위 한 곳에서만 한다 (clientFromWindow · normalInsets · 상태별 내용 자리).
+//   참고한 공개 구현: Windows Terminal (NonClientIslandWindow::_OnNcCalcSize), melak47/BorderlessWindow
+//     내용 자리  보통 = 창 - 틀 / 최대화 = 그 모니터의 작업 영역과 정확히 같게 (운영체제가 창을 크기 조절 두께
+//                (SM_CXFRAME + SM_CXPADDEDBORDER, 창 DPI)만큼 화면 밖으로 크게 두므로 내용 = 창 - 그 두께) / 전체 화면(F11) = 모니터
+//     틀 두께    보통·전체 화면: 윈도우 11 = 옆·아래 크기 조절 두께, 위 0 (운영체제 1px 테두리 = #EBEBEB, DWMWA_BORDER_COLOR).
+//                윈도우 10 = 0 (내용이 창 전체, 운영체제 테두리 #707070 은 없고 앱이 네 변 1px #EBEBEB, 그림자는 DwmExtendFrameIntoClientArea 1px).
+//                최대화: 화면 밖으로 나간 크기 조절 두께. JUCE 는 틀 두께를 자기 크기 변경 때만 다시 읽으므로, 상태가 바뀌면
+//                앱이 창을 움직이지 않고 다시 읽게 한다 (holdPosition, MeonEditor::checkJuceFrame)
+//     크기       보통 창의 내용 크기는 배율에서 논리 px 정수로 떨어지는 물리 px 의 배수 (125% 5, 150% 3): JUCE 가 아는 크기 = 실제
+//     크기 조절  창 바깥 끝에서 크기 조절 두께 안쪽 (윈도우 10 은 내용 끝, 위는 내용 맨 위 줄). 최대화·전체 화면은 없음
 //     창 버튼    운영체제 창 버튼은 어떤 상태에서도 그려지지 않는다: 최소화·닫기는 늘 앱 화면(HTCLIENT), 최대화는 윈도우 11 에서만
 //                HTMAXBUTTON (스냅 레이아웃), 윈도우 10 은 앱 화면. 제목 줄을 그리는 숨은 메시지(WM_NCUAHDRAW*)는 막는다
 //     최대화     운영체제 기본 동작 (WM_SYSCOMMAND 를 JUCE 의 '전체 화면' 처리에 넘기지 않는다: 두 곳이 자리를 기억하면 서로 덮어쓴다)
@@ -51,8 +54,12 @@ bool isFullscreen (void* hwnd);
 bool appDrawsBorder (void* hwnd);
 /** 내용 크기 (물리 px). 창이 없으면 false */
 bool clientPixelSize (void* hwnd, int& w, int& h);
-/** 지금 틀 두께 (물리 px): 왼쪽, 위, 오른쪽, 아래. 앱이 JUCE 가 기억한 두께와 맞는지 확인할 때 */
+/** 지금 창의 실제 틀 두께 (창 - 내용, 물리 px): 왼쪽, 위, 오른쪽, 아래. 앱이 JUCE 가 기억한 두께와 맞는지 확인할 때 */
 void frameInsets (void* hwnd, int out[4]);
+/** 보통 창(과 전체 화면)의 틀 두께 (물리 px). 윈도우 10 은 0, 윈도우 11 은 옆·아래 크기 조절 두께 */
+void normalFrameInsets (void* hwnd, int out[4]);
+/** true 인 동안 창 자리·크기 바꾸기를 막는다: JUCE 에게 틀 두께를 다시 읽게 할 때 (JUCE 는 자기 크기 변경 때만 읽는다) */
+void holdPosition (void* hwnd, bool);
 /** 앱을 끌 때: 최대화였으면 보이지 않게 한 뒤 보통 자리로 되돌린다 (창 크기는 창이 사라질 때 저장되므로). 최대화였으면 true */
 bool unmaximiseForSave (void* hwnd);
 
@@ -76,6 +83,11 @@ struct Probe
     int captionPaintsBlocked = 0;     // 운영체제가 제목 줄을 그리려다 막힌 횟수 (WM_NCUAHDRAWCAPTION·FRAME)
     int insets[4] {};                 // 틀 두께 (왼쪽, 위, 오른쪽, 아래)
     bool fullscreen = false, win11 = false, appBorder = false;
+    int normalInsets[4] {};           // 보통 창의 틀 두께 (기대값)
+    int pixelStep = 1;                // 내용 크기 단위 (논리 px 정수로 떨어지는 물리 px)
+    long shadowResult = 1;            // DwmExtendFrameIntoClientArea 결과 (0 = 됨)
+    int bandPaints = 0;               // 윈도우 10 가장자리 1px 을 불투명으로 다시 놓은 횟수
+    int maxFrameMatchesWork = -1;     // 최대화: 창 - 크기 조절 두께 = 작업 영역 (1 같음, 0 다름, -1 최대화 아님)
     std::string os;
 };
 Probe probe (void* hwnd);
@@ -105,6 +117,10 @@ int devScaleSteps (int steps, bool query);
 /** 개발용: Alt+Space 를 누른 것처럼 (SendInput), Esc, F11, Alt+F4 는 보내지 않는다 (창을 닫는다) */
 void devAltSpace();
 void devKey (int virtualKey);
+/** 개발용: 창에 키 누름을 직접 보낸다 (앞 창이 아니어도. F11 시험) */
+void devPostKey (void* hwnd, int virtualKey);
+/** 개발용: 창 전체를 WM_PAINT 로 바로 다시 그린다 (창 프로시저를 거친다: 화면 비교 전에) */
+void devRedrawNow (void* hwnd);
 void devEscape();
 
 } // namespace meon::winframe

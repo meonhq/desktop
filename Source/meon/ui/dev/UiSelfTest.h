@@ -34,6 +34,8 @@ public:
     /** 켠 직후(온보딩 화면) 확인 결과: 에디터가 창이 뜰 때 한 번 (실패 수, 설명) */
     static inline int launchFrameFailures = 0, launchFrameChecks = 0;
     static inline juce::String launchFrameDetail;
+    /** checkWindowFrame 가 가장자리 비교에서 뺄 화면 물리 사각형 (다른 창이 덮은 자리) */
+    static inline juce::Rectangle<int> frameCheckIgnore;
 
 private:
     core::MeonCore& core;

@@ -1074,26 +1074,29 @@ void MeonEditor::ensureWindowChrome()
 
 void MeonEditor::checkJuceFrame()
 {
-    // JUCE 는 창 틀 두께를 크기가 바뀔 때만 다시 읽어 논리 px 로 기억하고(HWNDComponentPeer::updateBorderSize), 내용 자리·마우스 좌표를
-    // 그 값으로 셈한다. 틀 두께는 상태와 상관없이 같게 두지만(MeonWindowFrame), 어긋나 있으면 크기를 1px 바꿨다 되돌려 다시 읽게 한다
+    // JUCE 는 창 틀 두께를 자기 크기 변경 때만 다시 읽어(HWNDComponentPeer::updateBorderSize) 논리 px 로 기억하고, 내용 자리를
+    // 그 값으로 셈한다. 최대화하면 틀 두께가 바뀐다 (화면 밖으로 나간 크기 조절 두께, MeonWindowFrame). 어긋나 있으면 창은 그대로 둔 채
+    // (holdPosition) JUCE 에게 크기 변경을 시켜 틀 두께를 다시 읽게 하고, 그 두께로 내용 자리를 다시 셈하게 한다
     if (! winFrameInstalled) return;
     auto* peer = getPeer();
     if (peer == nullptr || peer->isMinimised()) return;
+    void* h = peer->getNativeHandle();
     int in[4];
-    winframe::frameInsets (peer->getNativeHandle(), in);
+    winframe::frameInsets (h, in);
     const double s = juce::jmax (0.5, peer->getPlatformScaleFactor());
     const auto have = peer->getFrameSize();
     const juce::BorderSize<int> want (juce::roundToInt (in[1] / s), juce::roundToInt (in[0] / s), juce::roundToInt (in[3] / s), juce::roundToInt (in[2] / s));
     if (have == want) return;
     ++juceFrameFixes;
-    core::AppLog::write ("window", "JUCE 창 틀 두께 맞춤: " + juce::String (have.getTop()) + "," + juce::String (have.getLeft()) + ","
+    core::AppLog::write ("window", "JUCE 창 틀 두께 다시 읽기: " + juce::String (have.getTop()) + "," + juce::String (have.getLeft()) + ","
                                    + juce::String (have.getBottom()) + "," + juce::String (have.getRight()) + " -> "
                                    + juce::String (want.getTop()) + "," + juce::String (want.getLeft()) + ","
                                    + juce::String (want.getBottom()) + "," + juce::String (want.getRight()));
-    // JUCE 가 아는 내용 자리 = 창 - 옛 두께. 실제 내용 자리 = 창 - 새 두께
-    const auto client = want.subtractedFrom (have.addedTo (peer->getBounds()));
-    peer->setBounds (client.withHeight (client.getHeight() + 1), false);
-    peer->setBounds (client, false);
+    const auto b = peer->getBounds();
+    winframe::holdPosition (h, true);
+    peer->setBounds (b.withHeight (b.getHeight() + 1), peer->isFullScreen());   // 창은 움직이지 않고 JUCE 만 틀 두께를 다시 읽는다
+    winframe::holdPosition (h, false);
+    peer->handleMovedOrResized();   // 새 틀 두께로 내용 자리
 }
 
 void MeonEditor::windowChromeChanged()
