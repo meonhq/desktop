@@ -1620,8 +1620,9 @@ void UiSelfTest::addChromeTests()
             expect (passes > 0, name + TXT (": 크기 조절 자리 누름을 macOS 에 맡김 (") + juce::String (passes) + TXT ("번)"));
             // 아래·안쪽으로 끈다: 높이가 줄고 아래 끝(AppKit y)은 그대로면 크기 조절 (옮겨졌으면 아래 끝도 움직인다)
             if (std::abs (f[3] - sh->frame[3]) >= 1.0 || std::abs (f[2] - sh->frame[2]) >= 1.0)
-                expect (std::abs (f[1] - sh->frame[1]) < 1.0 && f[3] < sh->frame[3],
-                        name + TXT (": 크기가 바뀜 (높이 ") + juce::String (sh->frame[3], 0) + " → " + juce::String (f[3], 0) + TXT (", 아래 끝 그대로)"));
+                expect (std::abs (f[1] - sh->frame[1]) < 1.0 && (f[3] < sh->frame[3] || f[2] < sh->frame[2]),
+                        name + TXT (": 크기가 바뀜 (") + juce::String (sh->frame[2], 0) + "x" + juce::String (sh->frame[3], 0) + " → "
+                        + juce::String (f[2], 0) + "x" + juce::String (f[3], 0) + TXT (", 아래 끝 그대로. 방향은 macOS 가 정함)"));
             else
                 std::cerr << "UITEST INFO chrome " << name << ": 합성 이벤트로는 크기가 바뀌지 않음 (macOS 가 실제 마우스로 크기 조절을 따라가는 경우). 앱이 가로채지 않은 것만 확인" << std::endl;
         }
