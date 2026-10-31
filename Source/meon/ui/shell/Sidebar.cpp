@@ -882,11 +882,8 @@ ProfileMenu::ProfileMenu (int n) : count (n)
 
 void ProfileMenu::paint (juce::Graphics& g)
 {
-    const auto b = box.toFloat();
-    g.setColour (col::white);
-    g.fillRoundedRectangle (b, 6.0f);
-    g.setColour (col::field);
-    g.drawRoundedRectangle (b.reduced (0.5f), 6.0f, 1.0f);
+    if (! g.clipRegionIntersects (box.expanded (PopoverSurface::shadowMargin()))) return;   // 투명 판: 메뉴 둘레 밖은 그릴 것이 없다
+    surface.paint (g, *this, box);
     for (int i = 0; i < 2; ++i)
     {
         const auto r = item (i).toFloat();

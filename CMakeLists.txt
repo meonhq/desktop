@@ -209,6 +209,8 @@ set(MEON_UI_SOURCES
     Source/meon/ui/theme/Tokens.h
     Source/meon/ui/theme/Hairline.h
     Source/meon/ui/theme/Hairline.cpp
+    Source/meon/ui/theme/PopoverSurface.h
+    Source/meon/ui/theme/PopoverSurface.cpp
     Source/meon/ui/theme/Icons.h
     Source/meon/ui/theme/Icons.cpp
     Source/meon/ui/theme/LookAndFeel.h

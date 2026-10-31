@@ -51,6 +51,25 @@ namespace col
     const juce::Colour meterCover   { 0xFFE5E5EAu };
 }
 
+/** 팝오버 겉모양: 프로필 메뉴·알림·입장 요청 패널. 앞으로 생길 팝오버도 이 값만 쓴다.
+    그리기는 ui::PopoverSurface (theme/PopoverSurface): 그림자 → 흰 면 → 1px 테두리. 토스트·모달·버튼은 해당 없음 */
+namespace popoverStyle
+{
+    const juce::Colour background { 0xFFFFFFFFu };
+    const juce::Colour border     { 0xFFEBEBEBu };   // popoverBorder: 1px (col::borderSubtle 과 같은 값)
+    constexpr float radius = 6.0f;
+
+    /** popoverShadow: 디자인 CSS box-shadow 한 겹 = "0 <dy>px <blur>px rgba(0,0,0,<alpha>)". 앞에 적은 겹이 위 */
+    struct ShadowLayer { float dy, blur, alpha; };
+    constexpr ShadowLayer shadow[] = { { 4.0f, 20.0f, 0.07f },    // 넓고 옅게
+                                       { 1.0f,  3.0f, 0.04f } };  // 가장자리에 붙는 얇은 그림자
+    /** CSS 값을 JUCE 로 옮기는 비율 (브라우저 캡처와 나란히 놓고 가장자리 밝기를 픽셀로 비교해 맞춘 값, PR #90 보고서):
+        흐림은 가우스 표준편차 σ = blur × sigmaPerBlur (논리 px, CSS 명세와 같은 B/2),
+        진하기는 alpha × opacityScale (크롬은 옅은 그림자를 8비트로 깎아 같은 수치보다 조금 옅게 그린다) */
+    constexpr float sigmaPerBlur = 0.5f;
+    constexpr float opacityScale = 0.92f;
+}
+
 /** 접기·펼치기 (채팅·친구·내 오디오·모니터·홈 친구가 모두 이 값을 읽는다. ui/widgets/FoldAnimator) */
 namespace motion
 {

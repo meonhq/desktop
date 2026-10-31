@@ -517,6 +517,10 @@ void MeonEditor::applyHomePreview()
     else if (p == "filter") home->openFilter();
     else if (p == "code")   home->openJoinCode();
     else if (p == "notif")  home->toggleNotifications();
+    else if (p == "profilemenu")   // 사이드바 맨 아래 프로필을 누른 메뉴 (알림·설정)
+    {
+        if (auto* sb = appRoot->getSidebar(); sb != nullptr && sb->onProfileMenu) sb->onProfileMenu();
+    }
     else if (p == "rooms")  { if (home->onShowRooms) home->onShowRooms(); }   // 공개 방 쪽 (홈·사이드바 디자인)
     else if (p.startsWith ("sidebar="))   // 사이드바가 접히는 중 e 에 멈춘 화면 (sidebar=0.5, 펼치는 중은 sidebar=open:0.5)
     {
@@ -641,7 +645,8 @@ void MeonEditor::applyHomePreview()
         // jam:mini — 방 최소화 (홈 + 아래 막대, 배지 0). jam:minihost — 방장 + 긴 방 이름 + 입장 요청 1 + 새 채팅 3.
         // jam:miniarm — minihost 에서 막대의 나가기를 한 번 누른 상태 (방장 툴팁). jam:miniconfirm / jam:minicreate — 최소화 중
         // 공개 방 '바로 입장' / '방 만들기' 를 누른 확인 모달
-        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide" || p == "jam:minireqs";
+        // jam:pop=requests|notif|profile|none — 방장 방(입장 요청 1)에서 헤더의 입장 요청·알림 팝오버 또는 프로필 메뉴를 연 화면 (그림자·CPU 확인)
+        const bool hostRoom = p == "jam:host" || p == "jam:minihost" || p == "jam:miniarm" || p == "jam:wide" || p == "jam:minireqs" || p.startsWith ("jam:pop=");
         core::CreateRoom c;
         c.type = hostRoom ? "public" : "private";
         if (hostRoom) c.entryMode = juce::String ("approval");
@@ -693,6 +698,21 @@ void MeonEditor::applyHomePreview()
                     if (what == "962") text = bytesOf (962);
                     if (what == "over") text = bytesOf (1012);
                     screen->devSetChatInput (text);
+                });
+            }
+            if (safe != nullptr && p.startsWith ("jam:pop="))
+            {
+                if (auto* fake = safe->core.fakeServer()) fake->devJoinRequest();
+                juce::Timer::callAfterDelay (1200, [safe, p]
+                {
+                    if (safe == nullptr || safe->appRoot == nullptr) return;
+                    const auto what = p.fromFirstOccurrenceOf ("=", false, false);
+                    if (what == "profile")
+                    {
+                        if (auto* sb = safe->appRoot->getSidebar(); sb != nullptr && sb->onProfileMenu) sb->onProfileMenu();
+                    }
+                    else if (auto* screen = safe->appRoot->getJamScreen())
+                        screen->devOpenPopover (what);
                 });
             }
             if (safe != nullptr && p == "jam:headerarm" && safe->appRoot != nullptr)   // 확인 상태는 3초 뒤 풀리므로 스냅숏(5초) 직전에

@@ -145,7 +145,8 @@ private:
     bool hot = false, covered = false;
 };
 
-/** 프로필 줄 위에 뜨는 메뉴 (알림·설정). 창 전체를 덮는 투명 판: 바깥을 누르면 닫힌다 */
+/** 프로필 줄 위에 뜨는 메뉴 (알림·설정). 창 전체를 덮는 투명 판: 바깥을 누르면 닫힌다.
+    메뉴(box)는 팝오버 겉모양 (PopoverSurface: 그림자는 메뉴 둘레에만, 투명 판에는 없음). 창 맨 위(AppRoot)에 있어 그림자가 사이드바 밖 본문까지 번진다 */
 class ProfileMenu : public juce::Component
 {
 public:
@@ -153,6 +154,7 @@ public:
     std::function<void()> onNotifications, onSettings, onDismiss;
     static constexpr int boxW = 222, boxH = 6 + 32 + 2 + 32 + 6;
     juce::Rectangle<int> box;
+    const PopoverSurface& getSurface() const { return surface; }
 
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -161,6 +163,7 @@ public:
 
 private:
     int count = 0, hot = -1;
+    PopoverSurface surface;
     juce::Rectangle<int> item (int i) const { return { box.getX() + 6, box.getY() + 6 + i * 34, box.getWidth() - 12, 32 }; }
 };
 

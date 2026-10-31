@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../theme/Tokens.h"
+#include "../theme/PopoverSurface.h"
 #include "Button.h"
 
 namespace meon::ui
@@ -185,7 +186,10 @@ private:
     void mouseDown (const juce::MouseEvent&) override;
 };
 
-/** 팝오버 (테두리 #D5D5D5, 모서리 6, 흰 면, 폭 340). 머리말: 제목 600 15px + 숫자 500 13px #767676 + 닫기 */
+/** 팝오버 (폭 340): 겉모양은 PopoverSurface (흰 면, 모서리 6, 1px #EBEBEB, 그림자 두 겹).
+    머리말: 제목 600 15px + 숫자 500 13px #767676 + 닫기.
+    구성 요소는 판보다 그림자 폭만큼 사방으로 크다 (그림자가 잘리지 않게). 자리는 setPanelBounds 로 판 기준으로 정한다.
+    판 바깥(그림자 자리)은 마우스를 받지 않는다 */
 class Popover : public juce::Component
 {
 public:
@@ -194,13 +198,21 @@ public:
     void setContent (juce::Component*, int height);
     std::function<void()> onClose;
     int getPreferredHeight() const { return 44 + contentH; }
+    /** 판 자리 (부모 좌표). 구성 요소는 그림자 폭만큼 넓게 잡는다 */
+    void setPanelBounds (juce::Rectangle<int> panelInParent);
+    void setPanelBounds (int x, int y, int w, int h) { setPanelBounds ({ x, y, w, h }); }
+    juce::Rectangle<int> getPanelBounds() const { return getBounds().reduced (PopoverSurface::shadowMargin()); }
+    const PopoverSurface& getSurface() const { return surface; }
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool hitTest (int x, int y) override { return panel().contains (x, y); }
 private:
     juce::String title, count;
     int width, contentH = 0;
     juce::Component* content = nullptr;
     IconButton closeButton;
+    PopoverSurface surface;
+    juce::Rectangle<int> panel() const { return getLocalBounds().reduced (PopoverSurface::shadowMargin()); }
 };
 
 /** 글자를 그리는 가벼운 라벨 (글꼴·색·정렬·줄 간격). 여러 줄은 단어 단위로 접는다 */

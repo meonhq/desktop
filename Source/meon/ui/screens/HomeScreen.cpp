@@ -1311,7 +1311,7 @@ void HomeScreen::resized()
         {
             popover->setContent (notifications.get(), notifications->getPreferredHeight());
             const int ph = popover->getPreferredHeight();
-            popover->setBounds (9, getHeight() - 55 - ph, 340, ph);   // 프로필 줄 위 (디자인 left 9, bottom 55)
+            popover->setPanelBounds (9, getHeight() - 55 - ph, 340, ph);   // 프로필 줄 위 (디자인 left 9, bottom 55)
             popover->toFront (false);
         }
         repaint();
@@ -1422,9 +1422,9 @@ void HomeScreen::resized()
         popover->setContent (notifications.get(), notifications->getPreferredHeight());
         const int ph = juce::jmax (h, popover->getPreferredHeight());
         if (shell)   // 사이드바 안: 프로필 줄 위 (디자인 left 9, bottom 55)
-            popover->setBounds (9, getHeight() - 55 - ph, 340, ph);
+            popover->setPanelBounds (9, getHeight() - 55 - ph, 340, ph);
         else
-            popover->setBounds (getWidth() - 12 - 340, headerLine() + 10, 340, ph);
+            popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, ph);
     }
     if (! fold.isMoving (foldFriends)) repaint();   // 움직이는 동안은 옮겨진 카드 자리만 다시 그린다
 }

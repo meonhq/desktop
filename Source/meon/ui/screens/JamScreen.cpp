@@ -1550,9 +1550,9 @@ void JamScreen::resized()
     }
     if (modal != nullptr) modal->setBounds (getLocalBounds());
     if (popover != nullptr && requestList != nullptr)
-        popover->setBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + requestList->getPreferredHeight());
+        popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + requestList->getPreferredHeight());
     if (popover != nullptr && notifications != nullptr)
-        popover->setBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + notifications->getPreferredHeight());
+        popover->setPanelBounds (getWidth() - 12 - 340, headerLine() + 10, 340, 44 + notifications->getPreferredHeight());
     // 움직이는 동안은 화면 전체를 다시 그리지 않는다 (옮겨진 카드 자리만 JUCE 가 다시 그린다)
     if (! (vMoving || hMoving)) repaint();
 }

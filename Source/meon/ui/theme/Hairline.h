@@ -10,6 +10,27 @@
 namespace meon::ui::hairline
 {
 
+/** 지금 그리는 자리의 물리 픽셀 격자 (배율과, 구성 요소 (0, 0) 이 창 안에서 놓인 자리) */
+struct Grid
+{
+    float scale = 1.0f;          // 논리 1px 당 물리 픽셀 (컨텍스트 배율: 윈도우 1.25·1.5, 맥 레티나 2)
+    juce::Point<float> origin;   // 이 구성 요소의 (0, 0) 이 창(맨 위 구성 요소) 안에서 놓인 자리 (논리 px)
+
+    /** 논리 좌표 v 를 가장 가까운 물리 픽셀 경계로 */
+    float snapX (float v) const { return std::round ((origin.x + v) * scale) / scale - origin.x; }
+    float snapY (float v) const { return std::round ((origin.y + v) * scale) / scale - origin.y; }
+    /** 두께: 물리 픽셀 floor(배율) 줄 (최소 1) */
+    float thickness() const { return juce::jmax (1.0f, std::floor (scale + 0.001f)) / scale; }
+    /** 네 변을 물리 픽셀 경계에 맞춘 사각형 (면을 테두리와 같은 자리에 채울 때) */
+    juce::Rectangle<float> snap (juce::Rectangle<float> r) const
+    {
+        const float x0 = snapX (r.getX()), y0 = snapY (r.getY());
+        return { x0, y0, snapX (r.getRight()) - x0, snapY (r.getBottom()) - y0 };
+    }
+};
+
+Grid gridFor (juce::Graphics&, const juce::Component& comp);
+
 /** 가로선: (x, y) 에서 너비 w, 두께 1px. comp 는 지금 그리는 구성 요소 (창 안의 자리로 물리 좌표를 셈한다) */
 void horizontal (juce::Graphics&, const juce::Component& comp, float x, float y, float w);
 /** 세로선: (x, y) 에서 높이 h, 두께 1px */

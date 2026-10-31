@@ -4,29 +4,14 @@
 namespace meon::ui::hairline
 {
 
-namespace
+Grid gridFor (juce::Graphics& g, const juce::Component& c)
 {
-    struct Grid
-    {
-        float scale = 1.0f;          // 논리 1px 당 물리 픽셀 (컨텍스트 배율: 윈도우 1.25·1.5, 맥 레티나 2)
-        juce::Point<float> origin;   // 이 구성 요소의 (0, 0) 이 창(맨 위 구성 요소) 안에서 놓인 자리 (논리 px)
-
-        // 논리 좌표 v 를 가장 가까운 물리 픽셀 경계로
-        float snapX (float v) const { return std::round ((origin.x + v) * scale) / scale - origin.x; }
-        float snapY (float v) const { return std::round ((origin.y + v) * scale) / scale - origin.y; }
-        // 두께: 물리 픽셀 floor(배율) 줄 (최소 1)
-        float thickness() const { return juce::jmax (1.0f, std::floor (scale + 0.001f)) / scale; }
-    };
-
-    Grid gridFor (juce::Graphics& g, const juce::Component& c)
-    {
-        Grid gr;
-        const float s = g.getInternalContext().getPhysicalPixelScaleFactor();
-        gr.scale = s > 0.01f ? s : 1.0f;
-        if (auto* top = c.getTopLevelComponent(); top != nullptr && top != &c)
-            gr.origin = top->getLocalPoint (&c, juce::Point<float>());
-        return gr;
-    }
+    Grid gr;
+    const float s = g.getInternalContext().getPhysicalPixelScaleFactor();
+    gr.scale = s > 0.01f ? s : 1.0f;
+    if (auto* top = c.getTopLevelComponent(); top != nullptr && top != &c)
+        gr.origin = top->getLocalPoint (&c, juce::Point<float>());
+    return gr;
 }
 
 void horizontal (juce::Graphics& g, const juce::Component& c, float x, float y, float w)

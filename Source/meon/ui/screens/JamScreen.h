@@ -55,6 +55,9 @@ public:
     int devLastChatLines() const;
     /** 개발용 스냅숏: 채팅 입력 칸에 글을 넣고 커서를 끝에 */
     void devSetChatInput (const juce::String&);
+    /** 개발용 (캡처·CPU 확인·자가 테스트): 헤더의 팝오버를 연다 ("requests" 입장 요청, "notif" 알림) */
+    void devOpenPopover (const juce::String& which) { if (which == "requests") toggleRequests(); else if (which == "notif") toggleNotifications(); }
+    const Popover* devPopover() const { return popover.get(); }
     /** 개발용 스냅숏: 방 나가기를 한 번 누른 상태 */
     void devArmLeave() { leave.triggerClick(); }
     /** 개발용 스냅숏: panel(chat·friends·send·mon)이 접히는 중 e 에 멈춘 화면 (--screen=jam:fold=chat:0.25) */

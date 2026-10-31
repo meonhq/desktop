@@ -396,32 +396,36 @@ void Popover::setContent (juce::Component* c, int h)
     resized();
 }
 
+void Popover::setPanelBounds (juce::Rectangle<int> r)
+{
+    setBounds (r.expanded (PopoverSurface::shadowMargin()));
+}
+
 void Popover::resized()
 {
-    closeButton.setBounds (getWidth() - metric::padX - 19, 12, 19, 19);
-    if (content != nullptr) content->setBounds (getLocalBounds().withTrimmedTop (44).reduced (1, 0).withTrimmedBottom (1));
+    const auto p = panel();
+    closeButton.setBounds (p.getRight() - metric::padX - 19, p.getY() + 12, 19, 19);
+    if (content != nullptr) content->setBounds (p.withTrimmedTop (44).reduced (1, 0).withTrimmedBottom (1));
 }
 
 void Popover::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    g.setColour (col::white);
-    g.fillRoundedRectangle (r, metric::radius);
-    g.setColour (col::field);
-    g.drawRoundedRectangle (r.reduced (0.5f), metric::radius, 1.0f);
+    const auto p = panel();
+    surface.paint (g, *this, p);
+    const auto r = p.toFloat();
     const auto tf = font (600, 15.0f);
     g.setColour (col::ink);
     g.setFont (tf);
     const float tw = textWidth (tf, title);
-    g.drawText (title, juce::Rectangle<float> ((float) metric::padX, 0.0f, tw + 2.0f, 43.0f), juce::Justification::centredLeft, false);
+    g.drawText (title, juce::Rectangle<float> (r.getX() + (float) metric::padX, r.getY(), tw + 2.0f, 43.0f), juce::Justification::centredLeft, false);
     if (count.isNotEmpty())
     {
         g.setColour (col::inkSub);
         g.setFont (font (500, 13.0f));
-        g.drawText (count, juce::Rectangle<float> ((float) metric::padX + tw + 6.0f, 0.0f, 60.0f, 43.0f), juce::Justification::centredLeft, false);
+        g.drawText (count, juce::Rectangle<float> (r.getX() + (float) metric::padX + tw + 6.0f, r.getY(), 60.0f, 43.0f), juce::Justification::centredLeft, false);
     }
     g.setColour (col::borderSubtle);
-    hairline::horizontal (g, *this, 1.0f, 43.0f, r.getWidth() - 2.0f);
+    hairline::horizontal (g, *this, r.getX() + 1.0f, r.getY() + 43.0f, r.getWidth() - 2.0f);
 }
 
 //==============================================================================

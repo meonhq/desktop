@@ -32,6 +32,7 @@ void UiSelfTest::start()
     if (want ("sidebar") || which == "roomsidebar") addRoomSidebarTests();   // roomsidebar: 이 구역만 (CI 창 폭별 확인)
     if (want ("sidebar"))  addSidebarTests();
     if (want ("chrome"))   addChromeTests();
+    if (want ("popover"))  addPopoverTests();
     if (want ("friends"))  addFriendRequestTests();   // 친구가 늘어 친구 패널이 바뀌므로 마지막
     std::cerr << "UITEST START " << which << " (" << steps.size() << " steps)" << std::endl;
     startTimer (20);
@@ -1624,4 +1625,84 @@ void UiSelfTest::addAooDropTests()
     }, 300);
 }
 
+//==============================================================================
+// 팝오버 겉모양 (PopoverSurface): 판 둘레의 그림자 자리까지 그리는 구성 요소가 덮고(잘리지 않게), 그 자리는 마우스를 받지 않는다.
+// 그림자 흐림은 판 크기가 바뀔 때만 새로 계산한다 (창 크기를 바꿔 자리가 옮겨지거나 다시 그려도 그대로)
+void UiSelfTest::addPopoverTests()
+{
+    begin (TXT ("팝오버: 그림자 (프로필 메뉴·알림)"));
+    const int m = PopoverSurface::shadowMargin();
+    struct Shared { juce::Rectangle<int> bounds; };
+    auto sh = std::make_shared<Shared>();
+    add ([this] { closeToasts(); if (root.profileMenu == nullptr) click (*root.sidebar, root.sidebar->devProfileRow().getCentre()); }, 400);
+    waitUntil (TXT ("프로필 메뉴 열림"), [this] { return root.profileMenu != nullptr; });
+    add ([this, m]
+    {
+        auto& pm = *root.profileMenu;
+        expect (pm.getBounds() == root.getLocalBounds(), TXT ("프로필 메뉴: 창 전체를 덮는 투명 판 (창 맨 위 AppRoot 의 자식)"));
+        expect (pm.box.getWidth() == ProfileMenu::boxW && pm.box.getX() == 9, TXT ("프로필 메뉴: 폭 222, 왼쪽 9 (그대로)"));
+        expect (root.getIndexOfChildComponent (&pm) > root.getIndexOfChildComponent (root.sidebar.get())
+                 && root.getIndexOfChildComponent (&pm) > root.getIndexOfChildComponent (root.home.get()),
+                TXT ("프로필 메뉴: 사이드바·본문보다 위"));
+        if (root.sidebar->getWidth() > 0)
+            expect (pm.box.expanded (m).getRight() > root.sidebar->getRight(),
+                    TXT ("프로필 메뉴 그림자 자리가 사이드바 경계를 넘어 본문까지 (") + juce::String (pm.box.expanded (m).getRight()) + " > " + juce::String (root.sidebar->getRight()) + ")");
+        root.repaint();
+    }, 400);
+    add ([this, sh]
+    {
+        expect (root.profileMenu->getSurface().getBuildCount() == 1,
+                TXT ("프로필 메뉴 그림자: 한 번만 계산 (") + juce::String (root.profileMenu->getSurface().getBuildCount()) + ")");
+        sh->bounds = peer()->getBounds();
+        peer()->setBounds (sh->bounds.withHeight (sh->bounds.getHeight() - 60), false);   // 창 높이만 바꾼다: 메뉴는 아래에 붙어 자리만 옮겨진다
+    }, 500);
+    add ([this, sh]
+    {
+        expect (root.profileMenu != nullptr && root.profileMenu->box.getBottom() == root.getHeight() - 55, TXT ("창 높이를 바꾸면 메뉴도 따라 옮겨진다"));
+        if (root.profileMenu != nullptr)
+            expect (root.profileMenu->getSurface().getBuildCount() == 1,
+                    TXT ("창 크기를 바꿔 자리만 옮겨지면 그림자를 다시 계산하지 않는다 (") + juce::String (root.profileMenu->getSurface().getBuildCount()) + ")");
+        peer()->setBounds (sh->bounds, false);
+    }, 500);
+    // 메뉴의 "알림" 을 눌러 알림 패널 (사이드바 안, 프로필 줄 위)
+    add ([this]
+    {
+        if (root.profileMenu == nullptr) return;
+        const auto b = root.profileMenu->box;
+        click (*root.profileMenu, { b.getX() + b.getWidth() / 2, b.getY() + 6 + 16 });
+    }, 500);
+    waitUntil (TXT ("알림 패널 열림"), [this] { return root.home->popover != nullptr && root.home->popover->isShowing(); });
+    add ([this, m]
+    {
+        auto& p = *root.home->popover;
+        const auto panel = p.getPanelBounds();
+        expect (panel.getWidth() == 340 && panel.getX() == 9 && panel.getBottom() == root.home->getHeight() - 55,
+                TXT ("알림 패널: 폭 340, 왼쪽 9, 아래 55 (그대로) ") + panel.toString());
+        expect (p.getBounds() == panel.expanded (m), TXT ("알림 패널: 구성 요소는 판보다 그림자 폭만큼 크다 (") + juce::String (m) + ")");
+        // 그림자 자리 중 창 안에 있는 부분은 부모(본문 화면) 안: 잘리지 않는다
+        const auto inWindow = p.getBounds().getIntersection (root.home->getLocalBounds());
+        expect (root.home->getLocalBounds().contains (inWindow) && inWindow.getRight() == p.getRight() && inWindow.getY() == p.getY(),
+                TXT ("알림 패널 그림자: 위·오른쪽이 부모 안 (창 가장자리 쪽만 창 끝)"));
+        expect (root.getIndexOfChildComponent (root.home.get()) > root.getIndexOfChildComponent (root.sidebar.get()),
+                TXT ("알림 패널: 본문 화면(사이드바보다 위)에 있어 그림자가 사이드바 위로도 번진다"));
+        expect (! p.hitTest (panel.getRight() - p.getX() + 4, panel.getCentreY() - p.getY()), TXT ("알림 패널: 그림자 자리는 마우스를 받지 않는다"));
+        expect (p.hitTest (panel.getCentreX() - p.getX(), panel.getCentreY() - p.getY()), TXT ("알림 패널: 판 안은 받는다"));
+        root.repaint();
+    }, 400);
+    add ([this]
+    {
+        auto& p = *root.home->popover;
+        expect (p.getSurface().getBuildCount() == 1, TXT ("알림 패널 그림자: 한 번만 계산 (") + juce::String (p.getSurface().getBuildCount()) + ")");
+        root.sidebar->setCollapsed (! root.sidebar->isCollapsed());   // 사이드바 접기 (팝오버 자리·크기는 그대로)
+    }, 600);
+    add ([this]
+    {
+        auto& p = *root.home->popover;
+        expect (p.getSurface().getBuildCount() == 1, TXT ("사이드바를 접어도 그림자를 다시 계산하지 않는다 (") + juce::String (p.getSurface().getBuildCount()) + ")");
+        root.sidebar->setCollapsed (! root.sidebar->isCollapsed());
+        root.home->toggleNotifications();
+    }, 600);
+}
+
 } // namespace meon::ui
+
