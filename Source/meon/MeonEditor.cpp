@@ -448,10 +448,10 @@ void MeonEditor::applyHomePreview()
 {
     // 개발용 스냅숏: 홈의 겹침 요소를 열어 둔다
     if (appRoot == nullptr) return;
-    // --chrome=mac|flat|plugin: 창 윗부분 배치 미리 보기 (홈·사이드바 디자인 v2.1 chromeVals). mac = 맥 창 모드 (가짜 신호등을 그린다),
-    // flat = 신호등 없음 (맥 전체 화면·윈도우), plugin = 플러그인 배치. 없으면 실제 창을 따른다
-    if (const auto ch = meon::devOptions()["chrome"]; ch == "mac" || ch == "flat" || ch == "plugin")
-        appRoot->devForceChrome (ch == "mac" ? ui::Sidebar::Chrome::macWindow : (ch == "flat" ? ui::Sidebar::Chrome::flat : ui::Sidebar::Chrome::legacy));
+    // --chrome=mac|flat: 창 윗부분 배치 미리 보기 (홈·사이드바 디자인 v2.1 chromeVals). mac = 맥 창 모드 (가짜 신호등을 그린다),
+    // flat = 신호등 없음 (맥 전체 화면·윈도우·플러그인). 없으면 실제 창을 따른다
+    if (const auto ch = meon::devOptions()["chrome"]; ch == "mac" || ch == "flat")
+        appRoot->devForceChrome (ch == "mac" ? ui::Sidebar::Chrome::macWindow : ui::Sidebar::Chrome::flat);
     // --sidebar=collapsed: 다른 미리 보기와 같이 사이드바를 접은 채로 (홈·사이드바 디자인 v2.1 접힌 상태 확인)
     if (meon::devOptions()["sidebar"] == "collapsed")
         appRoot->getSidebar()->previewFold (false, 0.0f);

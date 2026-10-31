@@ -283,8 +283,8 @@ void UiSelfTest::addLeaveTests()
         expect (j->leave.isArmed() && inRoom(), TXT ("첫 클릭: 나가지 않고 확인 상태"));
         expect (j->leave.getWidth() == 32 && j->leave.getHeight() == 32, TXT ("방 나가기: 아이콘 버튼 32×32"));
         expect (j->tip.isVisible() && j->tip.getTarget() == &j->leave, TXT ("방장: 확인 상태에서 말풍선"));
-        expect (j->tip.getText() == TXT ("한 번 더 누르면 나가요") && j->tip.getSubText() == TXT ("돌아올 때까지 방장 자리가 비어요"),
-                TXT ("말풍선: 첫 줄 + 방장 둘째 줄"));
+        expect (j->tip.getText() == TXT ("한 번 더 누르면 나가요") && j->tip.getSubText() == TXT ("나가면 방이 닫혀요"),
+                TXT ("말풍선: 방장이고 혼자면 \"나가면 방이 닫혀요\" (") + j->tip.getSubText() + ")");
         expect (j->leave.getTooltip().isEmpty(), TXT ("확인 상태: 툴팁 대신 말풍선"));
         if (j->tip.isVisible())
             expect (j->tip.getY() == j->leave.getBottom() + 6 && j->tip.getRight() == j->leave.getRight(), TXT ("툴팁: 버튼 아래 6, 오른쪽 끝 맞춤"));
@@ -299,10 +299,49 @@ void UiSelfTest::addLeaveTests()
         click (j->leave);
     }, 3300);
     add ([this] { expect (! jam()->leave.isArmed() && ! jam()->tip.isVisible() && inRoom(), TXT ("3초가 지나면 원래대로 (말풍선도 사라짐)")); });
+
+    // 방장이고 다른 사람이 있으면 "돌아올 때까지 방장 자리가 비어요" (가짜 사용자의 입장 요청을 받아 들인다)
+    add ([this] { if (auto* f = core.fakeServer()) f->devJoinRequest(); }, 0);
+    waitUntil (TXT ("입장 요청"), [this] { return ! core.store().state().joinRequests.empty(); });
+    add ([this] { core.room().acceptJoinRequest (core.store().state().joinRequests.front().id); }, 0);
+    waitUntil (TXT ("두 사람"), [this]
+    {
+        const auto& r = core.store().state().currentRoom;
+        return r && juce::jmax (r->memberCount, (int) r->members.size()) >= 2;
+    });
     add ([this] { click (jam()->leave); });
-    add ([this] { click (jam()->leave); }, 0);
+    add ([this]
+    {
+        auto* j = jam();
+        expect (j->leave.isArmed() && j->tip.getSubText() == TXT ("돌아올 때까지 방장 자리가 비어요"),
+                TXT ("말풍선: 방장이고 다른 사람이 있으면 \"돌아올 때까지 방장 자리가 비어요\" (") + j->tip.getSubText() + ")");
+        click (j->leave);   // 두 번째: 나간다
+    }, 0);
     waitUntil (TXT ("두 번째 클릭으로 나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
     add ([this] { expect (! inRoom() && ! home().hasRoomBar(), TXT ("두 번째 클릭: 방에서 나가 홈")); });
+
+    // 방장이 아니면 둘째 줄 없음 (가짜 방장의 공개 방)
+    add ([this]
+    {
+        const auto& s = core.store().state();
+        for (auto& r : s.publicRooms)
+            if (! r.isApproval() && core::rooms::hasRoomFor (r, s.me ? s.me->id : juce::String()) && ! kickedRooms.contains (r.id))
+            {
+                core.home().joinRoom (r.id, [] (core::Result<core::JoinResult>) {});
+                return;
+            }
+    }, 0);
+    waitUntil (TXT ("가짜 방장의 방에 들어감"), [this] { return inRoom() && jam() != nullptr && jam()->isShowing(); }, 6000);
+    add ([this] { closeToasts(); click (jam()->leave); }, 300);
+    add ([this]
+    {
+        auto* j = jam();
+        expect (! core.store().state().amHost() && j->leave.isArmed() && j->tip.isVisible() && j->tip.getText() == TXT ("한 번 더 누르면 나가요")
+                    && j->tip.getSubText().isEmpty(),
+                TXT ("방장이 아니면 둘째 줄 없음 (") + j->tip.getSubText() + ")");
+        click (j->leave);
+    }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && jam() == nullptr && home().isShowing(); });
 }
 
 //==============================================================================
@@ -1156,7 +1195,7 @@ void UiSelfTest::addSidebarTests()
        #else
         const auto native = Sidebar::Chrome::flat;        // 윈도우·리눅스: 제목 줄은 그대로, 신호등 없는 배치
        #endif
-        expect (root.chromeMode() == (core.isPlugin() ? Sidebar::Chrome::legacy : native), TXT ("이 플랫폼의 창 배치 (플러그인은 예전 배치)"));
+        expect (root.chromeMode() == (core.isPlugin() ? Sidebar::Chrome::flat : native), TXT ("이 플랫폼의 창 배치 (플러그인은 신호등 없는 배치)"));
         root.devForceChrome (Sidebar::Chrome::macWindow);
         chromeCheck (TXT ("맥 창 모드 펼침"), AppRoot::mockLightsRight + 12, 52 + 32, 18);
         root.sidebar->setCollapsed (true);

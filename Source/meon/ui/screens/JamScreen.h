@@ -113,6 +113,9 @@ private:
     void showModal (std::unique_ptr<Modal>);
     void closePopover();
     void toggleRequests();
+    /** 방 나가기 확인 말풍선: 첫 줄 "한 번 더 누르면 나가요", 둘째 줄은 방장일 때만
+        (혼자면 "나가면 방이 닫혀요": 서버가 마지막 사람이 나가면 방을 닫는다. 다른 사람이 있으면 "돌아올 때까지 방장 자리가 비어요") */
+    void syncLeaveNote();
     void toggleNotifications();
     void showProfile (const core::UserPublic&);
     void openManage (const core::JamSession::Member&);

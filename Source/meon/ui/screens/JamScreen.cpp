@@ -1019,18 +1019,10 @@ JamScreen::JamScreen (core::MeonCore& c) : core (c), jam (*c.jam()), plugin (c.i
     settings.onClick = [this] { tip.hide(); if (onOpenSettings) onOpenSettings(); };
     lobby.onClick = [this] { tip.hide(); closePopover(); if (onMinimize) onMinimize(); };
     // 방 나가기 (홈·사이드바 디자인 v2.1 최신): 로그아웃 아이콘, 두 번 눌러 확정 (팝업 없음). 마우스를 올리면 "방 나가기".
-    // 첫 클릭: 연한 빨강 면 + 버튼 아래 말풍선 "한 번 더 누르면 나가요" (방장이면 둘째 줄 "돌아올 때까지 방장 자리가 비어요").
+    // 첫 클릭: 연한 빨강 면 + 버튼 아래 말풍선 (syncLeaveNote).
     // 바깥을 누르거나 3초가 지나면 원래대로 (디자인에 없는 규칙, 사용자 결정. 다른 확인 버튼과 같다)
-    // 서버: 방장이 나가도 권한은 그대로 남고 방장 자리 하나가 예약된다 (host_present false, 자동 위임 없음. API 5.5·5.6)
     leave.setNormalTooltip (TXT ("방 나가기"));
-    leave.onStateChange = [this]
-    {
-        if (leave.isArmed())
-            tip.showNote (*this, leave, TXT ("한 번 더 누르면 나가요"),
-                          core.store().state().amHost() ? TXT ("돌아올 때까지 방장 자리가 비어요") : juce::String(), Tip::Place::belowRight);
-        else if (tip.getTarget() == &leave)
-            tip.hide();
-    };
+    leave.onStateChange = [this] { syncLeaveNote(); };
     leave.onConfirm = [this]
     {
         juce::Component::SafePointer<JamScreen> safe (this);
@@ -1280,6 +1272,7 @@ void JamScreen::stateChanged (core::StateKey k)
 {
     using K = core::StateKey;
     if (k == K::currentRoom || k == K::joinRequests || k == K::me) { refreshHeader(); jamStatsChanged(); }
+    if (k == K::currentRoom && leave.isArmed()) syncLeaveNote();   // 확인 중에 누가 들어오거나 나가면 둘째 줄을 다시
     else if (k == K::friendRequests || k == K::notifications) refreshHeader();
     else if (k == K::friends) rebuildFriends();
     else if (k == K::link) { resized(); repaint(); }
@@ -1335,6 +1328,26 @@ void JamScreen::paint (juce::Graphics& g)
     g.fillRect (0, headerLine(), getWidth(), 1);
 
 
+}
+
+void JamScreen::syncLeaveNote()
+{
+    if (! leave.isArmed())
+    {
+        if (tip.getTarget() == &leave) tip.hide();
+        return;
+    }
+    // 서버 규칙 (API 5.6): 방장이 나가도 권한은 그대로 남고 방장 자리 하나가 예약된다 (자동 위임 없음).
+    // 단, 마지막 사람이 나가면 방이 닫힌다 (24시간 410). 사용자 결정 2026-10-31: 혼자면 "나가면 방이 닫혀요"
+    const auto& st = core.store().state();
+    juce::String sub;
+    if (st.amHost())
+    {
+        const auto& r = *st.currentRoom;
+        const int people = juce::jmax (r.memberCount, (int) r.members.size());
+        sub = people <= 1 ? TXT ("나가면 방이 닫혀요") : TXT ("돌아올 때까지 방장 자리가 비어요");
+    }
+    tip.showNote (*this, leave, TXT ("한 번 더 누르면 나가요"), sub, Tip::Place::belowRight);
 }
 
 void JamScreen::resized()

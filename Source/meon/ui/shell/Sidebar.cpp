@@ -709,9 +709,8 @@ juce::Rectangle<int> Sidebar::toggleArea() const
         case Chrome::flat:      // 디자인 fullscreen 켜짐: 펼침 toggleL 196 (오른쪽 끝), 접힘 12. 접는 동안 같이 움직인다 (transition left).
                                 // 12 → 196 과 폭 56 → 240 은 같은 거리·같은 곡선이라 늘 폭 - 44 (같은 프레임의 폭을 따른다)
             return { juce::jlimit (12, openW - 44, getWidth() - 44), 10, 32, 32 };
-        case Chrome::legacy:    break;
     }
-    return shut() ? juce::Rectangle<int> (12, 10, 32, 32) : juce::Rectangle<int> (getWidth() - 1 - 12 - 32, 10, 32, 32);   // 오른쪽 선 1 안쪽에서 12
+    return {};
 }
 
 int Sidebar::headerInset() const
@@ -758,8 +757,8 @@ void Sidebar::paint (juce::Graphics& g)
     // 오른쪽 선: 맥 창 모드에서 접히면 52 부터 (맨 윗줄이 본문 제목 줄과 이어진다, 디자인 divTop)
     const int divTop = chrome == Chrome::macWindow && shut() ? headerH : 0;
     g.fillRect (getWidth() - 1, divTop, 1, getHeight() - divTop);
-    // 맨 윗줄 아래 선: 플러그인은 늘, 그 밖은 접혔을 때만 (펼치면 로고·메뉴와 이어진다, 디자인 topLine)
-    if (chrome == Chrome::legacy || shut())
+    // 맨 윗줄 아래 선: 접혔을 때만 (펼치면 로고·메뉴와 이어진다, 디자인 topLine)
+    if (shut())
         g.fillRect (0, topRowH() - 1, divTop > 0 ? getWidth() : getWidth() - 1, 1);
     g.fillRect (0, getHeight() - profileH, getWidth() - 1, 1);
 
@@ -800,14 +799,8 @@ void Sidebar::paintOverChildren (juce::Graphics& g)
 {
     // 로고 (높이 24). 디자인 A안: 맥 창 모드 (18, 56) 신호등 아래 줄, 신호등 없음 (18, 14) 맨 윗줄 왼쪽 (v2.1 최신). 접는 동안 흐려진다 (labelOp).
     // 디자인처럼 메뉴 위에 그린다 (접는 동안 메뉴가 로고 줄로 올라온다)
-    juce::Point<float> at { 18.0f, 14.0f };
-    float alpha = labelAlpha();
-    switch (chrome)
-    {
-        case Chrome::macWindow: at = { 18.0f, 56.0f }; break;
-        case Chrome::flat:      at = { 18.0f, 14.0f }; break;
-        case Chrome::legacy:    alpha = shut() ? 0.0f : 1.0f; break;   // 플러그인: 예전대로 펼쳤을 때만 바로
-    }
+    const juce::Point<float> at = chrome == Chrome::macWindow ? juce::Point<float> (18.0f, 56.0f) : juce::Point<float> (18.0f, 14.0f);
+    const float alpha = labelAlpha();
     if (alpha <= 0.001f) return;
     juce::Graphics::ScopedSaveState ss (g);
     g.reduceClipRegion (0, 0, getWidth() - 1, getHeight());

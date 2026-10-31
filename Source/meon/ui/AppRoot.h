@@ -47,7 +47,7 @@ public:
     int macToggleX() const;
     /** 맥 창 제목 줄이 붙거나 전체 화면에 들어가고 나온 뒤 (에디터가 부른다): 창 윗부분 배치를 다시 */
     void windowChromeChanged() { resized(); repaint(); }
-    /** 개발용 (--chrome=mac·flat·plugin): 창 윗부분 배치를 정한다. mac 은 신호등 자리에 가짜 신호등을 그린다 */
+    /** 개발용 (--chrome=mac·flat): 창 윗부분 배치를 정한다. mac 은 신호등 자리에 가짜 신호등을 그린다 */
     void devForceChrome (Sidebar::Chrome c) { forcedChrome = c; hasForcedChrome = true; resized(); repaint(); }
     void devResetChrome() { hasForcedChrome = false; resized(); repaint(); }
     Sidebar::Chrome chromeMode() const;

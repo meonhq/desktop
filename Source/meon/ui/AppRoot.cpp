@@ -124,7 +124,7 @@ void AppRoot::drawMockLights (juce::Graphics& g)
 Sidebar::Chrome AppRoot::chromeMode() const
 {
     if (hasForcedChrome) return forcedChrome;
-    if (core.isPlugin()) return Sidebar::Chrome::legacy;   // 플러그인은 이번에 바꾸지 않는다
+    if (core.isPlugin()) return Sidebar::Chrome::flat;   // 플러그인: 독립 앱의 전체 화면·윈도우와 같은 배치 (사용자 결정 2026-10-31)
     // 맥 독립 앱 창 모드: 신호등이 있다. 전체 화면이면 신호등이 사라지므로 디자인 fullscreen 켜짐 배치.
     // 윈도우·리눅스는 제목 줄을 그대로 두고 사이드바 윗부분은 신호등이 없는 배치 (사용자 결정 2026-10-30)
     if (auto* peer = getPeer(); peer != nullptr && meon::chrome::installedOn (peer->getNativeHandle()) && ! peer->isFullScreen())
