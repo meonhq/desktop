@@ -1,7 +1,7 @@
 # Windows 빌드: Meon 설치 프로그램(.exe)을 만든다. 배포(릴리스) 조건은 아래 '언제 도는가'.
 # - 실행 결과 페이지의 Artifacts 에서 받을 수 있고,
-# - 릴리스 빌드는 'windows-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 설치 파일을 받을 수 있다:
-#   https://github.com/meonhq/desktop/releases/download/windows-latest/meon-setup.exe
+# - 사람이 받는 주소는 https://meon.co.kr/download (dl.meon.co.kr 의 stable 매니페스트를 따라간다).
+#   릴리스 빌드는 'windows-latest' 프리릴리스(meon-setup.exe)도 그대로 갱신한다: 브리지 전 앱이 기대고, 웹이 매니페스트를 못 쓸 때 대체로 쓴다.
 # - 같은 파일을 MEON-Installer.exe 로도 올린다. 이미 설치된 앱이 자동 업데이트로 받는 이름이라 바꾸지 않는다.
 # - 릴리스는 이어서 publish-dl 작업이 dl.meon.co.kr 에도 올린다 (서명한 매니페스트, 배포 설계 DISTRIBUTION_PLAN 3.6·3.9).
 #   브리지 이후 앱은 dl 매니페스트를 먼저 보고, 검증된 것이 없을 때만 위의 build.txt 를 본다.
@@ -65,7 +65,7 @@ jobs:
         id: num
         # 릴리스: 커밋 수 (두 플랫폼 같은 번호, D3). 그 밖은 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다).
         # 감시 (배포 설계 4.1): windows-latest 의 build.txt 보다 커야 하고, mac-latest 보다 작으면 옛 커밋이라 멈춘다.
-        # desktop 은 10000 미만 (그 위는 meon-app). dl 매니페스트 감시는 publish-dl 이 한다
+        # desktop 은 10000 미만 (그 위는 app = meonhq/app). dl 매니페스트 감시는 publish-dl 이 한다
         run: |
           if [ "$RELEASE" != "true" ]; then echo "build_id=0" >> "$GITHUB_OUTPUT"; echo "BUILD_ID=0" >> "$GITHUB_ENV"; exit 0; fi
           if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch --unshallow --quiet origin; fi

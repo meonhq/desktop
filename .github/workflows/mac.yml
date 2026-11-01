@@ -1,7 +1,7 @@
 # macOS 빌드: Meon 디스크 이미지(.dmg)를 만든다. 배포(릴리스) 조건은 아래 '언제 도는가'.
 # - 실행 결과 페이지의 Artifacts 에서 받을 수 있고,
-# - 릴리스 빌드는 'mac-latest' 프리릴리스에도 올라가서 항상 같은 주소로 최신 파일을 받을 수 있다:
-#   https://github.com/meonhq/desktop/releases/download/mac-latest/meon.dmg
+# - 사람이 받는 주소는 https://meon.co.kr/download (dl.meon.co.kr 의 stable 매니페스트를 따라간다).
+#   릴리스 빌드는 'mac-latest' 프리릴리스(meon.dmg)도 그대로 갱신한다: 브리지 전 앱이 기대고, 웹이 매니페스트를 못 쓸 때 대체로 쓴다.
 # - 같은 릴리스에 앱 자동 업데이트용 MEON-mac.zip 과 build.txt(빌드 번호)도 올린다 (Source/meon/MeonUpdater.h).
 #   이 둘은 이미 설치된 앱에 이름이 박혀 있으므로 바꾸지 않는다. 앱은 Meon.app 이고, zip 안의 최상위도 Meon.app 이다
 #   (옛 앱은 MEON.app 을 찾지만 macOS 볼륨이 대소문자를 가리지 않아서 찾는다).
@@ -59,7 +59,7 @@ jobs:
         id: num
         # 릴리스: 커밋 수 (두 플랫폼 같은 번호, D3). 그 밖은 0 (로컬 빌드와 같음 → 앱의 자동 업데이트가 꺼진다).
         # 감시 (배포 설계 4.1): mac-latest 의 build.txt 보다 커야 하고, windows-latest 보다 작으면 옛 커밋이라 멈춘다.
-        # desktop 은 10000 미만 (그 위는 meon-app). dl 매니페스트 감시는 publish-dl 이 한다
+        # desktop 은 10000 미만 (그 위는 app = meonhq/app). dl 매니페스트 감시는 publish-dl 이 한다
         run: |
           if [ "$RELEASE" != "true" ]; then echo "build_id=0" >> "$GITHUB_OUTPUT"; echo "BUILD_ID=0" >> "$GITHUB_ENV"; exit 0; fi
           if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch --unshallow --quiet origin; fi
