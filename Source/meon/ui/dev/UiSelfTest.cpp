@@ -47,6 +47,7 @@ void UiSelfTest::start()
     if (which == "winedge") addWinEdgeTests();         // 윈도우 창 가장자리 (windows.yml, all 에 없음: 바탕 창을 띄운다)
     if (which == "fullscreen") addFullscreenTests();   // 실제 창 (windows.yml·mac.yml), all 에 없음
     if (which == "winstates") addWinStatesTests();     // 윈도우 창 상태별 (windows.yml, all 에 없음: 실제 창을 여러 상태로)
+    if (which == "winroomsidebar") addWinRoomSidebarTests();   // 윈도우: 방 화면을 최소 크기로 줄였을 때 접힌 사이드바 (windows.yml, all 에 없음)
     if (want ("overlay"))  addOverlayTests();
     if (want ("dock"))     addDockTests();
     if (want ("modalanim")) addModalAnimTests();
@@ -3505,6 +3506,237 @@ bool UiSelfTest::checkWindowFrame (juce::Component& editor, const juce::String& 
               << " maxFrame " << p.maxFrameMatchesWork << " modes " << p.modeChanges << " juceFrame " << juce::String (editor.getPeer()->getFrameSize().getLeft()) << "/" << juce::String (editor.getPeer()->getFrameSize().getTop())
               << (fails.isEmpty() ? "" : " FAIL: ") << detail << std::endl;
     return fails.isEmpty();
+}
+
+//==============================================================================
+// 윈도우: 방 화면에서 창을 최소 크기로 줄였을 때 접힌 사이드바 아이콘이 실제 화면에 보이는지 (--uitest=winroomsidebar, windows.yml).
+// 사용자 보고 (2026-11-02, 윈도우 10·100%, desktop PR #90 빌드와 app 윈도우 18번 빌드): 합주 화면에서 창을 최소 크기까지 줄이면
+// 사이드바가 자동으로 접히는데 그 아이콘이 전부 사라진다. 리눅스와 roomsidebar 시험(앱 그림만 본다)에서는 재현되지 않았다.
+// 사용자처럼 창 오른쪽 아래 모서리(화면 밖이면 오른쪽 끝)를 SendInput 으로 끌어 최소 크기보다 더 줄인 뒤, 아이콘 자리마다
+// 앱 그림(createComponentSnapshot)·실제 화면(다시 그리기 전)·실제 화면(창을 강제로 다시 그린 뒤)의 그림 픽셀 수와 사이드바 상태를 로그에 남긴다.
+// 이어서 같은 것을 코드로 줄인 경우(setSize)와 비교한다. 원인 찾기용이고, 고치는 것은 app 에서 한다 (사용자 결정 2026-11-02)
+void UiSelfTest::addWinRoomSidebarTests()
+{
+    begin (TXT ("윈도우: 방 사이드바 최소 크기"));
+    if (! juce::SystemStats::getOperatingSystemName().startsWithIgnoreCase ("Windows"))
+    {
+        add ([] { std::cerr << "UITEST INFO winroomsidebar: 윈도우가 아니라 건너뜀" << std::endl; }, 0);
+        return;
+    }
+    struct Shared
+    {
+        int n = 0;
+        bool skip = false;
+        juce::Rectangle<int> wide;               // 넓힌 창 (맨 위 구성 요소, 논리)
+        juce::Point<int> start, end;             // 끌기 (화면 물리)
+    };
+    auto sh = std::make_shared<Shared>();
+    auto handle = [this]() -> void* { auto* p = peer(); return p != nullptr ? p->getNativeHandle() : nullptr; };
+    auto minSize = [this]() -> juce::Point<int>
+    {
+        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (root.getTopLevelComponent()); rw != nullptr && rw->getConstrainer() != nullptr)
+            return { rw->getConstrainer()->getMinimumWidth(), rw->getConstrainer()->getMinimumHeight() };
+        return { 1024, 680 };
+    };
+    // 아이콘 자리: 접힌 줄의 아이콘 상자(사이드바 Body::paint 와 같은 x+9, 가운데-10, 20x20)와 내 프로필 아바타(28)
+    struct Spot { juce::String name; juce::Rectangle<int> box; };   // 사이드바 좌표
+    auto spots = [this]
+    {
+        std::vector<Spot> v;
+        auto* sb = root.sidebar.get();
+        const auto& st = core.store().state();
+        for (auto& text : juce::StringArray { TXT ("공개 방"), st.currentRoom ? st.currentRoom->title : juce::String(), TXT ("친구 추가") })
+        {
+            if (text.isEmpty()) continue;
+            const auto row = sb->devRow (text);
+            v.push_back ({ text, row.isEmpty() ? row : juce::Rectangle<int> (row.getX() + 9, row.getCentreY() - 10, 20, 20) });
+        }
+        const auto pb = sb->devProfileRow();
+        v.push_back ({ TXT ("내 프로필"), juce::Rectangle<int> (pb.getX() + 5, pb.getCentreY() - 14, 28, 28) });
+        return v;
+    };
+    // 그림 픽셀 = 상자 왼쪽 위 픽셀(바탕)과 한 채널이라도 24 넘게 다른 픽셀
+    auto inkCount = [] (const std::vector<unsigned>& px, int w, int h)
+    {
+        if (w <= 0 || h <= 0 || px.size() != (size_t) w * (size_t) h) return -1;
+        const juce::Colour bg (px[0]);
+        int n = 0;
+        for (auto c : px)
+        {
+            const juce::Colour k (c);
+            if (std::abs ((int) k.getRed() - (int) bg.getRed()) > 24 || std::abs ((int) k.getGreen() - (int) bg.getGreen()) > 24
+                || std::abs ((int) k.getBlue() - (int) bg.getBlue()) > 24) ++n;
+        }
+        return n;
+    };
+    auto savePng = [] (const std::vector<unsigned>& px, int w, int h, const juce::String& name)
+    {
+        const auto dir = juce::SystemStats::getEnvironmentVariable ("MEON_WINCAPS", {});
+        if (dir.isEmpty() || w <= 0 || h <= 0 || px.size() != (size_t) w * (size_t) h) return;
+        juce::Image img (juce::Image::RGB, w, h, false);
+        {
+            juce::Image::BitmapData out (img, juce::Image::BitmapData::writeOnly);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) out.setPixelColour (x, y, juce::Colour (px[(size_t) y * (size_t) w + (size_t) x]));
+        }
+        juce::File folder (dir);
+        folder.createDirectory();
+        auto f = folder.getChildFile (name + ".png");
+        f.deleteFile();
+        juce::FileOutputStream os (f);
+        if (os.openedOk()) juce::PNGImageFormat().writeImageToStream (img, os);
+    };
+    // 지금 사이드바를 세고 로그에 남긴다. 다시 그리기 전 화면을 먼저 잡고, 창을 강제로 다시 그린 뒤 한 번 더
+    auto report = [this, sh, handle, spots, inkCount, savePng] (const juce::String& label, const juce::String& key)
+    {
+        auto* sb = root.sidebar.get();
+        auto* p = peer();
+        if (sb == nullptr || p == nullptr) { expect (false, label + TXT (": 사이드바·창 없음")); return; }
+        const float s = (float) p->getPlatformScaleFactor();
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        auto physRect = [&] (juce::Component& c, juce::Rectangle<int> r)
+        {
+            const auto tl = displays.logicalToPhysical (c.localPointToGlobal (r.getTopLeft()));
+            return juce::Rectangle<int> (tl.x, tl.y, juce::roundToInt ((float) r.getWidth() * s), juce::roundToInt ((float) r.getHeight() * s));
+        };
+        const auto list = spots();
+        auto capture = [&] (const juce::Rectangle<int>& r) { return meon::winframe::devCaptureScreen (r.getX(), r.getY(), r.getWidth(), r.getHeight()); };
+        // 1) 다시 그리기 전 (사용자가 보는 그대로)
+        std::vector<int> raw, app, after;
+        juce::StringArray hits;
+        for (auto& sp : list)
+        {
+            if (sp.box.isEmpty()) { raw.push_back (-2); app.push_back (-2); hits.add ("-"); continue; }
+            const auto pr = physRect (*sb, sp.box);
+            raw.push_back (inkCount (capture (pr), pr.getWidth(), pr.getHeight()));
+            // 앱 그림: 사이드바만 그린 것 (형제가 덮는지는 hit 로 따로 본다)
+            const auto snap = sb->createComponentSnapshot (sp.box, true, s);
+            std::vector<unsigned> px;
+            px.reserve ((size_t) (snap.getWidth() * snap.getHeight()));
+            for (int y = 0; y < snap.getHeight(); ++y)
+                for (int x = 0; x < snap.getWidth(); ++x) px.push_back (snap.getPixelAt (x, y).getARGB());
+            app.push_back (inkCount (px, snap.getWidth(), snap.getHeight()));
+            auto* hit = root.getComponentAt (root.getLocalPoint (sb, sp.box.getCentre()));
+            hits.add (hit == nullptr ? juce::String ("null") : hit == sb || sb->isParentOf (hit) ? juce::String ("sidebar")
+                                                             : (hit->getComponentID().isNotEmpty() ? hit->getComponentID() : juce::String (typeid (*hit).name())));
+        }
+        const auto sbPhys = physRect (*sb, sb->getLocalBounds());
+        const auto key2 = juce::String (++sh->n).paddedLeft ('0', 2) + "_" + key;
+        savePng (capture (sbPhys), sbPhys.getWidth(), sbPhys.getHeight(), key2 + "_raw");
+        // 2) 창을 강제로 다시 그린 뒤 (WM_PAINT)
+        p->performAnyPendingRepaintsNow();
+        meon::winframe::devRedrawNow (handle());
+        for (auto& sp : list)
+        {
+            if (sp.box.isEmpty()) { after.push_back (-2); continue; }
+            const auto pr = physRect (*sb, sp.box);
+            after.push_back (inkCount (capture (pr), pr.getWidth(), pr.getHeight()));
+        }
+        savePng (capture (sbPhys), sbPhys.getWidth(), sbPhys.getHeight(), key2 + "_redrawn");
+        // 로그: 숫자는 자리 순서 (공개 방, 방, 친구 추가, 내 프로필). -1 캡처 실패, -2 줄 없음
+        auto join = [] (const std::vector<int>& v) { juce::StringArray a; for (auto x : v) a.add (juce::String (x)); return a.joinIntoString (","); };
+        juce::StringArray names;
+        for (auto& sp : list) names.add (sp.name);
+        auto* view = sb->viewport.getViewedComponent();
+        const auto pr = meon::winframe::probe (handle());
+        std::cerr << "UITEST INFO winroomsidebar " << label << " scale " << s << " dpi " << pr.dpi << (pr.installed ? " appFrame" : " osFrame")
+                  << " | spots [" << names.joinIntoString (",") << "] app [" << join (app) << "] screen [" << join (raw) << "] redrawn [" << join (after)
+                  << "] hit [" << hits.joinIntoString (",") << "]"
+                  << " | root " << root.getBounds().toString() << " top " << root.getTopLevelComponent()->getBounds().toString()
+                  << " client " << pr.client[0] << "," << pr.client[1] << " " << pr.client[2] << "x" << pr.client[3]
+                  << " | sidebar " << sb->getBounds().toString() << " showing " << (int) sb->isShowing() << " alpha " << sb->getAlpha()
+                  << " width " << sb->currentWidth() << " collapsed " << (int) sb->collapsed << " forced " << (int) sb->forced
+                  << " moving " << (int) sb->animating() << " e " << sb->openProgress()
+                  << " viewport " << sb->viewport.getBounds().toString() << " pos " << sb->viewport.getViewPosition().toString()
+                  << " vbar " << (int) sb->viewport.getVerticalScrollBar().isVisible() << " hbar " << (int) sb->viewport.getHorizontalScrollBar().isVisible()
+                  << " body " << (view != nullptr ? view->getBounds().toString() : juce::String ("null"))
+                  << " bodyShowing " << (int) (view != nullptr && view->isShowing()) << std::endl;
+        // 사용자 증상: 앱 그림에는 있는데 실제 화면(다시 그리기 전)에 없다
+        for (size_t i = 0; i < list.size(); ++i)
+            if (app[i] >= 8)
+                expect (raw[i] * 3 >= app[i], label + ": " + list[i].name + TXT (" 아이콘이 화면에 보임 (앱 ") + juce::String (app[i])
+                            + TXT (", 화면 ") + juce::String (raw[i]) + TXT (", 다시 그린 뒤 ") + juce::String (after[i]) + ")");
+            else
+                expect (false, label + ": " + list[i].name + TXT (" 앱 그림에 아이콘 없음 (") + juce::String (app[i]) + ")");
+    };
+
+    // 0) 방 밖에서 사이드바를 펴고, 창을 작업 영역 안에서 넓게 (1280x800 까지) 둔 뒤 방에 들어간다
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("방 밖"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
+    add ([this, sh, minSize]
+    {
+        root.sidebar->setCollapsed (false);
+        auto* top = root.getTopLevelComponent();
+        const auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (top->getScreenBounds());
+        const auto ua = d != nullptr ? d->userArea : juce::Rectangle<int> (0, 0, 1280, 800);
+        const auto mn = minSize();
+        sh->wide = juce::Rectangle<int> (ua.getX() + 8, ua.getY() + 8, juce::jmax (mn.x, juce::jmin (1280, ua.getWidth() - 16)),
+                                         juce::jmax (mn.y, juce::jmin (800, ua.getHeight() - 16)));
+        top->setBounds (sh->wide);
+        std::cerr << "UITEST INFO winroomsidebar: 작업 영역 " << ua.toString() << " 최소 " << mn.x << "x" << mn.y << " 넓힌 창 " << top->getBounds().toString()
+                  << " root " << root.getBounds().toString() << std::endl;
+    }, 600);
+    enterNewRoom();
+    wait (600);
+    add ([this, sh]
+    {
+        sh->skip = root.sidebar->currentWidth() != Sidebar::openW;
+        if (sh->skip)
+            std::cerr << "UITEST INFO winroomsidebar: 넓힌 창에서도 사이드바가 펼쳐지지 않아 (" << root.sidebar->currentWidth() << ", root "
+                      << root.getWidth() << ") 끌기 시험은 건너뜀" << std::endl;
+    }, 0);
+
+    // 1) 사용자처럼: 창 오른쪽 아래 모서리를 잡고 최소 크기보다 더 안쪽으로 끈다 (화면 밖이면 오른쪽 끝)
+    add ([this, sh, handle, minSize]
+    {
+        if (sh->skip) return;
+        const auto p = meon::winframe::probe (handle());
+        const float s = peer() != nullptr ? (float) peer()->getPlatformScaleFactor() : 1.0f;
+        const int b = juce::jmax (4, p.resizeBorder);
+        const juce::Rectangle<int> work (p.work[0], p.work[1], p.work[2], p.work[3]);
+        const auto mn = minSize();
+        const int dx = -(p.client[2] - juce::roundToInt ((float) mn.x * s)) - 40, dy = -(p.client[3] - juce::roundToInt ((float) mn.y * s)) - 40;
+        juce::Point<int> corner (p.window[0] + p.window[2] - b / 2 - 1, p.window[1] + p.window[3] - b / 2 - 1);
+        if (work.contains (corner)) { sh->start = corner; sh->end = corner + juce::Point<int> (dx, juce::jmin (0, dy)); }
+        else
+        {
+            const int y = juce::jlimit (work.getY() + 40, work.getBottom() - 40, p.window[1] + p.window[3] / 2);
+            sh->start = { p.window[0] + p.window[2] - b / 2 - 1, y };
+            sh->end = sh->start + juce::Point<int> (dx, 0);
+        }
+        std::cerr << "UITEST INFO winroomsidebar drag " << sh->start.toString() << " -> " << sh->end.toString() << " (window " << p.window[0] << "," << p.window[1]
+                  << " " << p.window[2] << "x" << p.window[3] << ", border " << p.resizeBorder << (work.contains (corner) ? ", corner" : ", right edge") << ")" << std::endl;
+        meon::winframe::devMouse (sh->start.x, sh->start.y, true, false);
+    }, 250);
+    for (int i = 1; i <= 6; ++i)
+        add ([sh, i]
+        {
+            if (sh->skip) return;
+            const auto at = sh->start + (sh->end - sh->start) * i / 6;
+            meon::winframe::devMouse (at.x, at.y, false, false);
+        }, 80);
+    add ([sh] { if (! sh->skip) meon::winframe::devMouse (sh->end.x, sh->end.y, false, false); }, 400);   // 끝에서 잠시 잡고 있다
+    add ([sh] { if (! sh->skip) meon::winframe::devMouse (sh->end.x, sh->end.y, false, true); }, 1500);
+    add ([this, sh, report] { if (! sh->skip) report (TXT ("끌어서 최소 크기"), "drag"); }, 0);
+    // 2초 더 지나도 그대로인지 (애니메이션·늦은 그리기)
+    add ([this, sh, report] { if (! sh->skip) report (TXT ("끌고 2초 뒤"), "drag_later"); }, 2000);
+
+    // 2) 비교: 넓힌 뒤 코드로 최소 크기 (setSize: roomsidebar 시험과 같은 길)
+    add ([this, sh] { if (! sh->skip) root.getTopLevelComponent()->setBounds (sh->wide); }, 0);
+    waitUntil (TXT ("넓힘 → 펼침 (240)"), [this, sh] { return sh->skip || (root.sidebar->currentWidth() == Sidebar::openW && ! root.sidebar->animating()); }, 4000);
+    add ([this, sh, minSize]
+    {
+        if (sh->skip) return;
+        auto* top = root.getTopLevelComponent();
+        const auto mn = minSize();
+        top->setSize (mn.x, mn.y);
+    }, 1500);
+    add ([this, sh, report] { if (! sh->skip) report (TXT ("코드로 최소 크기"), "setsize"); }, 0);
+
+    // 되돌림
+    add ([this, sh] { if (sh->wide.getWidth() > 0) root.getTopLevelComponent()->setBounds (sh->wide); }, 600);
+    add ([this] { if (inRoom()) core.home().leaveRoom(); }, 0);
+    waitUntil (TXT ("나감"), [this] { return ! inRoom() && home().isShowing(); }, 6000);
 }
 
 void UiSelfTest::addWinStatesTests()

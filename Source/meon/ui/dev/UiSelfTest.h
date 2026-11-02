@@ -118,6 +118,7 @@ private:
     void addWinEdgeTests();       // 윈도우 창 왼쪽·오른쪽·아래 가장자리 픽셀 (--uitest=winedge, windows.yml)
     void addFullscreenTests();    // 전체 화면 단축키 (--uitest=fullscreen, 실제 창: windows.yml·mac.yml)
     void addWinStatesTests();     // 윈도우 창 상태별 가장자리·창 버튼·크기 조절 (--uitest=winstates, windows.yml)
+    void addWinRoomSidebarTests(); // 윈도우: 방 화면을 최소 크기로 끌어 줄였을 때 접힌 사이드바 아이콘이 실제 화면에 보이는지 (--uitest=winroomsidebar, windows.yml)
     void addProfileFooterTests(); // 친구 프로필 아래 줄: 보이는 버튼이 없으면 아래 줄(구분선 포함)도 없다 (--uitest=profilefooter)
     void addCodeInputTests();
     void addFriendAddTests();
