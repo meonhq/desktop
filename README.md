@@ -52,10 +52,9 @@ Visual Studio 2019 이상 + CMake. **ASIO SDK 2.3.4 이상**이 필요합니다 
 
 ## 설치 (테스터용)
 
-main 에 push 할 때마다 GitHub Actions 가 설치 파일을 만들어 프리릴리스에 올립니다.
+설치 파일은 https://meon.co.kr/download 에서 받습니다. 접속한 컴퓨터에 맞는 파일(macOS 유니버설 `.dmg`, Windows `setup.exe`)로 이어집니다.
 
-- macOS (유니버설): https://github.com/meonhq/desktop/releases/download/mac-latest/meon.dmg
-- Windows: https://github.com/meonhq/desktop/releases/download/windows-latest/meon-setup.exe
+릴리스는 `v*` 태그 push 나 main 수동 실행 때만 만듭니다 (CLAUDE.md). 그때 GitHub 프리릴리스(`mac-latest`·`windows-latest`)도 함께 갱신하지만, 이 주소는 이미 설치된 앱의 자동 업데이트용이라 사람에게 안내하지 않습니다.
 
 서명·공증을 하지 않은 빌드입니다. 경고를 넘기는 방법과 플러그인 설치 위치는 [doc/INSTALL.md](doc/INSTALL.md)를 보세요.
 
