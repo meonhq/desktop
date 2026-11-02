@@ -3601,6 +3601,9 @@ void UiSelfTest::addWinRoomSidebarTests()
         };
         const auto list = spots();
         auto capture = [&] (const juce::Rectangle<int>& r) { return meon::winframe::devCaptureScreen (r.getX(), r.getY(), r.getWidth(), r.getHeight()); };
+        // 작업 영역 밖(큰 배율에서 창 아래가 작업 표시줄 밑으로 내려간 경우) 자리는 세지 않는다 (-3)
+        const auto pw = meon::winframe::probe (handle());
+        const juce::Rectangle<int> work (pw.work[0], pw.work[1], pw.work[2], pw.work[3]);
         // 1) 다시 그리기 전 (사용자가 보는 그대로)
         std::vector<int> raw, app, after;
         juce::StringArray hits;
@@ -3608,6 +3611,7 @@ void UiSelfTest::addWinRoomSidebarTests()
         {
             if (sp.box.isEmpty()) { raw.push_back (-2); app.push_back (-2); hits.add ("-"); continue; }
             const auto pr = physRect (*sb, sp.box);
+            if (! work.contains (pr)) { raw.push_back (-3); app.push_back (-3); hits.add ("off"); continue; }
             raw.push_back (inkCount (capture (pr), pr.getWidth(), pr.getHeight()));
             // 앱 그림: 사이드바만 그린 것 (형제가 덮는지는 hit 로 따로 본다)
             const auto snap = sb->createComponentSnapshot (sp.box, true, s);
@@ -3630,10 +3634,11 @@ void UiSelfTest::addWinRoomSidebarTests()
         {
             if (sp.box.isEmpty()) { after.push_back (-2); continue; }
             const auto pr = physRect (*sb, sp.box);
+            if (! work.contains (pr)) { after.push_back (-3); continue; }
             after.push_back (inkCount (capture (pr), pr.getWidth(), pr.getHeight()));
         }
         savePng (capture (sbPhys), sbPhys.getWidth(), sbPhys.getHeight(), key2 + "_redrawn");
-        // 로그: 숫자는 자리 순서 (공개 방, 방, 친구 추가, 내 프로필). -1 캡처 실패, -2 줄 없음
+        // 로그: 숫자는 자리 순서 (공개 방, 방, 친구 추가, 내 프로필). -1 캡처 실패, -2 줄 없음, -3 작업 영역 밖 (세지 않음)
         auto join = [] (const std::vector<int>& v) { juce::StringArray a; for (auto x : v) a.add (juce::String (x)); return a.joinIntoString (","); };
         juce::StringArray names;
         for (auto& sp : list) names.add (sp.name);
@@ -3653,7 +3658,8 @@ void UiSelfTest::addWinRoomSidebarTests()
                   << " bodyShowing " << (int) (view != nullptr && view->isShowing()) << std::endl;
         // 사용자 증상: 앱 그림에는 있는데 실제 화면(다시 그리기 전)에 없다
         for (size_t i = 0; i < list.size(); ++i)
-            if (app[i] >= 8)
+            if (app[i] == -3) continue;
+            else if (app[i] >= 8)
                 expect (raw[i] * 3 >= app[i], label + ": " + list[i].name + TXT (" 아이콘이 화면에 보임 (앱 ") + juce::String (app[i])
                             + TXT (", 화면 ") + juce::String (raw[i]) + TXT (", 다시 그린 뒤 ") + juce::String (after[i]) + ")");
             else
